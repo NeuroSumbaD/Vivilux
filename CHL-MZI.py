@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu May 31
+Initially Created on Thu May 31 2022
 
 @author: Luis El Srouji
 """
