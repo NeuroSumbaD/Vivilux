@@ -6,13 +6,12 @@ Initially Created on Thu May 31 2022
 """
 
 from itertools import product
-from operator import mod
 import numpy as np
 from scipy.stats import ortho_group
 from scipy.linalg import svd
 import matplotlib.pyplot as plt
 plt.rcParams.update({'font.size': 20})
-np.random.seed(seed=0)
+np.random.seed(seed=420)
 
 
 def Sigmoid(input):
@@ -260,12 +259,13 @@ class OpticalNetwork:
         pass
 
 
-def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
+def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100,
                     numTimeSteps=100, phaseStep = 50, learningRate = 0.1,
                     deltaTime = 0.1, plot=True):
     '''CHL:
         Training using Contrastive Hebbian Learning rule
     '''
+    numSamples = len(inputs)
     #Allocate error traces
     fullErrorTrace = np.zeros(numTimeSteps*numSamples*numEpochs)
     errorTrace = np.zeros(numEpochs)
@@ -353,12 +353,13 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
     return errorTrace
 
 
-def randomWeights(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
+def randomWeights(W1, W2, inputs, targets, numEpochs=100,
                     numTimeSteps=100, phaseStep = 50, learningRate = 0.1,
                     deltaTime = 0.1, plot=True):
     '''CHL:
         Training using Contrastive Hebbian Learning rule
     '''
+    numSamples = len(inputs)
     #Allocate error traces
     fullErrorTrace = np.zeros(numTimeSteps*numSamples*numEpochs)
     errorTrace = np.zeros(numEpochs)
@@ -471,9 +472,18 @@ def hyperparameterLoop(LearningRates, DeltaTimes, TrainingLoops,
     return results
 
 if __name__ == "__main__":
+    from sklearn import datasets
+
+    iris = datasets.load_iris()
+    inputs = iris.data
+    maxMagnitude = np.max(np.sqrt(np.sum(np.square(inputs), axis=1)))
+    inputs = inputs/maxMagnitude # bound on (0,1]
+    targets = np.zeros((len(inputs),4))
+    targets[np.arange(len(inputs)), iris.target] = 1
+
     matrixDimension = 4
-    numSamples = 40
-    model  = OpticalNetwork([4,4])
+    numSamples = len(inputs)
+    model  = OpticalNetwork([4,4,4])
 
     #define weight matrices
     #### there are two layers:
@@ -483,13 +493,13 @@ if __name__ == "__main__":
     weightOut = model.layers[1]["mesh"].getMatrix()
 
     #define input and output data (must be normalized and positive-valued)
-    vecs = np.random.normal(size=(numSamples, matrixDimension))
-    mags = np.linalg.norm(vecs, axis=-1)
-    inputs = np.abs(vecs/mags[...,np.newaxis])
-    vecs = np.random.normal(size=(numSamples, matrixDimension))
-    mags = np.linalg.norm(vecs, axis=-1)
-    targets = np.abs(vecs/mags[...,np.newaxis])
-    del vecs, mags
+    # vecs = np.random.normal(size=(numSamples, matrixDimension))
+    # mags = np.linalg.norm(vecs, axis=-1)
+    # inputs = np.abs(vecs/mags[...,np.newaxis])
+    # vecs = np.random.normal(size=(numSamples, matrixDimension))
+    # mags = np.linalg.norm(vecs, axis=-1)
+    # targets = np.abs(vecs/mags[...,np.newaxis])
+    # del vecs, mags
     # # random classes
     # targets = np.zeros((numSamples,4))
     # for entry, rand in zip(targets, np.floor(np.random.rand(numSamples)*4).astype("int")):
@@ -497,20 +507,20 @@ if __name__ == "__main__":
 
 
 
-    resultMZI = model.Train(inputs, targets, numEpochs=500, learningRate=0.025)
+    resultMZI = model.Train(inputs, targets, numEpochs=500, learningRate=0.015)
     print(f"MZI initial RMSE: {resultMZI[0]}, final RMSE: {resultMZI[-1]}")
     print(f"MZI Training occured?: {resultMZI[0] > resultMZI[-1]}")
 
     # print("initial input weight matrix:\n", weightIn)
     # print("initial output weight matrix:\n", weightOut)
-    resultCHL = trainingLoopCHL(weightIn, weightOut,inputs, targets, numEpochs=500, learningRate=0.1, plot=False)
+    resultCHL = trainingLoopCHL(weightIn, weightOut,inputs, targets, numEpochs=500, learningRate=0.05, plot=False)
 
-    resultRand = randomWeights(weightIn, weightOut,inputs, targets, numEpochs=500, learningRate=0.1, plot=False)
+    # resultRand = randomWeights(weightIn, weightOut,inputs, targets, numEpochs=500, learningRate=0.05, plot=False)
                 
     plt.figure()
     plt.plot(resultMZI, label="MZI")
     plt.plot(resultCHL, label="CHL")
-    plt.plot(resultRand, label="Rand")
+    # plt.plot(resultRand, label="Rand")
     plt.title("Simulated MZI Mesh Training")
     plt.ylabel("RMSE")
     plt.xlabel("Epoch")
