@@ -5,13 +5,11 @@ Initially Created on Thu May 31 2022
 @author: Luis El Srouji
 """
 
-from itertools import product
+# import tensorflow as tf
 import numpy as np
-from scipy.stats import ortho_group
-from scipy.linalg import svd
 import matplotlib.pyplot as plt
 plt.rcParams.update({'font.size': 20})
-np.random.seed(seed=420)
+np.random.seed(seed=0)
 
 
 def Sigmoid(input):
@@ -47,13 +45,33 @@ def BoundTheta(thetas):
     thetas[thetas > (2*np.pi)] -= 2*np.pi
     thetas[thetas < 0] += 2*np.pi  
 
+def RMSE(predictions, targets):
+    errors = np.sum(np.square(predictions - targets), axis=1)
+    return np.sqrt(np.mean(errors))
+
+def HardmaxAccuracy(predictions, targets):
+    predictedClass = np.argmax(predictions, axis=1)
+    groundTruth = np.argmax(targets)
+    accuracy = np.sum((predictedClass == groundTruth).astype("int"))/len(targets)
+    return accuracy
+
 class MZImesh:
     def __init__(self, dimension):
         self.dimension = dimension
         self.numUnits = int(dimension*(dimension-1)/2)
         self.phaseShifters = np.random.rand(self.numUnits)*2*np.pi
+        self.hasChanged = True # if true, re-generate 'stages' structure
+        self.stages = None
+        self.matrix = None
 
     def getUnits(self, units=None):
+        '''Creates scattering matrix for each MZI unit.
+                Currently neglects PHI phase shifter, this
+                may be a valid simplification if each input
+                is on different wavelength, or if phase shift
+                corresponds to optical delay longer than pulse
+                width.
+        '''
         if units is not None:
             numUnits = len(units)
             return np.array([[[np.sin(theta),np.cos(theta)],
@@ -68,6 +86,7 @@ class MZImesh:
         '''Returns a dictionary with integer keys for each stage
             and correctly dimensioned matrices for each stage.
         '''
+        # if self.hasChanged:
         stages = {}
         index = startIndex #index in phase shifters
         mziUnits = self.getUnits()
@@ -88,17 +107,25 @@ class MZImesh:
                     stages[stage]["units"].append(currUnit)
                     index += 1
             # stages[stage]["vars"] = np.array(stages[stage]["vars"])
+            self.stages = stages
+            self.hasChanged = False
         return stages
+        # else:
+            # return self.stages
     
     def getMatrix(self):
         '''Returns full mesh matrix.
         '''
+        # if self.hasChanged:
         fullMatrix = np.eye(self.dimension)
         stages = self.getStages()
         for stage in stages:
             for unit in stages[stage]["units"]:
                 fullMatrix = unit @ fullMatrix
+        self.matrix = fullMatrix
         return fullMatrix
+        # else:
+            # return self.matrix
 
     def getFeedback(self):
         '''Returns transpose of mesh matrix.
@@ -183,37 +210,40 @@ class OpticalNetwork:
                 detectorOut = Detect(detectorIn)
                 layer["pAct"] += deltaTime*(layer["rateCode"](detectorOut)-layer["pAct"])
 
-    def Train(self, samples, targets, numEpochs = 100, numTimesteps=50, deltaTime = 0.1, learningRate = 0.1):
+    def Train(self, samples, targets, numEpochs = 100, numTimesteps=50,
+              deltaTime = 0.1, learningRate = 0.1, metric = RMSE):
         '''Updates the MZI meshes to drive the mesh towards its the
             target activities.
         '''
+        numSamples = len(samples)
         epochErrors = np.zeros(numEpochs)
         for epoch in range(numEpochs):
-            errors = np.zeros((numSamples, self.dimensions[-1]))
+            predictions = np.zeros((numSamples, self.dimensions[-1]))
             for sampleIndex, (sample, target) in enumerate(zip(samples, targets)):
                 allStages = [layer["mesh"].getStages() for layer in self.layers]
                 deltaThetas = DeltaTheta(self.CHL(sample, target, numTimesteps, deltaTime, learningRate), allStages)
                 if epoch != 0 : # Don't train on first epoch
-                    for layerStages, deltaLayer in zip(allStages, deltaThetas):
+                    for layerIndex, (layerStages, deltaLayer) in enumerate(zip(allStages, deltaThetas)):
                         for stage, deltaStage in zip(layerStages, deltaLayer):
                             layerStages[stage]["vars"] += deltaStage
                             layerStages[stage]["vars"] = BoundTheta(layerStages[stage]["vars"])
+                            self.layers[layerIndex]["mesh"].hasChanged = True #FIXME: MESSY CODE!!
                 lastLayer = self.layers[-1]
-                errors[sampleIndex] = np.sum(np.square(lastLayer["mAct"]-target))
-            epochErrors[epoch] = np.sqrt(np.mean(errors))
+                predictions[sampleIndex] = lastLayer["mAct"]
+            epochErrors[epoch] = metric(predictions, targets)
         return epochErrors
 
-    def Evaluate(self, samples, targets, numEpochs = 100, numTimesteps=50, deltaTime = 0.1):
+    def Evaluate(self, samples, targets, numEpochs = 100, numTimesteps=50,
+                 deltaTime = 0.1, metric = RMSE):
         '''Iterate through the dataset but do not update the meshes'''
-        epochErrors = np.zeros(numEpochs)
-        for epoch in range(numEpochs):
-            errors = np.zeros((numSamples, self.dimensions[-1]))
-            for sampleIndex, (sample, target) in enumerate(zip(samples, targets)):
-                self.Predict(sample, numTimesteps, deltaTime)
-                lastLayer = self.layers[-1]
-                errors[sampleIndex] = np.sum(np.square(lastLayer["mAct"]-target))
-            epochErrors[epoch] = np.sqrt(np.mean(errors))
-        return epochErrors
+        numSamples = len(samples)
+        predictions = np.zeros((numSamples, self.dimensions[-1]))
+        for sampleIndex, sample in enumerate(samples):
+            self.Predict(sample, numTimesteps, deltaTime)
+            lastLayer = self.layers[-1]
+            predictions[sampleIndex] = lastLayer["mAct"]
+            print(f"sample: {sampleIndex}, prediction:{np.argmax(predictions[sampleIndex])}, target: {targets[sampleIndex]}")
+        return metric(predictions, targets)
 
     def CHL(self, sample, target, numTimesteps=50, deltaTime=0.1, learningRate = 0.1):
         deltaLayers = []
@@ -254,9 +284,6 @@ class OpticalNetwork:
         vector = vector[parity:]
         vector = vector[:len(vector)//2*2]
         return vector
-
-    def Evaluate(self, samples, targets):
-        pass
 
 
 def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100,
@@ -485,8 +512,8 @@ if __name__ == "__main__":
     inputs, targets = inputs[shuffle], targets[shuffle]
 
     matrixDimension = 4
-    numSamples = len(inputs)
-    model  = OpticalNetwork([4,4,4])
+    numSamples = 40 #len(inputs)
+    model  = OpticalNetwork([4,4])
 
     #define weight matrices
     #### there are two layers:
@@ -510,13 +537,13 @@ if __name__ == "__main__":
 
 
 
-    resultMZI = model.Train(inputs, targets, numEpochs=500, learningRate=0.015)
+    resultMZI = model.Train(inputs, targets, numEpochs=500, learningRate=0.025)
     print(f"MZI initial RMSE: {resultMZI[0]}, final RMSE: {resultMZI[-1]}")
     print(f"MZI Training occured?: {resultMZI[0] > resultMZI[-1]}")
 
     # print("initial input weight matrix:\n", weightIn)
     # print("initial output weight matrix:\n", weightOut)
-    resultCHL = trainingLoopCHL(weightIn, weightOut,inputs, targets, numEpochs=500, learningRate=0.05, plot=False)
+    resultCHL = trainingLoopCHL(weightIn, weightOut,inputs, targets, numEpochs=500, learningRate=0.1, plot=False)
 
     # resultRand = randomWeights(weightIn, weightOut,inputs, targets, numEpochs=500, learningRate=0.05, plot=False)
                 
