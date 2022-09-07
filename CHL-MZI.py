@@ -480,6 +480,9 @@ if __name__ == "__main__":
     inputs = inputs/maxMagnitude # bound on (0,1]
     targets = np.zeros((len(inputs),4))
     targets[np.arange(len(inputs)), iris.target] = 1
+    #shuffle both arrays in the same manner
+    shuffle = np.random.permutation(len(inputs))
+    inputs, targets = inputs[shuffle], targets[shuffle]
 
     matrixDimension = 4
     numSamples = len(inputs)
