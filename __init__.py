@@ -73,6 +73,12 @@ class fbMesh(Mesh):
         super.__init__(mesh.size)
         self.mesh = mesh
 
+    def set(self):
+        raise Exception("Feedback mesh has no 'set' method.")
+
+    def get(self):
+        return self.mesh.matrix.T
+
     def apply(self, data):
         matrix = self.mesh.matrix.T
         try:
