@@ -20,6 +20,7 @@ np.random.seed(seed=0)
 
 import activations
 import metrics
+from learningRules import CHL
 
 # library constants
 DELTA_TIME = 0.1
@@ -42,22 +43,49 @@ class Net:
 
         return data
 
-    def Observe(self, data):
+    def Observe(self, inData, outData):
         '''Training method called 'observe' in accordance with a predictive
             error-driven learning scheme of neural network computation.
         '''
-        for layer in self.layers:
-            data = layer.Observe(data)
+        for layer in self.layers[:-1]:
+            data = layer.Observe(inData)
 
-        return data
+        self.layers[-1].Clamp(outData)
+
+        return None # observations know the outcome
+
+    def Infer(self, inData, numTimeSteps=25):
+        for inDatum in inData:
+            for time in range(numTimeSteps):
+                self.Predict(inDatum)
+
+    
+    def Learn(self, inData, outData, numTimeSteps=50, numEpochs=50):
+        for epoch in range(numEpochs):
+            # iterate through data and time
+            for inDatum, outDatum in zip(inData, outData):
+                for time in range(numTimeSteps):
+                    self.Predict(inDatum)
+                    self.Observe(inDatum, outDatum)
+            # update meshes
 
 class Mesh:
-    def __init__(self, size) -> None:
+    '''Base class for meshes of synaptic elements.
+    '''
+    def __init__(self, size: int, layer, learningRule=CHL) -> None:
         self.size = size
-        self.matrix = np.eye(size)
+        self.matrix = np.eye(size),
+        self.outLayer = layer
 
-    def set(self):
-        self.matrix
+        self.preIn = np.zeros(size)
+        self.preOut = np.zeros(size)
+        self.obsIn = np.zeros(size)
+        self.obsIn = np.zeros(size)
+
+        self.Learn = learningRule
+
+    def set(self, matrix):
+        self.matrix = matrix
 
     def get(self):
         return self.matrix
@@ -66,9 +94,23 @@ class Mesh:
         try:
             return self.matrix @ data
         except ValueError as ve:
-            print(f"Attempted to apply {data} (shape: {data.shape}) to mesh of dimension: {self.matrix}")
+            print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
+                  f"of dimension: {self.matrix}")
+
+    def Predict(self, data):
+        self.preIn = data
+        self.preOut = self.apply(data)
+
+    def Observe(self, data):
+        self.obsIn = data
+        self.obsOut = self.apply(data)
+
+    def Learn(self):
+        pass
 
 class fbMesh(Mesh):
+    '''A class for feedback meshes based on the transpose of another mesh.
+    '''
     def __init__(self, mesh: Mesh) -> None:
         super.__init__(mesh.size)
         self.mesh = mesh
@@ -86,6 +128,9 @@ class fbMesh(Mesh):
         except ValueError as ve:
             print(f"Attempted to apply {data} (shape: {data.shape}) to mesh of dimension: {matrix}")
 
+    def Learn(self):
+        return None
+
 class Layer:
     '''Base class for a layer that includes input matrices and activation
         function pairings. Each layer retains a seperate state for predict
@@ -98,13 +143,13 @@ class Layer:
         self.act = activation
         self.meshes = [] #empty initial mesh
 
-    def addMesh(self, mesh: Mesh):
+    def addMesh(self, mesh):
         self.meshes.append(mesh)
 
     def Predict(self, data):
         linAct = np.zeros(len(self))
         for mesh in self.meshes:
-            linAct += mesh.apply(data)
+            linAct += mesh.Predict(data)
         self.preAct += DELTA_TIME*(self.act(linAct)-self.preAct)
         return self.preAct
 
@@ -133,3 +178,8 @@ class FFFB(Net):
             else:
                 data = layer.Predict(data, self.layers[index-1].preAct)
         return data
+
+if __name__ == "__main__":
+    from learningRules import GeneRec
+
+    net = FFFB([4, 4])
