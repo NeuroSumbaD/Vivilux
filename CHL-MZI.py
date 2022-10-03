@@ -188,9 +188,11 @@ class OpticalNetwork:
                 detectorIn = layer["mesh"].getMatrix() @ input
                 if index != self.numLayers - 1:
                     nextLayer = self.layers[index+1]
-                    detectorIn += nextLayer["mesh"].getFeedback() @ Diagonalize(nextLayer["mAct"])
+                    detectorIn += nextLayer["mesh"].getFeedback() @ Diagonalize(
+                        nextLayer["mAct"])
                 detectorOut = Detect(detectorIn)
-                layer["mAct"] += deltaTime*(layer["rateCode"](detectorOut)-layer["mAct"])
+                layer["mAct"] += deltaTime*(layer["rateCode"](detectorOut)
+                                 - layer["mAct"])
 
     def Observe(self, sample, target, numTimeSteps = 50, deltaTime = 0.1):
         '''Clamp to expected output associated with input sample.
@@ -206,9 +208,11 @@ class OpticalNetwork:
                 input = Diagonalize(input)
                 detectorIn = layer["mesh"].getMatrix() @ input
                 nextLayer = self.layers[index+1]
-                detectorIn += nextLayer["mesh"].getFeedback() @ Diagonalize(nextLayer["pAct"])
+                detectorIn += nextLayer["mesh"].getFeedback() @ Diagonalize(
+                    nextLayer["pAct"])
                 detectorOut = Detect(detectorIn)
-                layer["pAct"] += deltaTime*(layer["rateCode"](detectorOut)-layer["pAct"])
+                layer["pAct"] += deltaTime*(layer["rateCode"](detectorOut)
+                                 -layer["pAct"])
 
     def Train(self, samples, targets, numEpochs = 100, numTimesteps=50,
               deltaTime = 0.1, learningRate = 0.1, metric = RMSE):
@@ -221,12 +225,15 @@ class OpticalNetwork:
             predictions = np.zeros((numSamples, self.dimensions[-1]))
             for sampleIndex, (sample, target) in enumerate(zip(samples, targets)):
                 allStages = [layer["mesh"].getStages() for layer in self.layers]
-                deltaThetas = DeltaTheta(self.CHL(sample, target, numTimesteps, deltaTime, learningRate), allStages)
+                deltaThetas = DeltaTheta(self.CHL(sample, target, numTimesteps,
+                                         deltaTime, learningRate), allStages)
                 if epoch != 0 : # Don't train on first epoch
-                    for layerIndex, (layerStages, deltaLayer) in enumerate(zip(allStages, deltaThetas)):
+                    for layerIndex, (layerStages, deltaLayer) in enumerate(zip(
+                            allStages, deltaThetas)):
                         for stage, deltaStage in zip(layerStages, deltaLayer):
                             layerStages[stage]["vars"] += deltaStage
-                            layerStages[stage]["vars"] = BoundTheta(layerStages[stage]["vars"])
+                            layerStages[stage]["vars"] = BoundTheta(
+                                layerStages[stage]["vars"])
                             self.layers[layerIndex]["mesh"].hasChanged = True #FIXME: MESSY CODE!!
                 lastLayer = self.layers[-1]
                 predictions[sampleIndex] = lastLayer["mAct"]
@@ -255,14 +262,16 @@ class OpticalNetwork:
             for stage in stages:
                 before, current, after = layer["mesh"].split(stage)
                 # Calculate minus phase activity
-                mInput = sample if layer["index"] == 0 else self.layers[layerIndex-1]["mAct"]
+                mInput = sample if layer["index"] == 0 else self.layers[
+                                                        layerIndex-1]["mAct"]
                 mInput = Diagonalize(mInput)
                 mIn = Detect(before @ mInput)
                 mIn = self.Even(mIn, stage)
                 mOut = Detect(current @ before @ mInput)
                 mOut = self.Even(mOut, stage)
                 # Calculate plus phase activity
-                pInput = sample if layer["index"] == 0 else self.layers[layerIndex-1]["pAct"]
+                pInput = sample if layer["index"] == 0 else self.layers[
+                                                        layerIndex-1]["pAct"]
                 pInput = Diagonalize(pInput)
                 pIn = Detect(before @ pInput)
                 pIn = self.Even(pIn, stage)
@@ -543,7 +552,8 @@ if __name__ == "__main__":
 
     # print("initial input weight matrix:\n", weightIn)
     # print("initial output weight matrix:\n", weightOut)
-    resultCHL = trainingLoopCHL(weightIn, weightOut,inputs, targets, numEpochs=500, learningRate=0.1, plot=False)
+    resultCHL = trainingLoopCHL(weightIn, weightOut,inputs, targets, numEpochs=500,
+                                learningRate=0.1, plot=False)
 
     # resultRand = randomWeights(weightIn, weightOut,inputs, targets, numEpochs=500, learningRate=0.05, plot=False)
                 
