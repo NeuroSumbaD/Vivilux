@@ -29,7 +29,7 @@ DELTA_TIME = 0.1
 class Net:
     '''Base class for neural networks with Hebbian-like learning
     '''
-    def __init__(self, layers: iter, meshType, metric = RMSE) -> None:
+    def __init__(self, layers: iter, meshType, metric = RMSE, learningRate = 0.1):
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
         '''
@@ -39,7 +39,7 @@ class Net:
 
         for index, layer in enumerate(self.layers[1:]):
             size = len(layer)
-            layer.addMesh(meshType(size, self.layers[index-1]))
+            layer.addMesh(meshType(size, self.layers[index-1], learningRate))
 
     def Predict(self, data):
         '''Inference method called 'prediction' in accordance with a predictive
@@ -93,6 +93,18 @@ class Net:
         
         return results
 
+    def getWeights(self):
+        weights = []
+        for layer in self.layers:
+            weights.append(layer.meshes[0].get())
+        return weights
+
+    def setLearningRule(self, rule):
+        '''Sets the learning rule for all forward meshes to 'rule'.
+        '''
+        for layer in self.layers:
+            layer.meshes[0].rule = rule
+
 class Mesh:
     '''Base class for meshes of synaptic elements.
     '''
@@ -125,6 +137,9 @@ class Mesh:
 
     def Update(self, delta):
         self.matrix += self.rate*delta
+
+    def __len__(self):
+        return self.size
 
 class fbMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
@@ -195,8 +210,8 @@ class FFFB(Net):
     '''A network with feed forward and feedback meshes between each
         layer. Based on ideas presented in [2]
     '''
-    def __init__(self, *args) -> None:
-        super().__init__(*args)
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
         for index, layer in enumerate(self.layers[:-1]):
             nextLayer = self.layers[index+1]
             layer.addMesh(fbMesh(nextLayer.meshes[0], nextLayer))
