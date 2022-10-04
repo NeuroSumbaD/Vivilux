@@ -73,7 +73,7 @@ class Net:
                 self.Predict(inDatum)
 
     
-    def Learn(self, inData, outData, numTimeSteps=50, numEpochs=50):
+    def Learn(self, inData, outData, numTimeSteps=50, numEpochs=50, verbose = False):
         results = np.zeros(numEpochs)
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
         for epoch in range(numEpochs):
@@ -90,6 +90,7 @@ class Net:
                 layer.Learn()
             # evaluate metric
             results[epoch] = self.metric(epochResults, outData)
+            if verbose: print(self)
         
         return results
 
@@ -103,7 +104,14 @@ class Net:
         '''Sets the learning rule for all forward meshes to 'rule'.
         '''
         for layer in self.layers:
-            layer.meshes[0].rule = rule
+            layer.rule = rule
+
+    def __str__(self) -> str:
+        strs = []
+        for layer in self.layers:
+            strs.append(str(layer))
+
+        return str(strs)
 
 class Mesh:
     '''Base class for meshes of synaptic elements.
@@ -141,6 +149,9 @@ class Mesh:
     def __len__(self):
         return self.size
 
+    def __str__(self):
+        return f"\n\t\tMesh ({self.size}) = {self.get()}"
+
 class fbMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
     '''
@@ -171,7 +182,10 @@ class Layer:
         incoming data.
     '''
     def __init__(self, length, activation=Sigmoid, learningRule=CHL):
+        self.preLin = np.zeros(length)
         self.preAct = np.zeros(length)
+        
+        self.obsLin = np.zeros(length)
         self.obsAct = np.zeros(length)
         self.act = activation
         self.rule = learningRule
@@ -181,18 +195,17 @@ class Layer:
         self.meshes.append(mesh)
 
     def Predict(self):
-        linAct = np.zeros(len(self))
+        self.preLin -= DELTA_TIME*self.preLin
         for mesh in self.meshes:
-            linAct += mesh.Predict()[:len(self)]
-        self.preAct += DELTA_TIME*(self.act(linAct)-self.preAct)
+            self.preLin += DELTA_TIME * mesh.Predict()[:len(self)]**2
+        self.preAct = self.act(self.preLin)
         return self.preAct
 
     def Observe(self):
-        linAct = np.zeros(len(self))
+        self.obsLin -= DELTA_TIME * self.obsLin
         for mesh in self.meshes:
-            linAct += mesh.Observe()[:len(self)]
-
-        self.obsAct += DELTA_TIME*(self.act(linAct)-self.obsAct)
+            self.obsLin += DELTA_TIME * mesh.Observe()[:len(self)]**2
+        self.obsAct = self.act(self.obsLin)
         return self.preAct
 
     def Clamp(self, data):
@@ -205,6 +218,12 @@ class Layer:
 
     def __len__(self):
         return len(self.preAct)
+
+    def __str__(self) -> str:
+        str = f"Layer ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
+        str += f"Rule = {self.rule}"
+        str += f"\n\tMeshes: {self.meshes}"
+        return str
 
 class FFFB(Net):
     '''A network with feed forward and feedback meshes between each

@@ -9,6 +9,9 @@ np.random.seed(seed=0)
 
 numSamples = 40
 
+def CHL_trans(inLayer, outLayer):
+    return CHL(inLayer, outLayer).T
+
 #define input and output data (must be normalized and positive-valued)
 vecs = np.random.normal(size=(numSamples, 4))
 mags = np.linalg.norm(vecs, axis=-1)
@@ -21,14 +24,17 @@ del vecs, mags
 netGR = FFFB([
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 1)
+], Mesh, learningRate = 0.1)
 
 netCHL = copy.deepcopy(netGR)
 netCHL.setLearningRule(CHL)
 
+netCHL_T = copy.deepcopy(netGR)
+netCHL_T.setLearningRule(CHL_trans)
+
 def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                     numTimeSteps=100, phaseStep = 50, learningRate = 0.1,
-                    deltaTime = 0.1, plot=True):
+                    deltaTime = 0.1):
     '''CHL:
         Training using Contrastive Hebbian Learning rule
     '''
@@ -64,7 +70,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                                    - linInp)
                 actInp = Sigmoid(linInp)
                 if timeStep <= phaseStep:
-                    linOut += deltaTime*np.abs(weightOut @ actInp)**2-linOut
+                    linOut += deltaTime*(np.abs(weightOut @ actInp)**2-linOut)
                     actOut = Sigmoid(linOut)
                     if timeStep == phaseStep:
                         minusPhaseIn = actInp
@@ -105,26 +111,26 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
     print(f"initial RMSE: {errorTrace[0]}, final RMSE: {errorTrace[-1]}")
     print(f"Training occured?: {errorTrace[0] > errorTrace[-1]}")
 
-    if plot:
-        plt.figure()
-        nonZeroIndices = fullErrorTrace != 0
-        plt.plot(np.arange(len(fullErrorTrace))[nonZeroIndices]/numSamples/numTimeSteps,
-                 fullErrorTrace[nonZeroIndices], "r")
-        plt.plot(range(len(errorTrace)), errorTrace, "b--")
-        plt.title("Error")
-        plt.ylabel("RMSE")
-        plt.xlabel("Epoch")
-        plt.show()
-
     return errorTrace
 
-weights = netGR.getWeights()
-oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=500, learningRate=0.1, plot=False)
-plt.plot(oldResult, label="Old GR")
-resultGR = netGR.Learn(inputs, targets, numEpochs=5000)
+# weights = netGR.getWeights()
+
+# oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
+# plt.plot(oldResult, label="Old GR")
+
+print(netGR)
+resultGR = netGR.Learn(inputs, targets, numEpochs=200)
 plt.plot(resultGR, label="GeneRec")
-resultCHL = netCHL.Learn(inputs, targets, numEpochs=5000)
+
+print(netCHL)
+resultCHL = netCHL.Learn(inputs, targets, numEpochs=200)
 plt.plot(resultCHL, label="CHL")
+
+print(netCHL_T)
+resultCHL_T = netCHL_T.Learn(inputs, targets, numEpochs=200)
+plt.plot(resultCHL_T, label="CHL_T")
+
+
 plt.title("Iris Dataset")
 plt.ylabel("RMSE")
 plt.xlabel("Epoch")
