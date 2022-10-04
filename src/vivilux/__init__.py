@@ -19,9 +19,9 @@ import numpy as np
 np.random.seed(seed=0)
 
 # import defaults
-from activations import Sigmoid
-from metrics import RMSE
-from learningRules import CHL
+from .activations import Sigmoid
+from .metrics import RMSE
+from .learningRules import CHL
 
 # library constants
 DELTA_TIME = 0.1
@@ -29,12 +29,17 @@ DELTA_TIME = 0.1
 class Net:
     '''Base class for neural networks with Hebbian-like learning
     '''
-    def __init__(self, layers: iter, metric = RMSE) -> None:
+    def __init__(self, layers: iter, meshType, metric = RMSE) -> None:
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
         '''
+        # TODO: allow different mesh types between layers
         self.layers = layers
         self.metric = metric
+
+        for index, layer in enumerate(self.layers[1:]):
+            size = len(layer)
+            layer.addMesh(meshType(size, self.layers[index-1]))
 
     def Predict(self, data):
         '''Inference method called 'prediction' in accordance with a predictive
@@ -70,7 +75,7 @@ class Net:
     
     def Learn(self, inData, outData, numTimeSteps=50, numEpochs=50):
         results = np.zeros(numEpochs)
-        epochResult = np.zeros(len(inData))
+        epochResults = np.zeros((len(outData), len(self.layers[-1])))
         for epoch in range(numEpochs):
             # iterate through data and time
             index=0
@@ -78,23 +83,23 @@ class Net:
                 for time in range(numTimeSteps):
                     lastResult = self.Predict(inDatum)
                     self.Observe(inDatum, outDatum)
-                epochResult[index] = lastResult
+                epochResults[index] = lastResult
                 index += 1
             # update meshes
             for layer in self.layers:
                 layer.Learn()
             # evaluate metric
-            results[epoch] = self.metric(epochResult, outData)
+            results[epoch] = self.metric(epochResults, outData)
         
         return results
 
 class Mesh:
     '''Base class for meshes of synaptic elements.
     '''
-    def __init__(self, size: int, layer, learningRate=0.1):
-        self.size = size
-        self.matrix = np.eye(size),
-        self.inLayer = layer
+    def __init__(self, size: int, inLayer, learningRate=0.5):
+        self.size = size if size > len(inLayer) else len(inLayer)
+        self.matrix = np.eye(self.size)
+        self.inLayer = inLayer
         self.rate = learningRate
 
     def set(self, matrix):
@@ -124,8 +129,8 @@ class Mesh:
 class fbMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
     '''
-    def __init__(self, mesh: Mesh) -> None:
-        super.__init__(mesh.size)
+    def __init__(self, mesh: Mesh, inLayer) -> None:
+        super().__init__(mesh.size, inLayer)
         self.mesh = mesh
 
     def set(self):
@@ -163,20 +168,20 @@ class Layer:
     def Predict(self):
         linAct = np.zeros(len(self))
         for mesh in self.meshes:
-            linAct += mesh.Predict()
+            linAct += mesh.Predict()[:len(self)]
         self.preAct += DELTA_TIME*(self.act(linAct)-self.preAct)
         return self.preAct
 
     def Observe(self):
         linAct = np.zeros(len(self))
         for mesh in self.meshes:
-            linAct += mesh.Observe()
+            linAct += mesh.Observe()[:len(self)]
 
         self.obsAct += DELTA_TIME*(self.act(linAct)-self.obsAct)
         return self.preAct
 
     def Clamp(self, data):
-        self.obsAct = data
+        self.obsAct = data[:len(self)]
 
     def Learn(self):
         inLayer = self.meshes[0].inLayer # assume first mesh as input
@@ -190,13 +195,34 @@ class FFFB(Net):
     '''A network with feed forward and feedback meshes between each
         layer. Based on ideas presented in [2]
     '''
-    def __init__(self, layers: iter) -> None:
-        super().__init__(layers)
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
         for index, layer in enumerate(self.layers[:-1]):
-            layer.addMesh(fbMesh(self.layers[index+1].meshes[0]))
+            nextLayer = self.layers[index+1]
+            layer.addMesh(fbMesh(nextLayer.meshes[0], nextLayer))
 
 
 if __name__ == "__main__":
-    from learningRules import GeneRec
+    from .learningRules import GeneRec
+    
+    from sklearn import datasets
+    import matplotlib.pyplot as plt
 
-    net = FFFB([4, 4])
+    net = FFFB([
+        Layer(4, learningRule=GeneRec),
+        Layer(4, learningRule=GeneRec)
+    ], Mesh)
+
+    iris = datasets.load_iris()
+    inputs = iris.data
+    maxMagnitude = np.max(np.sqrt(np.sum(np.square(inputs), axis=1)))
+    inputs = inputs/maxMagnitude # bound on (0,1]
+    targets = np.zeros((len(inputs),4))
+    targets[np.arange(len(inputs)), iris.target] = 1
+    #shuffle both arrays in the same manner
+    shuffle = np.random.permutation(len(inputs))
+    inputs, targets = inputs[shuffle], targets[shuffle]
+
+    result = net.Learn(inputs, targets, numEpochs=5000)
+    plt.plot(result)
+    plt.show()
