@@ -18,8 +18,9 @@ from collections.abc import Iterator
 import numpy as np
 np.random.seed(seed=0)
 
-import activations
-import metrics
+# import defaults
+from activations import Sigmoid
+from metrics import RMSE
 from learningRules import CHL
 
 # library constants
@@ -28,27 +29,34 @@ DELTA_TIME = 0.1
 class Net:
     '''Base class for neural networks with Hebbian-like learning
     '''
-    def __init__(self, layers: iter) -> None:
+    def __init__(self, layers: iter, metric = RMSE) -> None:
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
         '''
         self.layers = layers
+        self.metric = metric
 
     def Predict(self, data):
         '''Inference method called 'prediction' in accordance with a predictive
             error-driven learning scheme of neural network computation.
         '''
-        for layer in self.layers:
-            data = layer.Predict(data)
+        # outputs = []
+        self.layers[0].Clamp(data)
 
-        return data
+        for layer in self.layers[1:-1]:
+            layer.Predict()
+
+        output = self.layers[-1].Predict()
+        
+        return output
 
     def Observe(self, inData, outData):
         '''Training method called 'observe' in accordance with a predictive
             error-driven learning scheme of neural network computation.
         '''
-        for layer in self.layers[:-1]:
-            data = layer.Observe(inData)
+        self.layers[0].Clamp(inData)
+        for layer in self.layers[1:-1]:
+            layer.Observe()
 
         self.layers[-1].Clamp(outData)
 
@@ -61,28 +69,33 @@ class Net:
 
     
     def Learn(self, inData, outData, numTimeSteps=50, numEpochs=50):
+        results = np.zeros(numEpochs)
+        epochResult = np.zeros(len(inData))
         for epoch in range(numEpochs):
             # iterate through data and time
+            index=0
             for inDatum, outDatum in zip(inData, outData):
                 for time in range(numTimeSteps):
-                    self.Predict(inDatum)
+                    lastResult = self.Predict(inDatum)
                     self.Observe(inDatum, outDatum)
+                epochResult[index] = lastResult
+                index += 1
             # update meshes
+            for layer in self.layers:
+                layer.Learn()
+            # evaluate metric
+            results[epoch] = self.metric(epochResult, outData)
+        
+        return results
 
 class Mesh:
     '''Base class for meshes of synaptic elements.
     '''
-    def __init__(self, size: int, layer, learningRule=CHL) -> None:
+    def __init__(self, size: int, layer, learningRate=0.1):
         self.size = size
         self.matrix = np.eye(size),
-        self.outLayer = layer
-
-        self.preIn = np.zeros(size)
-        self.preOut = np.zeros(size)
-        self.obsIn = np.zeros(size)
-        self.obsIn = np.zeros(size)
-
-        self.Learn = learningRule
+        self.inLayer = layer
+        self.rate = learningRate
 
     def set(self, matrix):
         self.matrix = matrix
@@ -97,16 +110,16 @@ class Mesh:
             print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
                   f"of dimension: {self.matrix}")
 
-    def Predict(self, data):
-        self.preIn = data
-        self.preOut = self.apply(data)
+    def Predict(self):
+        data = self.inLayer.preAct
+        return self.apply(data)
 
     def Observe(self, data):
-        self.obsIn = data
-        self.obsOut = self.apply(data)
+        data = self.inLayer.obsAct
+        return self.apply(data)
 
-    def Learn(self):
-        pass
+    def Update(self, delta):
+        self.matrix += self.rate*delta
 
 class fbMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
@@ -128,7 +141,7 @@ class fbMesh(Mesh):
         except ValueError as ve:
             print(f"Attempted to apply {data} (shape: {data.shape}) to mesh of dimension: {matrix}")
 
-    def Learn(self):
+    def Update(self, delta):
         return None
 
 class Layer:
@@ -137,29 +150,38 @@ class Layer:
         and observe phases, along with a list of input meshes applied to
         incoming data.
     '''
-    def __init__(self, length: int, activation: function) -> None:
+    def __init__(self, length, activation=Sigmoid, learningRule=CHL):
         self.preAct = np.zeros(length)
         self.obsAct = np.zeros(length)
         self.act = activation
-        self.meshes = [] #empty initial mesh
+        self.rule = learningRule
+        self.meshes = [] #empty initial mesh list
 
     def addMesh(self, mesh):
         self.meshes.append(mesh)
 
-    def Predict(self, data):
+    def Predict(self):
         linAct = np.zeros(len(self))
         for mesh in self.meshes:
-            linAct += mesh.Predict(data)
+            linAct += mesh.Predict()
         self.preAct += DELTA_TIME*(self.act(linAct)-self.preAct)
         return self.preAct
 
-    def Observe(self, *data):
+    def Observe(self):
         linAct = np.zeros(len(self))
-        for index, mesh in enumerate(self.meshes):
-            linAct += mesh.apply(data[index])
+        for mesh in self.meshes:
+            linAct += mesh.Observe()
 
         self.obsAct += DELTA_TIME*(self.act(linAct)-self.obsAct)
         return self.preAct
+
+    def Clamp(self, data):
+        self.obsAct = data
+
+    def Learn(self):
+        inLayer = self.meshes[0].inLayer # assume first mesh as input
+        delta = self.rule(inLayer, self)
+        self.meshes[0].Update(delta)
 
     def __len__(self):
         return len(self.preAct)
@@ -170,14 +192,9 @@ class FFFB(Net):
     '''
     def __init__(self, layers: iter) -> None:
         super().__init__(layers)
+        for index, layer in enumerate(self.layers[:-1]):
+            layer.addMesh(fbMesh(self.layers[index+1].meshes[0]))
 
-    def Predict(self, data):
-        for index, layer in self.layers:
-            if index == 0:
-                data = layer.Predict(data)
-            else:
-                data = layer.Predict(data, self.layers[index-1].preAct)
-        return data
 
 if __name__ == "__main__":
     from learningRules import GeneRec
