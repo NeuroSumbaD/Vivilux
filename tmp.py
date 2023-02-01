@@ -1,15 +1,8 @@
 import copy
 
-
-import sys, os
-sys.path.insert(0, os.path.join(sys.path[0],'../src'))
-
 from vivilux import *
-
-
-# from ..src.vivilux import activations, __init__, learningRules, metrics, photonics
 from vivilux.learningRules import CHL, GeneRec
-from vivilux.metrics import RMSE
+
 import numpy as np
 import matplotlib.pyplot as plt
 np.random.seed(seed=0)
@@ -22,25 +15,16 @@ def CHL_trans(inLayer, outLayer):
 #define input and output data (must be normalized and positive-valued)
 vecs = np.random.normal(size=(numSamples, 4))
 mags = np.linalg.norm(vecs, axis=-1)
-# print(mags,mags[...,np.newaxis])
 inputs = np.abs(vecs/mags[...,np.newaxis])
 vecs = np.random.normal(size=(numSamples, 4))
 mags = np.linalg.norm(vecs, axis=-1)
 targets = np.abs(vecs/mags[...,np.newaxis])
 del vecs, mags
 
-# netGR = FFFB([
-#     Layer(4, learningRule=GeneRec),
-#     Layer(4, learningRule=GeneRec)
-# ], Mesh, learningRate = 0.1)
-
 netGR = FFFB([
-    Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.1)
-
-# print(type(mahmoudnetGR.layers))
 
 netCHL = copy.deepcopy(netGR)
 netCHL.setLearningRule(CHL)
@@ -72,19 +56,14 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
     weightIn = W1.copy()
     weightOut = W2.copy()
     print("Beginning training...")
-    # print(">> pre-training: weightIn = ", weightIn, "pre-training: weightOut = ", weightOut)
 
     for epoch in range(numEpochs):
         epochErrors = np.zeros(numSamples)
-        # epoch_predictions = np.zeros((numSamples, 4))
-        for sample in range(numSamples): #>1
+        for sample in range(numSamples):
             currentInput = inputs[sample]
             targetOutput = targets[sample]
-            #>2
 
-            for timeStep in range(numTimeSteps):#>3: start predict
-                # if epoch == 0 and sample == 0:
-                #     print("fun>time step ",timeStep ," inference of the first data sample: ", actInp)
+            for timeStep in range(numTimeSteps):
                 #update activation values
                 linInp += deltaTime*(np.abs(weightIn @ currentInput)**2
                                    + np.abs(weightOut.T @ actOut)**2
@@ -92,20 +71,13 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                 actInp = Sigmoid(linInp)
                 if timeStep <= phaseStep:
                     linOut += deltaTime*(np.abs(weightOut @ actInp)**2-linOut)
-                    actOut = Sigmoid(linOut) # the result of inference
+                    actOut = Sigmoid(linOut)
                     if timeStep == phaseStep:
                         minusPhaseIn = actInp
                         minusPhaseOut = actOut
-                        # epochErrors[sample] = RMSE(targetOutput, actOut)
-                        # epoch_predictions[sample] = actOut
-                        # if epoch == 0:
-                        #     print("fun>at sample ",sample ," inference of the first data sample: ", actOut, " (should be close to ", targetOutput,")")
                         epochErrors[sample] = np.sum((targetOutput - actOut)**2)
-                #>4: end predict
-                else:#>5: start observe
+                else:
                     actOut = targetOutput
-                #>6: end observe
-            
                 
                 #Record traces
                 traceIndex = epoch*(numSamples*numTimeSteps)+sample*numTimeSteps + timeStep
@@ -117,30 +89,20 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
             
             plusPhaseIn = actInp
             plusPhaseOut = actOut
-            # mahmoud: I couldn't see how the none-training in the zeroth epoch is implemented in the net class.
             if epoch != 0: # don't train on first epoch to establish RMSE
                 #Contrastive Hebbian Learning rule
                 ####(equivalent to GenRec with symmetry and midpoint approx)
                 ######## (generally converges faster)
-                # deltaWeightIn = (plusPhaseIn[:,np.newaxis] @ plusPhaseOut[np.newaxis,:] -
-                #                 minusPhaseIn[:,np.newaxis] @ minusPhaseOut[np.newaxis,:])
-                # #Mahmoud
-                # deltaWeightIn = (plusPhaseIn[:,np.newaxis] @ plusPhaseOut[np.newaxis,:] -
-                #                 minusPhaseIn[:,np.newaxis] @ minusPhaseOut[np.newaxis,:])
-                # #end mahmoud
+                deltaWeightIn = (plusPhaseIn[:,np.newaxis] @ plusPhaseOut[np.newaxis,:] -
+                                minusPhaseIn[:,np.newaxis] @ minusPhaseOut[np.newaxis,:])
                 # weightIn += learningRate * deltaWeightIn # FIXME FREEZE FIRST LAYER
-                # print("---------\n",plusPhaseOut, minusPhaseOut,minusPhaseIn,"\n---------\n")
-                deltaWeightOut = (plusPhaseOut - minusPhaseOut)[:,np.newaxis] @ minusPhaseIn[np.newaxis,:]
+                deltaWeightOut = (plusPhaseOut - minusPhaseOut)[:,np.newaxis] @ minusPhaseIn[np.newaxis,:] 
 
-                # Mahmoud: if three layers, which weights to update?
                 weightOut += learningRate * deltaWeightOut
-        # print(">> for epoch=",epoch," weightIn = ", weightIn, "post-training: weightOut = ", weightOut)
         
         #Store RMSE for the given epoch
         errorTrace[epoch] = np.sqrt(np.mean(epochErrors))
-        # errorTrace[epoch] = RMSE(targets, epoch_predictions)
 
-    # print(">> post-training: weightIn = ", weightIn, "post-training: weightOut = ", weightOut)
     print("Done")
 
 
@@ -151,31 +113,22 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
 
     return errorTrace
 
-########## old
-print("Old GR")
+# weights = netGR.getWeights()
 
-netGR_basic_method = copy.deepcopy(netGR)
-weights = netGR_basic_method.getWeights()
-# print("w0",weights[0], "w1",weights[1])
-# print(inputs, targets)
-oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=50, learningRate=0.1)
-plt.plot(oldResult, label="Old GR")
-########### end
-print("GeneRec")
-# print(netGR)
-resultGR = netGR.Learn(inputs, targets, numEpochs=50)
-print(resultGR)
+# oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
+# plt.plot(oldResult, label="Old GR")
+
+print(netGR)
+resultGR = netGR.Learn(inputs, targets, numEpochs=200)
 plt.plot(resultGR, label="GeneRec")
 
-# print("CHL")
-# print(netCHL)
-# resultCHL = netCHL.Learn(inputs, targets, numEpochs=200)
-# plt.plot(resultCHL, label="CHL")
+print(netCHL)
+resultCHL = netCHL.Learn(inputs, targets, numEpochs=200)
+plt.plot(resultCHL, label="CHL")
 
-# print("CHL_T")
-# print(netCHL_T)
-# resultCHL_T = netCHL_T.Learn(inputs, targets, numEpochs=200)
-# plt.plot(resultCHL_T, label="CHL_T")
+print(netCHL_T)
+resultCHL_T = netCHL_T.Learn(inputs, targets, numEpochs=200)
+plt.plot(resultCHL_T, label="CHL_T")
 
 
 plt.title("Iris Dataset")

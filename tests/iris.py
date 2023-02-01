@@ -1,5 +1,7 @@
 '''Algorithm test using iris dataset classification task.
 '''
+import sys, os
+sys.path.insert(0, os.path.join(sys.path[0],'../src'))
 from vivilux import *
 from vivilux.learningRules import CHL, GeneRec
 

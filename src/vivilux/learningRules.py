@@ -12,4 +12,5 @@ def GeneRec(inLayer, outLayer):
     '''
     xp, xm = inLayer.obsAct, inLayer.preAct
     yp, ym = outLayer.obsAct, outLayer.preAct
+    # print("g---------\n",yp,ym,xm,"\ng---------\n",)
     return (yp - ym)[:,np.newaxis] @ (xm)[np.newaxis,:] 
