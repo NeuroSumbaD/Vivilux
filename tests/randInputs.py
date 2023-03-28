@@ -22,6 +22,7 @@ targets = np.abs(vecs/mags[...,np.newaxis])
 del vecs, mags
 
 netGR = FFFB([
+    InputLayer(4),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.1)
@@ -65,12 +66,12 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
 
             for timeStep in range(numTimeSteps):
                 #update activation values
-                linInp += deltaTime*(np.abs(weightIn @ currentInput)**2
-                                   + np.abs(weightOut.T @ actOut)**2
+                linInp += deltaTime*(weightIn @ currentInput
+                                   + weightOut.T @ actOut
                                    - linInp)
                 actInp = Sigmoid(linInp)
                 if timeStep <= phaseStep:
-                    linOut += deltaTime*(np.abs(weightOut @ actInp)**2-linOut)
+                    linOut += deltaTime*(weightOut @ actInp-linOut)
                     actOut = Sigmoid(linOut)
                     if timeStep == phaseStep:
                         minusPhaseIn = actInp
@@ -93,9 +94,10 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                 #Contrastive Hebbian Learning rule
                 ####(equivalent to GenRec with symmetry and midpoint approx)
                 ######## (generally converges faster)
-                deltaWeightIn = (plusPhaseIn[:,np.newaxis] @ plusPhaseOut[np.newaxis,:] -
-                                minusPhaseIn[:,np.newaxis] @ minusPhaseOut[np.newaxis,:])
-                # weightIn += learningRate * deltaWeightIn # FIXME FREEZE FIRST LAYER
+                # deltaWeightIn = (plusPhaseIn[:,np.newaxis] @ plusPhaseOut[np.newaxis,:] -
+                #                 minusPhaseIn[:,np.newaxis] @ minusPhaseOut[np.newaxis,:])
+                deltaWeightIn = (plusPhaseIn - minusPhaseIn)[:,np.newaxis] @ currentInput[np.newaxis,:] 
+                weightIn += learningRate * deltaWeightIn # FIXME FREEZE FIRST LAYER
                 deltaWeightOut = (plusPhaseOut - minusPhaseOut)[:,np.newaxis] @ minusPhaseIn[np.newaxis,:] 
 
                 weightOut += learningRate * deltaWeightOut
@@ -113,10 +115,10 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
 
     return errorTrace
 
-# weights = netGR.getWeights()
+weights = netGR.getWeights()
 
-# oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
-# plt.plot(oldResult, label="Old GR")
+oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
+plt.plot(oldResult, label="Old GR")
 
 print(netGR)
 resultGR = netGR.Learn(inputs, targets, numEpochs=200)

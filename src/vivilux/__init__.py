@@ -96,7 +96,7 @@ class Net:
 
     def getWeights(self):
         weights = []
-        for layer in self.layers:
+        for layer in self.layers[1:]:
             weights.append(layer.meshes[0].get())
         return weights
 
@@ -139,12 +139,12 @@ class Mesh:
         data = self.inLayer.preAct
         return self.apply(data)
 
-    def Observe(self, data):
+    def Observe(self):
         data = self.inLayer.obsAct
         return self.apply(data)
 
     def Update(self, delta):
-        self.matrix += self.rate*delta
+        self.set(self.get() + self.rate*delta)
 
     def __len__(self):
         return self.size
@@ -163,10 +163,10 @@ class fbMesh(Mesh):
         raise Exception("Feedback mesh has no 'set' method.")
 
     def get(self):
-        return self.mesh.matrix.T
+        return self.mesh.get().T
 
     def apply(self, data):
-        matrix = self.mesh.matrix.T
+        matrix = self.mesh.get().T
         try:
             return matrix @ data
         except ValueError as ve:
@@ -182,11 +182,13 @@ class Layer:
         incoming data.
     '''
     def __init__(self, length, activation=Sigmoid, learningRule=CHL):
+        self.length = length
         self.preLin = np.zeros(length)
         self.preAct = np.zeros(length)
         
         self.obsLin = np.zeros(length)
         self.obsAct = np.zeros(length)
+
         self.act = activation
         self.rule = learningRule
         self.meshes = [] #empty initial mesh list
@@ -197,16 +199,16 @@ class Layer:
     def Predict(self):
         self.preLin -= DELTA_TIME*self.preLin
         for mesh in self.meshes:
-            self.preLin += DELTA_TIME * mesh.Predict()[:len(self)]**2
+            self.preLin += DELTA_TIME * mesh.Predict()[:len(self)]
         self.preAct = self.act(self.preLin)
         return self.preAct
 
     def Observe(self):
         self.obsLin -= DELTA_TIME * self.obsLin
         for mesh in self.meshes:
-            self.obsLin += DELTA_TIME * mesh.Observe()[:len(self)]**2
+            self.obsLin += DELTA_TIME * mesh.Observe()[:len(self)]
         self.obsAct = self.act(self.obsLin)
-        return self.preAct
+        return self.obsAct
 
     def Clamp(self, data):
         self.obsAct = data[:len(self)]
@@ -217,13 +219,36 @@ class Layer:
         self.meshes[0].Update(delta)
 
     def __len__(self):
-        return len(self.preAct)
+        return self.length
 
     def __str__(self) -> str:
         str = f"Layer ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
         str += f"Rule = {self.rule}"
-        str += f"\n\tMeshes: {self.meshes}"
+        str += f"\n\tMeshes ({len(self.meshes)}): {self.meshes}"
         return str
+
+class InputLayer(Layer):
+    def __init__(self, length):
+        super().__init__(length, 
+            activation=lambda x: x, 
+            learningRule=lambda x: np.zeros((len(x), len(x)))
+        )
+
+    def Clamp(self, data):
+        self.preAct = data
+        self.obsAct = data
+
+    def addMesh(self, mesh):
+        raise Exception("An Input layer has no mesh inputs")
+
+    def Predict(self):
+        return self.preAct
+
+    def Observe(self):
+        return self.preAct
+
+    def Learn(self):
+        return
 
 class FFFB(Net):
     '''A network with feed forward and feedback meshes between each
@@ -231,7 +256,7 @@ class FFFB(Net):
     '''
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        for index, layer in enumerate(self.layers[:-1]):
+        for index, layer in enumerate(self.layers[1:-1]):
             nextLayer = self.layers[index+1]
             layer.addMesh(fbMesh(nextLayer.meshes[0], nextLayer))
 
@@ -243,6 +268,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     net = FFFB([
+        InputLayer(4),
         Layer(4, learningRule=GeneRec),
         Layer(4, learningRule=GeneRec)
     ], Mesh)
