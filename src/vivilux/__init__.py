@@ -176,13 +176,14 @@ class fbMesh(Mesh):
     '''
     def __init__(self, mesh: Mesh, inLayer) -> None:
         super().__init__(mesh.size, inLayer)
+        self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
 
     def set(self):
         raise Exception("Feedback mesh has no 'set' method.")
 
     def get(self):
-        return self.mesh.matrix.T
+        return self.mesh.get().T
 
     def apply(self, data):
         matrix = self.mesh.matrix.T
@@ -222,7 +223,7 @@ class Layer:
         for mesh in self.meshes:
             self.preLin += DELTA_TIME * mesh.Predict()[:len(self)]**2
         self.preAct = self.act(self.preLin)
-        print(f"Predict {self.name} preLin: {self.preLin}, preAct {self.preAct}")
+        # print(f"Predict {self.name} preLin: {self.preLin}, preAct {self.preAct}")
         return self.preAct
 
     def Observe(self):
@@ -230,7 +231,7 @@ class Layer:
         for mesh in self.meshes:
             self.obsLin += DELTA_TIME * mesh.Observe()[:len(self)]**2
         self.obsAct = self.act(self.obsLin)
-        print(f"Observe {self.name} obsLin: {self.obsLin}, obsAct {self.obsAct}")
+        # print(f"Observe {self.name} obsLin: {self.obsLin}, obsAct {self.obsAct}")
         return self.obsAct
 
     def Clamp(self, data):
@@ -240,7 +241,10 @@ class Layer:
     def Learn(self):
         inLayer = self.meshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
+        print(f"In layer: " + str(inLayer))
+        print(f"layer: " + str(Layer))
         print(f"Delta Learn [{self.name}]: {delta}")
+        print("Mesh: " + str(self.meshes[0]))
         self.meshes[0].Update(delta)
 
     def __len__(self):
