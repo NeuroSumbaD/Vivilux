@@ -32,6 +32,9 @@ netCHL.setLearningRule(CHL)
 netCHL_T = copy.deepcopy(netGR)
 netCHL_T.setLearningRule(CHL_trans)
 
+netMixed = copy.deepcopy(netCHL)
+netMixed.setLearningRule(GeneRec, 1) #sets second layer learnRule
+
 def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                     numTimeSteps=100, phaseStep = 50, learningRate = 0.1,
                     deltaTime = 0.1):
@@ -113,25 +116,37 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
 
     return errorTrace
 
-# weights = netGR.getWeights()
+weights = netGR.getWeights()
 
-# oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
-# plt.plot(oldResult, label="Old GR")
+oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
+plt.plot(oldResult, label="Old GR")
 
-print(netGR)
+print(f"net: {netGR}")
+print(f"Initial {netGR.metric}: ", netGR.Evaluate(inputs, targets))
 resultGR = netGR.Learn(inputs, targets, numEpochs=200)
+print(f"Final {netGR.metric}: ", resultGR[-1])
 plt.plot(resultGR, label="GeneRec")
 
-print(netCHL)
+print(f"net: {netCHL}")
+print(f"Initial {netCHL.metric}: ", netCHL.Evaluate(inputs, targets))
 resultCHL = netCHL.Learn(inputs, targets, numEpochs=200)
+print(f"Final {netCHL.metric}: ", resultCHL[-1])
 plt.plot(resultCHL, label="CHL")
 
-print(netCHL_T)
+print(f"net: {netCHL_T}")
+print(f"Initial {netCHL_T.metric}: ", netCHL_T.Evaluate(inputs, targets))
 resultCHL_T = netCHL_T.Learn(inputs, targets, numEpochs=200)
+print(f"Final {netCHL_T.metric}: ", resultCHL_T[-1])
 plt.plot(resultCHL_T, label="CHL_T")
 
+print(f"net: {netMixed}")
+print(f"Initial {netMixed.metric}: ", netMixed.Evaluate(inputs, targets))
+resultMixed = netMixed.Learn(inputs, targets, numEpochs=200)
+print(f"Final {netMixed.metric}: ", resultMixed[-1])
+plt.plot(resultMixed, label="Mixed")
 
-plt.title("Iris Dataset")
+
+plt.title("Random Input/Output Matching")
 plt.ylabel("RMSE")
 plt.xlabel("Epoch")
 plt.legend()

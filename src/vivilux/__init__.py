@@ -68,9 +68,14 @@ class Net:
         return None # observations know the outcome
 
     def Infer(self, inData, numTimeSteps=25):
+        outData = np.zeros(inData.shape)
+        index = 0
         for inDatum in inData:
             for time in range(numTimeSteps):
-                self.Predict(inDatum)
+                result = self.Predict(inDatum)
+            outData[index] = result
+            index += 1
+        return outData
 
     
     def Learn(self, inData, outData, numTimeSteps=50, numEpochs=50, verbose = False):
@@ -81,6 +86,8 @@ class Net:
             index=0
             for inDatum, outDatum in zip(inData, outData):
                 for time in range(numTimeSteps):
+                    #TODO: Check if this causes error
+                    ## Each modifies a different variable for activation, so this should not cause any errors
                     lastResult = self.Predict(inDatum)
                     self.Observe(inDatum, outDatum)
                 epochResults[index] = lastResult
@@ -93,6 +100,10 @@ class Net:
             if verbose: print(self)
         
         return results
+    
+    def Evaluate(self, inData, outData, numTimeSteps=25):
+        results = self.Infer(inData, numTimeSteps)
+        return self.metric(results, outData)
 
     def getWeights(self):
         weights = []
@@ -100,11 +111,14 @@ class Net:
             weights.append(layer.meshes[0].get())
         return weights
 
-    def setLearningRule(self, rule):
+    def setLearningRule(self, rule, layerIndex: int = -1):
         '''Sets the learning rule for all forward meshes to 'rule'.
         '''
-        for layer in self.layers:
-            layer.rule = rule
+        if layerIndex == -1 :
+            for layer in self.layers:
+                layer.rule = rule
+        else:
+            self.layers[layerIndex].rule = rule
 
     def __str__(self) -> str:
         strs = []
@@ -209,6 +223,7 @@ class Layer:
         return self.preAct
 
     def Clamp(self, data):
+        self.preAct = data[:len(self)]
         self.obsAct = data[:len(self)]
 
     def Learn(self):
