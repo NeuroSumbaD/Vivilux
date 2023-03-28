@@ -60,10 +60,10 @@ class Net:
             error-driven learning scheme of neural network computation.
         '''
         self.layers[0].Clamp(inData)
+        self.layers[-1].Clamp(outData)
         for layer in self.layers[1:-1]:
             layer.Observe()
 
-        self.layers[-1].Clamp(outData)
 
         return None # observations know the outcome
 
@@ -130,11 +130,15 @@ class Net:
 class Mesh:
     '''Base class for meshes of synaptic elements.
     '''
+    count = 0
     def __init__(self, size: int, inLayer, learningRate=0.5):
         self.size = size if size > len(inLayer) else len(inLayer)
         self.matrix = np.eye(self.size)
         self.inLayer = inLayer
         self.rate = learningRate
+
+        self.name = f"MESH_{Mesh.count}"
+        Mesh.count += 1
 
     def set(self, matrix):
         self.matrix = matrix
@@ -153,11 +157,12 @@ class Mesh:
         data = self.inLayer.preAct
         return self.apply(data)
 
-    def Observe(self, data):
+    def Observe(self):
         data = self.inLayer.obsAct
         return self.apply(data)
 
     def Update(self, delta):
+        print(f"Delta ({self.name}): {delta}")
         self.matrix += self.rate*delta
 
     def __len__(self):
@@ -195,7 +200,8 @@ class Layer:
         and observe phases, along with a list of input meshes applied to
         incoming data.
     '''
-    def __init__(self, length, activation=Sigmoid, learningRule=CHL):
+    count = 0
+    def __init__(self, length, activation=Sigmoid, learningRule=CHL, name = None):
         self.preLin = np.zeros(length)
         self.preAct = np.zeros(length)
         
@@ -205,6 +211,9 @@ class Layer:
         self.rule = learningRule
         self.meshes = [] #empty initial mesh list
 
+        self.name =  f"LAYER_{Layer.count}" if name==None else name
+        Layer.count += 1
+
     def addMesh(self, mesh):
         self.meshes.append(mesh)
 
@@ -213,6 +222,7 @@ class Layer:
         for mesh in self.meshes:
             self.preLin += DELTA_TIME * mesh.Predict()[:len(self)]**2
         self.preAct = self.act(self.preLin)
+        print(f"Predict {self.name} preLin: {self.preLin}, preAct {self.preAct}")
         return self.preAct
 
     def Observe(self):
@@ -220,7 +230,8 @@ class Layer:
         for mesh in self.meshes:
             self.obsLin += DELTA_TIME * mesh.Observe()[:len(self)]**2
         self.obsAct = self.act(self.obsLin)
-        return self.preAct
+        print(f"Observe {self.name} obsLin: {self.obsLin}, obsAct {self.obsAct}")
+        return self.obsAct
 
     def Clamp(self, data):
         self.preAct = data[:len(self)]
@@ -229,13 +240,14 @@ class Layer:
     def Learn(self):
         inLayer = self.meshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
+        print(f"Delta Learn [{self.name}]: {delta}")
         self.meshes[0].Update(delta)
 
     def __len__(self):
         return len(self.preAct)
 
     def __str__(self) -> str:
-        str = f"Layer ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
+        str = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
         str += f"Rule = {self.rule}"
         str += f"\n\tMeshes: {self.meshes}"
         return str

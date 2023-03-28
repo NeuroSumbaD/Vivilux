@@ -1,7 +1,7 @@
 import copy
 
 from vivilux import *
-from vivilux.learningRules import CHL, GeneRec
+from vivilux.learningRules import CHL, CHL2, GeneRec
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,18 +22,25 @@ targets = np.abs(vecs/mags[...,np.newaxis])
 del vecs, mags
 
 netGR = FFFB([
+    Layer(4, name = "INPUT"),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.1)
+], Mesh, learningRate = 0.01)
 
 netCHL = copy.deepcopy(netGR)
-netCHL.setLearningRule(CHL)
+netCHL.setLearningRule(CHL2)
 
 netCHL_T = copy.deepcopy(netGR)
 netCHL_T.setLearningRule(CHL_trans)
 
 netMixed = copy.deepcopy(netCHL)
 netMixed.setLearningRule(GeneRec, 1) #sets second layer learnRule
+
+print("DATA BEFORE TRAINING NETMIXED")
+for layer in netMixed.layers:
+    print(layer)
+    for mesh in layer.meshes:
+        print(mesh) 
 
 def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                     numTimeSteps=100, phaseStep = 50, learningRate = 0.1,
@@ -121,29 +128,30 @@ weights = netGR.getWeights()
 oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
 plt.plot(oldResult, label="Old GR")
 
-print(f"net: {netGR}")
-print(f"Initial {netGR.metric}: ", netGR.Evaluate(inputs, targets))
-resultGR = netGR.Learn(inputs, targets, numEpochs=200)
-print(f"Final {netGR.metric}: ", resultGR[-1])
-plt.plot(resultGR, label="GeneRec")
+# print(f"net: {netGR}")
+# print(f"Initial {netGR.metric}: ", netGR.Evaluate(inputs, targets))
+# resultGR = netGR.Learn(inputs, targets, numEpochs=200)
+# print(f"Final {netGR.metric}: ", resultGR[-1])
+# plt.plot(resultGR, label="GeneRec")
 
-print(f"net: {netCHL}")
-print(f"Initial {netCHL.metric}: ", netCHL.Evaluate(inputs, targets))
-resultCHL = netCHL.Learn(inputs, targets, numEpochs=200)
-print(f"Final {netCHL.metric}: ", resultCHL[-1])
-plt.plot(resultCHL, label="CHL")
+# print(f"net: {netCHL}")
+# print(f"Initial {netCHL.metric}: ", netCHL.Evaluate(inputs, targets))
+# resultCHL = netCHL.Learn(inputs, targets, numEpochs=200)
+# print(f"Final {netCHL.metric}: ", resultCHL[-1])
+# plt.plot(resultCHL, label="CHL")
 
-print(f"net: {netCHL_T}")
-print(f"Initial {netCHL_T.metric}: ", netCHL_T.Evaluate(inputs, targets))
-resultCHL_T = netCHL_T.Learn(inputs, targets, numEpochs=200)
-print(f"Final {netCHL_T.metric}: ", resultCHL_T[-1])
-plt.plot(resultCHL_T, label="CHL_T")
+# print(f"net: {netCHL_T}")
+# print(f"Initial {netCHL_T.metric}: ", netCHL_T.Evaluate(inputs, targets))
+# resultCHL_T = netCHL_T.Learn(inputs, targets, numEpochs=200)
+# print(f"Final {netCHL_T.metric}: ", resultCHL_T[-1])
+# plt.plot(resultCHL_T, label="CHL_T")
 
 print(f"net: {netMixed}")
-print(f"Initial {netMixed.metric}: ", netMixed.Evaluate(inputs, targets))
+initial = netMixed.Evaluate(inputs, targets)
+print(f"Initial {netMixed.metric}: ", initial)
 resultMixed = netMixed.Learn(inputs, targets, numEpochs=200)
 print(f"Final {netMixed.metric}: ", resultMixed[-1])
-plt.plot(resultMixed, label="Mixed")
+plt.plot(np.concatenate((np.array((initial,)), resultMixed)), label="Mixed")
 
 
 plt.title("Random Input/Output Matching")
