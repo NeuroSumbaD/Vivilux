@@ -86,6 +86,9 @@ class Net:
             index=0
             for inDatum, outDatum in zip(inData, outData):
                 for time in range(numTimeSteps):
+                    #TODO: REMOVE TESTCODE
+                    print(f"Timestep: {time}")
+                    ### END TESTCODE
                     #TODO: Check if this causes error
                     ## Each modifies a different variable for activation, so this should not cause any errors
                     lastResult = self.Predict(inDatum)
@@ -130,11 +133,18 @@ class Net:
 class Mesh:
     '''Base class for meshes of synaptic elements.
     '''
+    # TODO: REMOVE TESTCODE
+    meshCount = 0
+    ### END TESTCODE
     def __init__(self, size: int, inLayer, learningRate=0.5):
         self.size = size if size > len(inLayer) else len(inLayer)
         self.matrix = np.eye(self.size)
         self.inLayer = inLayer
         self.rate = learningRate
+        # TODO: REMOVE TEST CODE
+        self.name = f"mesh_{Mesh.meshCount}"
+        Mesh.meshCount += 1
+        ### END TESTCODE
 
     def set(self, matrix):
         self.matrix = matrix
@@ -158,13 +168,16 @@ class Mesh:
         return self.apply(data)
 
     def Update(self, delta):
+        #TODO: REMOVE TESTCODE
+        print(f"Matrix: {self.get()}, \n\trate: {self.rate}, deltas: {delta}")
+        ### END TESTCODE
         self.matrix += self.rate*delta
 
     def __len__(self):
         return self.size
 
     def __str__(self):
-        return f"\n\t\tMesh ({self.size}) = {self.get()}"
+        return f"\n\t\t{self.name.upper()} ({self.size}) = {self.get()}"
 
 class fbMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
@@ -213,6 +226,9 @@ class Layer:
         for mesh in self.meshes:
             self.preLin += DELTA_TIME * mesh.Predict()[:len(self)]**2
         self.preAct = self.act(self.preLin)
+        #TODO: REMOVE TESTCODE
+        print(f"PREDICT:\n" + str(self) + "\n\n")
+        ### END TESTCODE
         return self.preAct
 
     def Observe(self):
@@ -220,7 +236,10 @@ class Layer:
         for mesh in self.meshes:
             self.obsLin += DELTA_TIME * mesh.Observe()[:len(self)]**2
         self.obsAct = self.act(self.obsLin)
-        return self.preAct
+        #TODO: REMOVE TESTCODE
+        print(f"OBSERVE:\n" + str(self) + "\n\n")
+        ### END TESTCODE
+        return self.obsAct
 
     def Clamp(self, data):
         self.preAct = data[:len(self)]
@@ -235,10 +254,11 @@ class Layer:
         return len(self.preAct)
 
     def __str__(self) -> str:
-        str = f"Layer ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
-        str += f"Rule = {self.rule}"
-        str += f"\n\tMeshes: {self.meshes}"
-        return str
+        layStr = f"Layer ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
+        layStr += f"Rule = {self.rule}"
+        layStr += f"\n\tMeshes: " + str(self.meshes)
+        layStr += f"\n\tActivity: {self.preLin}, {self.preAct}, {self.obsLin}, {self.obsAct}"
+        return layStr
 
 class FFFB(Net):
     '''A network with feed forward and feedback meshes between each
