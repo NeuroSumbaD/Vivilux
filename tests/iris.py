@@ -7,7 +7,7 @@ import numpy as np
 from sklearn import datasets
 import matplotlib.pyplot as plt
 
-np.seed(0)
+np.random.seed(0)
 
 netCHL = FFFB([
     Layer(4, learningRule=CHL),
@@ -29,9 +29,9 @@ targets[np.arange(len(inputs)), iris.target] = 1
 shuffle = np.random.permutation(len(inputs))
 inputs, targets = inputs[shuffle], targets[shuffle]
 
-resultCHL = netCHL.Learn(inputs, targets, numEpochs=5000)
+resultCHL = netCHL.Learn(inputs, targets, numEpochs=500)
 plt.plot(resultCHL, label="CHL")
-resultGR = netGR.Learn(inputs, targets, numEpochs=5000)
+resultGR = netGR.Learn(inputs, targets, numEpochs=500)
 plt.plot(resultGR, label="GeneRec")
 plt.title("Iris Dataset")
 plt.ylabel("RMSE")

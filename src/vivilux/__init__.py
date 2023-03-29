@@ -86,6 +86,9 @@ class Net:
             index=0
             for inDatum, outDatum in zip(inData, outData):
                 for time in range(numTimeSteps):
+                    #TODO: REMOVE TESTCODE
+                    print(f"Timestep: {time}")
+                    ### END TESTCODE
                     #TODO: Check if this causes error
                     ## Each modifies a different variable for activation, so this should not cause any errors
                     lastResult = self.Predict(inDatum)
@@ -137,6 +140,7 @@ class Mesh:
         self.inLayer = inLayer
         self.rate = learningRate
 
+
         self.name = f"MESH_{Mesh.count}"
         Mesh.count += 1
 
@@ -162,14 +166,16 @@ class Mesh:
         return self.apply(data)
 
     def Update(self, delta):
-        print(f"Delta ({self.name}): {delta}")
+        #TODO: REMOVE TESTCODE
+        print(f"{self.name}: {self.get()}, \n\trate: {self.rate}, deltas: {delta}")
+        ### END TESTCODE
         self.matrix += self.rate*delta
 
     def __len__(self):
         return self.size
 
     def __str__(self):
-        return f"\n\t\tMesh ({self.size}) = {self.get()}"
+        return f"\n\t\t{self.name.upper()} ({self.size}) = {self.get()}"
 
 class fbMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
@@ -251,10 +257,11 @@ class Layer:
         return len(self.preAct)
 
     def __str__(self) -> str:
-        str = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
-        str += f"Rule = {self.rule}"
-        str += f"\n\tMeshes: {self.meshes}"
-        return str
+        layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
+        layStr += f"Rule = {self.rule}"
+        layStr += f"\n\tMeshes: " + str(self.meshes)
+        layStr += f"\n\tActivity: {self.preLin}, {self.preAct}, {self.obsLin}, {self.obsAct}"
+        return layStr
 
 class FFFB(Net):
     '''A network with feed forward and feedback meshes between each

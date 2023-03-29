@@ -74,6 +74,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
             targetOutput = targets[sample]
 
             for timeStep in range(numTimeSteps):
+                print(f"Timestep: {timeStep}")
                 #update activation values
                 linInp += deltaTime*(np.abs(weightIn @ currentInput)**2
                                    + np.abs(weightOut.T @ actOut)**2
@@ -96,6 +97,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                 # weightInTrace[traceIndex] = weightIn.flatten()
                 # weightOutTrace[traceIndex] = np.abs(weightOut).flatten()
                 fullErrorTrace[traceIndex] = np.sqrt(np.sum((targetOutput - actOut)**2))
+                print(f"\n{linInp}, {actInp}, {linOut}, {actOut}\n\n")
             
             plusPhaseIn = actInp
             plusPhaseOut = actOut
@@ -107,7 +109,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                                 minusPhaseIn[:,np.newaxis] @ minusPhaseOut[np.newaxis,:])
                 # weightIn += learningRate * deltaWeightIn # FIXME FREEZE FIRST LAYER
                 deltaWeightOut = (plusPhaseOut - minusPhaseOut)[:,np.newaxis] @ minusPhaseIn[np.newaxis,:] 
-
+                print(f"\ndeltaWeightIn: {deltaWeightIn}\n\ndeltaWeightOut: {deltaWeightOut}")
                 weightOut += learningRate * deltaWeightOut
         
         #Store RMSE for the given epoch
@@ -126,27 +128,27 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
 weights = netGR.getWeights()
 
 oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
-plt.plot(oldResult, label="Old GR")
+# plt.plot(oldResult, label="Old GR")
 
-# print(f"net: {netGR}")
+# print(f"net: {str(netGR)}")
 # print(f"Initial {netGR.metric}: ", netGR.Evaluate(inputs, targets))
 # resultGR = netGR.Learn(inputs, targets, numEpochs=200)
 # print(f"Final {netGR.metric}: ", resultGR[-1])
 # plt.plot(resultGR, label="GeneRec")
 
-# print(f"net: {netCHL}")
+# print(f"net: {str(netCHL)}")
 # print(f"Initial {netCHL.metric}: ", netCHL.Evaluate(inputs, targets))
 # resultCHL = netCHL.Learn(inputs, targets, numEpochs=200)
 # print(f"Final {netCHL.metric}: ", resultCHL[-1])
 # plt.plot(resultCHL, label="CHL")
 
-# print(f"net: {netCHL_T}")
+# print(f"net: {str(netCHL_T)}")
 # print(f"Initial {netCHL_T.metric}: ", netCHL_T.Evaluate(inputs, targets))
 # resultCHL_T = netCHL_T.Learn(inputs, targets, numEpochs=200)
 # print(f"Final {netCHL_T.metric}: ", resultCHL_T[-1])
 # plt.plot(resultCHL_T, label="CHL_T")
 
-print(f"net: {netMixed}")
+print(f"net: {str(netMixed)}")
 initial = netMixed.Evaluate(inputs, targets)
 print(f"Initial {netMixed.metric}: ", initial)
 resultMixed = netMixed.Learn(inputs, targets, numEpochs=200)
@@ -154,8 +156,8 @@ print(f"Final {netMixed.metric}: ", resultMixed[-1])
 plt.plot(np.concatenate((np.array((initial,)), resultMixed)), label="Mixed")
 
 
-plt.title("Random Input/Output Matching")
-plt.ylabel("RMSE")
-plt.xlabel("Epoch")
-plt.legend()
-plt.show()
+# plt.title("Random Input/Output Matching")
+# plt.ylabel("RMSE")
+# plt.xlabel("Epoch")
+# plt.legend()
+# plt.show()
