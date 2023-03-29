@@ -37,7 +37,7 @@ class Net:
         self.layers = layers
         self.metric = metric
 
-        for index, layer in enumerate(self.layers[1:]):
+        for index, layer in enumerate(self.layers[1:], 1):
             size = len(layer)
             layer.addMesh(meshType(size, self.layers[index-1], learningRate))
 
@@ -79,7 +79,8 @@ class Net:
 
     
     def Learn(self, inData, outData, numTimeSteps=50, numEpochs=50, verbose = False):
-        results = np.zeros(numEpochs)
+        results = np.zeros(numEpochs+1)
+        results[0] = self.Evaluate(inData, outData, numTimeSteps)
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
         for epoch in range(numEpochs):
             # iterate through data and time
@@ -87,7 +88,7 @@ class Net:
             for inDatum, outDatum in zip(inData, outData):
                 for time in range(numTimeSteps):
                     #TODO: REMOVE TESTCODE
-                    print(f"Timestep: {time}")
+                    # print(f"Timestep: {time}")
                     ### END TESTCODE
                     #TODO: Check if this causes error
                     ## Each modifies a different variable for activation, so this should not cause any errors
@@ -99,7 +100,7 @@ class Net:
             for layer in self.layers:
                 layer.Learn()
             # evaluate metric
-            results[epoch] = self.metric(epochResults, outData)
+            results[epoch+1] = self.metric(epochResults, outData)
             if verbose: print(self)
         
         return results
@@ -169,7 +170,7 @@ class Mesh:
 
     def Update(self, delta):
         #TODO: REMOVE TESTCODE
-        print(f"{self.name}: {self.get()}, \n\trate: {self.rate}, deltas: {delta}")
+        # print(f"{self.name}: {self.get()}, \n\trate: {self.rate}, deltas: {delta}")
         ### END TESTCODE
         self.matrix += self.rate*delta
 
@@ -177,7 +178,7 @@ class Mesh:
         return self.size
 
     def __str__(self):
-        return f"\n\t\t{self.name.upper()} ({self.size}) = {self.get()}"
+        return f"\n\t\t{self.name.upper()} ({self.size} <={self.inLayer.name}) = {self.get()}"
 
 class fbMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
@@ -245,7 +246,9 @@ class Layer:
         return self.obsAct
 
     def Clamp(self, data):
+        self.preLin = data[:len(self)]
         self.preAct = data[:len(self)]
+        self.obsLin = data[:len(self)]
         self.obsAct = data[:len(self)]
 
     def Learn(self):
@@ -253,8 +256,9 @@ class Layer:
         # TODO: Allow multiple meshes to learn, skip fb meshes
         inLayer = self.meshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
+        print("LEARN")
         print(f"In layer: " + str(inLayer))
-        print(f"layer: " + str(Layer))
+        print(f"layer: " + str(self))
         print(f"Delta Learn [{self.name}]: {delta}")
         print("Mesh: " + str(self.meshes[0]))
         self.meshes[0].Update(delta)

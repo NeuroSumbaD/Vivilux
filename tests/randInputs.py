@@ -74,7 +74,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
             targetOutput = targets[sample]
 
             for timeStep in range(numTimeSteps):
-                print(f"Timestep: {timeStep}")
+                # print(f"Timestep: {timeStep}")
                 #update activation values
                 linInp += deltaTime*(np.abs(weightIn @ currentInput)**2
                                    + np.abs(weightOut.T @ actOut)**2
@@ -97,7 +97,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                 # weightInTrace[traceIndex] = weightIn.flatten()
                 # weightOutTrace[traceIndex] = np.abs(weightOut).flatten()
                 fullErrorTrace[traceIndex] = np.sqrt(np.sum((targetOutput - actOut)**2))
-                print(f"\n{linInp}, {actInp}, {linOut}, {actOut}\n\n")
+                # print(f"\n{linInp}, {actInp}, {linOut}, {actOut}\n\n")
             
             plusPhaseIn = actInp
             plusPhaseOut = actOut
@@ -128,7 +128,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
 weights = netGR.getWeights(ffOnly=True)
 
 oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
-# plt.plot(oldResult, label="Old GR")
+plt.plot(oldResult, label="Old GR")
 
 # print(f"net: {str(netGR)}")
 # print(f"Initial {netGR.metric}: ", netGR.Evaluate(inputs, targets))
@@ -148,12 +148,12 @@ oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=20
 # print(f"Final {netCHL_T.metric}: ", resultCHL_T[-1])
 # plt.plot(resultCHL_T, label="CHL_T")
 
-print(f"net: {str(netMixed)}")
-initial = netMixed.Evaluate(inputs, targets)
-print(f"Initial {netMixed.metric}: ", initial)
+# print(f"net: {str(netMixed)}")
+# initial = netMixed.Evaluate(inputs, targets)
+# print(f"Initial {netMixed.metric}: ", initial)
 resultMixed = netMixed.Learn(inputs, targets, numEpochs=200)
 print(f"Final {netMixed.metric}: ", resultMixed[-1])
-plt.plot(np.concatenate((np.array((initial,)), resultMixed)), label="Mixed")
+plt.plot(resultMixed, label="Mixed")
 
 
 plt.title("Random Input/Output Matching")
