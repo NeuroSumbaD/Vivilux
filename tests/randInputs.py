@@ -22,7 +22,7 @@ targets = np.abs(vecs/mags[...,np.newaxis])
 del vecs, mags
 
 netGR = FFFB([
-    Layer(4, name = "INPUT"),
+    Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.01)
@@ -125,7 +125,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
 
     return errorTrace
 
-weights = netGR.getWeights()
+weights = netGR.getWeights(ffOnly=True)
 
 oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
 # plt.plot(oldResult, label="Old GR")
@@ -156,8 +156,8 @@ print(f"Final {netMixed.metric}: ", resultMixed[-1])
 plt.plot(np.concatenate((np.array((initial,)), resultMixed)), label="Mixed")
 
 
-# plt.title("Random Input/Output Matching")
-# plt.ylabel("RMSE")
-# plt.xlabel("Epoch")
-# plt.legend()
-# plt.show()
+plt.title("Random Input/Output Matching")
+plt.ylabel("RMSE")
+plt.xlabel("Epoch")
+plt.legend()
+plt.show()

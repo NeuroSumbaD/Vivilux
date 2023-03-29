@@ -108,10 +108,12 @@ class Net:
         results = self.Infer(inData, numTimeSteps)
         return self.metric(results, outData)
 
-    def getWeights(self):
+    def getWeights(self, ffOnly):
         weights = []
         for layer in self.layers:
-            weights.append(layer.meshes[0].get())
+            for mesh in layer.meshes:
+                weights.append(mesh.get())
+                if ffOnly: break
         return weights
 
     def setLearningRule(self, rule, layerIndex: int = -1):
@@ -128,7 +130,7 @@ class Net:
         for layer in self.layers:
             strs.append(str(layer))
 
-        return str(strs)
+        return "\n\n".join(strs)
 
 class Mesh:
     '''Base class for meshes of synaptic elements.
@@ -208,7 +210,7 @@ class Layer:
         incoming data.
     '''
     count = 0
-    def __init__(self, length, activation=Sigmoid, learningRule=CHL, name = None):
+    def __init__(self, length, activation=Sigmoid, learningRule=CHL, isInput = False, name = None):
         self.preLin = np.zeros(length)
         self.preAct = np.zeros(length)
         
@@ -218,7 +220,9 @@ class Layer:
         self.rule = learningRule
         self.meshes = [] #empty initial mesh list
 
-        self.name =  f"LAYER_{Layer.count}" if name==None else name
+        self.isInput = isInput
+        self.name =  f"LAYER_{Layer.count}" if name == None else name
+        if isInput: self.name = "INPUT_" + self.name
         Layer.count += 1
 
     def addMesh(self, mesh):
@@ -245,6 +249,8 @@ class Layer:
         self.obsAct = data[:len(self)]
 
     def Learn(self):
+        if self.isInput: return
+        # TODO: Allow multiple meshes to learn, skip fb meshes
         inLayer = self.meshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
         print(f"In layer: " + str(inLayer))
@@ -269,7 +275,8 @@ class FFFB(Net):
     '''
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        for index, layer in enumerate(self.layers[:-1]):
+        for index, layer in enumerate(self.layers[1:-1], 1): 
+            #skip input and output layers, add feedback matrices
             nextLayer = self.layers[index+1]
             layer.addMesh(fbMesh(nextLayer.meshes[0], nextLayer))
 
