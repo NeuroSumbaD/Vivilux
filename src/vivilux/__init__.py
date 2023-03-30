@@ -46,7 +46,7 @@ class Net:
             error-driven learning scheme of neural network computation.
         '''
         # outputs = []
-        self.layers[0].Clamp(data)
+        self.layers[0].ClampPre(data)
 
         for layer in self.layers[1:-1]:
             layer.Predict()
@@ -59,20 +59,30 @@ class Net:
         '''Training method called 'observe' in accordance with a predictive
             error-driven learning scheme of neural network computation.
         '''
-        self.layers[0].Clamp(inData)
-        self.layers[-1].Clamp(outData)
+        self.layers[0].ClampObs(inData)
+        self.layers[-1].ClampObs(outData)
         for layer in self.layers[1:-1]:
             layer.Observe()
 
 
         return None # observations know the outcome
 
-    def Infer(self, inData, numTimeSteps=25):
+    #TODO: REMOVE 'outData' ARGUMENT (used for debugging)
+    def Infer(self, inData, outData, numTimeSteps=25):
         outData = np.zeros(inData.shape)
         index = 0
         for inDatum in inData:
             for time in range(numTimeSteps):
+                #TODO: REMOVE TESTCODE
+                print(f"Timestep: {time}")
                 result = self.Predict(inDatum)
+#TODO: REMOVE TESTCODE
+                print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
+            for time in range(numTimeSteps):
+                #TODO: REMOVE TESTCODE
+                print(f"Timestep: {time + 50}")
+                result = self.Observe(inDatum, outData[index])
+                print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))
             outData[index] = result
             index += 1
         return outData
@@ -82,23 +92,36 @@ class Net:
         results = np.zeros(numEpochs+1)
         results[0] = self.Evaluate(inData, outData, numTimeSteps)
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
+        print("TRAINING START")
         for epoch in range(numEpochs):
             # iterate through data and time
             index=0
             for inDatum, outDatum in zip(inData, outData):
                 for time in range(numTimeSteps):
                     #TODO: REMOVE TESTCODE
-                    # print(f"Timestep: {time}")
+                    print(f"Timestep: {time}")
                     ### END TESTCODE
                     #TODO: Check if this causes error
                     ## Each modifies a different variable for activation, so this should not cause any errors
                     lastResult = self.Predict(inDatum)
+                    #TODO: REMOVE TESTCODE
+                    print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
+                for time in range(numTimeSteps):
+                    print(f"Timestep: {time+numTimeSteps}")
                     self.Observe(inDatum, outDatum)
+                    #TODO: REMOVE TESTCODE
+                    print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))
                 epochResults[index] = lastResult
                 index += 1
-            # update meshes
-            for layer in self.layers:
-                layer.Learn()
+                # update meshes
+                for layer in self.layers:
+                    #TODO: REMOVE TESTCODE
+                    print(layer.name)
+                    print("".join(
+                        [str(activity) for activity in layer.getActivity()[1::2]]
+                        ))
+                    ### END TESTCODE
+                    layer.Learn()
             # evaluate metric
             results[epoch+1] = self.metric(epochResults, outData)
             if verbose: print(self)
@@ -106,7 +129,8 @@ class Net:
         return results
     
     def Evaluate(self, inData, outData, numTimeSteps=25):
-        results = self.Infer(inData, numTimeSteps)
+        #TODO: REMOVE 'outData' ARGUMENT (used for debugging)
+        results = self.Infer(inData, outData, numTimeSteps)
         return self.metric(results, outData)
 
     def getWeights(self, ffOnly):
@@ -116,6 +140,10 @@ class Net:
                 weights.append(mesh.get())
                 if ffOnly: break
         return weights
+    
+    def getActivity(self):
+        for layer in self.layers:
+            "\n".join(layer.getActivity())
 
     def setLearningRule(self, rule, layerIndex: int = -1):
         '''Sets the learning rule for all forward meshes to 'rule'.
@@ -222,10 +250,17 @@ class Layer:
         self.meshes = [] #empty initial mesh list
 
         self.isInput = isInput
+        self.freeze = False
         self.name =  f"LAYER_{Layer.count}" if name == None else name
         if isInput: self.name = "INPUT_" + self.name
         Layer.count += 1
 
+    def Freeze(self):
+        self.freeze = True
+
+    def Unfreeze(self):
+        self.freeze = False
+    
     def addMesh(self, mesh):
         self.meshes.append(mesh)
 
@@ -245,23 +280,33 @@ class Layer:
         # print(f"Observe {self.name} obsLin: {self.obsLin}, obsAct {self.obsAct}")
         return self.obsAct
 
-    def Clamp(self, data):
+    def ClampPre(self, data):
         self.preLin = data[:len(self)]
         self.preAct = data[:len(self)]
+
+    def ClampObs(self, data):
         self.obsLin = data[:len(self)]
         self.obsAct = data[:len(self)]
 
     def Learn(self):
-        if self.isInput: return
+        if self.isInput or self.freeze: return
         # TODO: Allow multiple meshes to learn, skip fb meshes
         inLayer = self.meshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
-        print("LEARN")
-        print(f"In layer: " + str(inLayer))
-        print(f"layer: " + str(self))
-        print(f"Delta Learn [{self.name}]: {delta}")
-        print("Mesh: " + str(self.meshes[0]))
+        # TODO: REMOVE TESTCODE
+        # if not np.any(delta): 
+        #     print(f"WARN: ZERO DELTA!\nLayer: {self.name}[{self.getActivity()}],"
+        #           f"In Layer:  {inLayer.name}[{inLayer.getActivity()}]")
+        # print("LEARN")
+        # print(f"In layer: " + str(inLayer))
+        # print(f"layer: " + str(self))
+        print(f"delta [{self.name}]: {delta}")
+        # print("Mesh: " + str(self.meshes[0]))
+        ### END TESTCODE
         self.meshes[0].Update(delta)
+
+    def getActivity(self):
+        return [self.preLin, self.preAct, self.obsLin, self.obsAct]
 
     def __len__(self):
         return len(self.preAct)
@@ -269,7 +314,7 @@ class Layer:
     def __str__(self) -> str:
         layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
         layStr += f"Rule = {self.rule}"
-        layStr += f"\n\tMeshes: " + str(self.meshes)
+        layStr += f"\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.meshes])
         layStr += f"\n\tActivity: {self.preLin}, {self.preAct}, {self.obsLin}, {self.obsAct}"
         return layStr
 
@@ -292,6 +337,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     net = FFFB([
+        Layer(4, isInput=True),
         Layer(4, learningRule=GeneRec),
         Layer(4, learningRule=GeneRec)
     ], Mesh)
@@ -306,6 +352,6 @@ if __name__ == "__main__":
     shuffle = np.random.permutation(len(inputs))
     inputs, targets = inputs[shuffle], targets[shuffle]
 
-    result = net.Learn(inputs, targets, numEpochs=5000)
+    result = net.Learn(inputs, targets, numEpochs=500)
     plt.plot(result)
     plt.show()

@@ -9,6 +9,9 @@ np.random.seed(seed=0)
 
 numSamples = 40
 
+oldTxt = open(r".\tests\oldGRout.txt", "w")
+# newTxt = open("newGRout.txt", "w")
+
 def CHL_trans(inLayer, outLayer):
     return CHL(inLayer, outLayer).T
 
@@ -25,7 +28,7 @@ netGR = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.01)
+], Mesh, learningRate = 0.1)
 
 netCHL = copy.deepcopy(netGR)
 netCHL.setLearningRule(CHL2)
@@ -34,13 +37,8 @@ netCHL_T = copy.deepcopy(netGR)
 netCHL_T.setLearningRule(CHL_trans)
 
 netMixed = copy.deepcopy(netCHL)
-netMixed.setLearningRule(GeneRec, 1) #sets second layer learnRule
-
-print("DATA BEFORE TRAINING NETMIXED")
-for layer in netMixed.layers:
-    print(layer)
-    for mesh in layer.meshes:
-        print(mesh) 
+netMixed.setLearningRule(GeneRec, 2) #sets second layer learnRule
+netMixed.layers[1].Freeze()
 
 def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                     numTimeSteps=100, phaseStep = 50, learningRate = 0.1,
@@ -53,7 +51,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
     errorTrace = np.zeros(numEpochs)
     
     #allocate space for variables during learning
-    print("Allocating space for loop variables...")
+    # print("Allocating space for loop variables...")
     matrixDimension = len(W1)
     linInp = np.zeros(matrixDimension) #linear input layer
     actInp = np.zeros(matrixDimension)
@@ -65,16 +63,17 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
     minusPhaseOut = np.zeros(matrixDimension)
     weightIn = W1.copy()
     weightOut = W2.copy()
-    print("Beginning training...")
+    # print("Beginning training...")
 
     for epoch in range(numEpochs):
         epochErrors = np.zeros(numSamples)
+        if epoch == 1: oldTxt.write(f"TRAINING START\n")
         for sample in range(numSamples):
             currentInput = inputs[sample]
             targetOutput = targets[sample]
 
             for timeStep in range(numTimeSteps):
-                # print(f"Timestep: {timeStep}")
+                oldTxt.write(f"Timestep: {timeStep}\n")
                 #update activation values
                 linInp += deltaTime*(np.abs(weightIn @ currentInput)**2
                                    + np.abs(weightOut.T @ actOut)**2
@@ -90,6 +89,8 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
                 else:
                     actOut = targetOutput
                 
+                oldTxt.write("\t" + str(actInp) + str(actOut) + "\n")
+
                 #Record traces
                 traceIndex = epoch*(numSamples*numTimeSteps)+sample*numTimeSteps + timeStep
                 # inputTrace[traceIndex] = actInp
@@ -102,31 +103,39 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
             plusPhaseIn = actInp
             plusPhaseOut = actOut
             if epoch != 0: # don't train on first epoch to establish RMSE
+                oldTxt.write("INPUT_LAYER_0: \n")
+                oldTxt.write(str(currentInput) + str(currentInput) + "\n")
+                oldTxt.write("LAYER_1: \n")
+                oldTxt.write(str(minusPhaseIn) + str(minusPhaseOut) + "\n")
+                oldTxt.write("LAYER_2: \n")
+                oldTxt.write(str(plusPhaseIn) + str(plusPhaseOut) + "\n")
                 #Contrastive Hebbian Learning rule
                 ####(equivalent to GenRec with symmetry and midpoint approx)
                 ######## (generally converges faster)
                 deltaWeightIn = (plusPhaseIn[:,np.newaxis] @ plusPhaseOut[np.newaxis,:] -
                                 minusPhaseIn[:,np.newaxis] @ minusPhaseOut[np.newaxis,:])
                 # weightIn += learningRate * deltaWeightIn # FIXME FREEZE FIRST LAYER
-                deltaWeightOut = (plusPhaseOut - minusPhaseOut)[:,np.newaxis] @ minusPhaseIn[np.newaxis,:] 
-                print(f"\ndeltaWeightIn: {deltaWeightIn}\n\ndeltaWeightOut: {deltaWeightOut}")
+                deltaWeightOut = (plusPhaseOut - minusPhaseOut)[:,np.newaxis] @ minusPhaseIn[np.newaxis,:]
+                oldTxt.write("delta: [LAYER_2]" + str(deltaWeightOut) + "\n") 
+                # print(f"\ndeltaWeightIn: {deltaWeightIn}\n\ndeltaWeightOut: {deltaWeightOut}")
                 weightOut += learningRate * deltaWeightOut
         
         #Store RMSE for the given epoch
         errorTrace[epoch] = np.sqrt(np.mean(epochErrors))
 
-    print("Done")
+    # print("Done")
 
 
     # print("final input weight matrix:\n", weightIn)
     # print("final output weight matrix:\n", weightOut)
-    print(f"initial RMSE: {errorTrace[0]}, final RMSE: {errorTrace[-1]}")
-    print(f"Training occured?: {errorTrace[0] > errorTrace[-1]}")
+    # print(f"initial RMSE: {errorTrace[0]}, final RMSE: {errorTrace[-1]}")
+    # print(f"Training occured?: {errorTrace[0] > errorTrace[-1]}")
 
     return errorTrace
 
-weights = netGR.getWeights(ffOnly=True)
+weights = netMixed.getWeights(ffOnly=True)
 
+oldTxt.write("\n".join([str(matrix) for matrix in weights]) + "\n")
 oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=200, learningRate=0.1)
 plt.plot(oldResult, label="Old GR")
 
@@ -148,11 +157,10 @@ plt.plot(oldResult, label="Old GR")
 # print(f"Final {netCHL_T.metric}: ", resultCHL_T[-1])
 # plt.plot(resultCHL_T, label="CHL_T")
 
-# print(f"net: {str(netMixed)}")
-# initial = netMixed.Evaluate(inputs, targets)
-# print(f"Initial {netMixed.metric}: ", initial)
+print("\n".join([str(matrix) for matrix in netMixed.getWeights(ffOnly=True)]))
 resultMixed = netMixed.Learn(inputs, targets, numEpochs=200)
-print(f"Final {netMixed.metric}: ", resultMixed[-1])
+# print(f"Initial {netMixed.metric}: ", resultMixed[0])
+# print(f"Final {netMixed.metric}: ", resultMixed[-1])
 plt.plot(resultMixed, label="Mixed")
 
 
@@ -161,3 +169,5 @@ plt.ylabel("RMSE")
 plt.xlabel("Epoch")
 plt.legend()
 plt.show()
+
+oldTxt.close()

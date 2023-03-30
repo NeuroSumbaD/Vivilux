@@ -12,7 +12,7 @@ def CHL2(inLayer, outLayer):
     '''
     xp, xm = inLayer.obsAct, inLayer.preAct
     yp, ym = outLayer.obsAct, outLayer.preAct
-    return yp[:,np.newaxis] @ xp[np.newaxis,:] - yp[:,np.newaxis] @ xp[np.newaxis,:] 
+    return yp[:,np.newaxis] @ xp[np.newaxis,:] - ym[:,np.newaxis] @ xm[np.newaxis,:] 
 
 def GeneRec(inLayer, outLayer):
     '''Base GeneRec learning rule.

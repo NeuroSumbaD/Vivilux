@@ -10,11 +10,13 @@ import matplotlib.pyplot as plt
 np.random.seed(0)
 
 netCHL = FFFB([
+    Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
 ], Mesh)
 
 netGR = FFFB([
+    Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
 ], Mesh)
