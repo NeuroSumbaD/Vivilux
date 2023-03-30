@@ -71,18 +71,23 @@ class Net:
     def Infer(self, inData, outData, numTimeSteps=25):
         outData = np.zeros(inData.shape)
         index = 0
+        print("INFERENCE")
         for inDatum in inData:
             for time in range(numTimeSteps):
                 #TODO: REMOVE TESTCODE
-                print(f"Timestep: {time}")
+                print(f"Timestep: {time}\tPREDICT")
                 result = self.Predict(inDatum)
 #TODO: REMOVE TESTCODE
                 print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
+            for layer in self.layers[1:]:
+                    layer.obsLin = layer.preLin
+                    layer.obsAct = layer.preAct
             for time in range(numTimeSteps):
                 #TODO: REMOVE TESTCODE
-                print(f"Timestep: {time + 50}")
+                print(f"Timestep: {time + 50}\tOBSERVE")
                 result = self.Observe(inDatum, outData[index])
                 print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))
+### END TESTCODE
             outData[index] = result
             index += 1
         return outData
@@ -99,15 +104,18 @@ class Net:
             for inDatum, outDatum in zip(inData, outData):
                 for time in range(numTimeSteps):
                     #TODO: REMOVE TESTCODE
-                    print(f"Timestep: {time}")
+                    print(f"Timestep: {time}\tPREDICT")
                     ### END TESTCODE
                     #TODO: Check if this causes error
                     ## Each modifies a different variable for activation, so this should not cause any errors
                     lastResult = self.Predict(inDatum)
                     #TODO: REMOVE TESTCODE
                     print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
+                for layer in self.layers[1:]:
+                    layer.obsLin = layer.preLin
+                    layer.obsAct = layer.preAct
                 for time in range(numTimeSteps):
-                    print(f"Timestep: {time+numTimeSteps}")
+                    print(f"Timestep: {time+numTimeSteps}\tOBSERVE")
                     self.Observe(inDatum, outDatum)
                     #TODO: REMOVE TESTCODE
                     print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))

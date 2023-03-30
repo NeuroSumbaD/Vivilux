@@ -64,6 +64,7 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
     weightIn = W1.copy()
     weightOut = W2.copy()
     # print("Beginning training...")
+    oldTxt.write(f"INFERENCE\n")
 
     for epoch in range(numEpochs):
         epochErrors = np.zeros(numSamples)
@@ -73,20 +74,22 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
             targetOutput = targets[sample]
 
             for timeStep in range(numTimeSteps):
-                oldTxt.write(f"Timestep: {timeStep}\n")
+                oldTxt.write(f"Timestep: {timeStep}\t")
                 #update activation values
                 linInp += deltaTime*(np.abs(weightIn @ currentInput)**2
                                    + np.abs(weightOut.T @ actOut)**2
                                    - linInp)
                 actInp = Sigmoid(linInp)
-                if timeStep <= phaseStep:
+                if timeStep < phaseStep:
+                    oldTxt.write(f"PREDICT\n")
                     linOut += deltaTime*(np.abs(weightOut @ actInp)**2-linOut)
                     actOut = Sigmoid(linOut)
-                    if timeStep == phaseStep:
+                    if timeStep == phaseStep-1:
                         minusPhaseIn = actInp
                         minusPhaseOut = actOut
                         epochErrors[sample] = np.sum((targetOutput - actOut)**2)
                 else:
+                    oldTxt.write(f"OBSERVE\n")
                     actOut = targetOutput
                 
                 oldTxt.write("\t" + str(actInp) + str(actOut) + "\n")
