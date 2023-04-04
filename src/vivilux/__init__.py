@@ -60,36 +60,22 @@ class Net:
             error-driven learning scheme of neural network computation.
         '''
         self.layers[0].ClampObs(inData)
-        # self.layers[-1].ClampObs(outData)
-        # print(f"BEFORE OBS: \n\t{str(self)}")
+        self.layers[-1].ClampObs(outData)
         for layer in self.layers[1:-1]:
             layer.Observe()
-        # print(f"AFTER OBS: \n\t{str(self)}")
-        self.layers[-1].ClampObs(outData)
+        # self.layers[-1].ClampObs(outData)
 
         return None # observations know the outcome
 
-    #TODO: REMOVE 'outData' ARGUMENT (used for debugging)
-    def Infer(self, inData, outData, numTimeSteps=25):
+    def Infer(self, inData, numTimeSteps=25):
         outputData = np.zeros(inData.shape)
         index = 0
-        # print("INFERENCE")
         for inDatum in inData:
             for time in range(numTimeSteps):
-                #TODO: REMOVE TESTCODE
-                # print(f"Timestep: {time}\tPREDICT")
                 result = self.Predict(inDatum)
-#TODO: REMOVE TESTCODE
-                # print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
-            for layer in self.layers[1:]:
-                    layer.obsLin = layer.preLin
-                    layer.obsAct = layer.preAct
-            for time in range(numTimeSteps):
-                #TODO: REMOVE TESTCODE
-                # print(f"Timestep: {time + 50}\tOBSERVE")
-                self.Observe(inDatum, outData[index])
-                # print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))
-### END TESTCODE
+            # for layer in self.layers[1:]:
+            #         layer.obsLin = layer.preLin
+            #         layer.obsAct = layer.preAct
             outputData[index] = result
             index += 1
         return outputData
@@ -107,40 +93,29 @@ class Net:
         results = np.zeros(numEpochs+1)
         results[0] = self.Evaluate(inData, outData, numTimeSteps)
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
-        # print("TRAINING START")
         for epoch in range(numEpochs):
             # iterate through data and time
             index=0
             for inDatum, outDatum in zip(inData, outData):
                 if reset: self.resetActivity()
+                # TODO: MAKE ACTIVATIONS CONTINUOUS
+                ### Data should instead be recorded and labeled at the end of each phase
                 for time in range(numTimeSteps):
-                    #TODO: REMOVE TESTCODE
-                    # print(f"Timestep: {time}\tPREDICT")
-                    ### END TESTCODE
-                    #TODO: Check if this causes error
-                    ## Each modifies a different variable for activation, so this should not cause any errors
                     lastResult = self.Predict(inDatum)
-                    #TODO: REMOVE TESTCODE
-                    # print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
-                for layer in self.layers[1:]:
-                    layer.obsLin = layer.preLin
-                    layer.obsAct = layer.preAct
-                for time in range(numTimeSteps):
-                    # print(f"Timestep: {time+numTimeSteps}\tOBSERVE")
-                    self.Observe(inDatum, outDatum)
-                    #TODO: REMOVE TESTCODE
-                    # print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))
-                epochResults[index] = lastResult
+                epochResults[index][:] = lastResult
                 index += 1
+                for layer in self.layers[1:]:
+                    layer.obsLin[:] = layer.preLin
+                    layer.obsAct[:] = layer.preAct
+                for time in range(numTimeSteps):
+                    self.Observe(inDatum, outDatum)
                 # update meshes
                 for layer in self.layers:
-                    #TODO: REMOVE TESTCODE
-                    # print(layer.name)
-                    # print("".join(
-                        # [str(activity) for activity in layer.getActivity()[1::2]]
-                        # ))
-                    ### END TESTCODE
                     layer.Learn()
+                # make activation variable continuous
+                for layer in self.layers[1:]:
+                    layer.preLin[:] = layer.obsLin
+                    layer.preAct[:] = layer.obsAct
             # evaluate metric
             results[epoch+1] = self.metric(epochResults, outData)
             if verbose: print(self)
@@ -148,8 +123,7 @@ class Net:
         return results
     
     def Evaluate(self, inData, outData, numTimeSteps=25):
-        #TODO: REMOVE 'outData' ARGUMENT (used for debugging)
-        results = self.Infer(inData, outData, numTimeSteps)
+        results = self.Infer(inData, numTimeSteps)
         return self.metric(results, outData)
 
     def getWeights(self, ffOnly):
@@ -220,9 +194,6 @@ class Mesh:
         return self.apply(data)
 
     def Update(self, delta):
-        #TODO: REMOVE TESTCODE
-        # print(f"{self.name}: {self.get()}, \n\trate: {self.rate}, deltas: {delta}")
-        ### END TESTCODE
         self.matrix += self.rate*delta
 
     def __len__(self):
@@ -292,7 +263,6 @@ class Layer:
         for mesh in self.meshes:
             self.preLin += DELTA_TIME * mesh.Predict()[:len(self)]**2
         self.preAct = self.act(self.preLin)
-        # print(f"Predict {self.name} preLin: {self.preLin}, preAct {self.preAct}")
         return self.preAct
 
     def Observe(self):
@@ -300,7 +270,6 @@ class Layer:
         for mesh in self.meshes:
             self.obsLin += DELTA_TIME * mesh.Observe()[:len(self)]**2
         self.obsAct = self.act(self.obsLin)
-        # print(f"Observe {self.name} obsLin: {self.obsLin}, obsAct {self.obsAct}")
         return self.obsAct
 
     def ClampPre(self, data):
@@ -316,16 +285,6 @@ class Layer:
         # TODO: Allow multiple meshes to learn, skip fb meshes
         inLayer = self.meshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
-        # TODO: REMOVE TESTCODE
-        # if not np.any(delta): 
-        #     print(f"WARN: ZERO DELTA!\nLayer: {self.name}[{self.getActivity()}],"
-        #           f"In Layer:  {inLayer.name}[{inLayer.getActivity()}]")
-        # print("LEARN")
-        # print(f"In layer: " + str(inLayer))
-        # print(f"layer: " + str(self))
-        # print(f"delta [{self.name}]: {delta}")
-        # print("Mesh: " + str(self.meshes[0]))
-        ### END TESTCODE
         self.meshes[0].Update(delta)
 
     def getActivity(self):

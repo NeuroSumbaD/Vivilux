@@ -33,14 +33,14 @@ netGR = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.1)
+], Mesh, learningRate = 0.01)
 
 netGR3 = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.1)
+], Mesh, learningRate = 0.01)
 
 netGR4 = FFFB([
     Layer(4, isInput=True),
@@ -48,7 +48,7 @@ netGR4 = FFFB([
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.1)
+], Mesh, learningRate = 0.01)
 
 netCHL = copy.deepcopy(netGR)
 netCHL.setLearningRule(CHL)
