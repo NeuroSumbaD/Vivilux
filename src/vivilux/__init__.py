@@ -60,74 +60,85 @@ class Net:
             error-driven learning scheme of neural network computation.
         '''
         self.layers[0].ClampObs(inData)
-        self.layers[-1].ClampObs(outData)
+        # self.layers[-1].ClampObs(outData)
+        # print(f"BEFORE OBS: \n\t{str(self)}")
         for layer in self.layers[1:-1]:
             layer.Observe()
-
+        # print(f"AFTER OBS: \n\t{str(self)}")
+        self.layers[-1].ClampObs(outData)
 
         return None # observations know the outcome
 
     #TODO: REMOVE 'outData' ARGUMENT (used for debugging)
     def Infer(self, inData, outData, numTimeSteps=25):
-        outData = np.zeros(inData.shape)
+        outputData = np.zeros(inData.shape)
         index = 0
-        print("INFERENCE")
+        # print("INFERENCE")
         for inDatum in inData:
             for time in range(numTimeSteps):
                 #TODO: REMOVE TESTCODE
-                print(f"Timestep: {time}\tPREDICT")
+                # print(f"Timestep: {time}\tPREDICT")
                 result = self.Predict(inDatum)
 #TODO: REMOVE TESTCODE
-                print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
+                # print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
             for layer in self.layers[1:]:
                     layer.obsLin = layer.preLin
                     layer.obsAct = layer.preAct
             for time in range(numTimeSteps):
                 #TODO: REMOVE TESTCODE
-                print(f"Timestep: {time + 50}\tOBSERVE")
-                result = self.Observe(inDatum, outData[index])
-                print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))
+                # print(f"Timestep: {time + 50}\tOBSERVE")
+                self.Observe(inDatum, outData[index])
+                # print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))
 ### END TESTCODE
-            outData[index] = result
+            outputData[index] = result
             index += 1
-        return outData
+        return outputData
 
     
-    def Learn(self, inData, outData, numTimeSteps=50, numEpochs=50, verbose = False):
+    def Learn(self, inData, outData,
+              numTimeSteps=50, numEpochs=50,
+              verbose = False, reset = False):
+        '''Control loop for learning based on GeneRec-like algorithms.
+                inData      : input data
+                outData     : 
+                verbose     : if True, prints net each iteration
+                reset       : if True, resets activity between each input sample
+        '''
         results = np.zeros(numEpochs+1)
         results[0] = self.Evaluate(inData, outData, numTimeSteps)
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
-        print("TRAINING START")
+        # print("TRAINING START")
         for epoch in range(numEpochs):
             # iterate through data and time
             index=0
             for inDatum, outDatum in zip(inData, outData):
+                if reset: self.resetActivity()
                 for time in range(numTimeSteps):
                     #TODO: REMOVE TESTCODE
-                    print(f"Timestep: {time}\tPREDICT")
+                    # print(f"Timestep: {time}\tPREDICT")
                     ### END TESTCODE
                     #TODO: Check if this causes error
                     ## Each modifies a different variable for activation, so this should not cause any errors
                     lastResult = self.Predict(inDatum)
                     #TODO: REMOVE TESTCODE
-                    print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
+                    # print("\t" + "".join([str(layer.getActivity()[1]) for layer in self.layers[1:]]))
                 for layer in self.layers[1:]:
                     layer.obsLin = layer.preLin
                     layer.obsAct = layer.preAct
                 for time in range(numTimeSteps):
-                    print(f"Timestep: {time+numTimeSteps}\tOBSERVE")
+                    # print(f"Timestep: {time+numTimeSteps}\tOBSERVE")
                     self.Observe(inDatum, outDatum)
                     #TODO: REMOVE TESTCODE
-                    print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))
+                    # print("\t" + "".join([str(layer.getActivity()[3]) for layer in self.layers[1:]]))
                 epochResults[index] = lastResult
                 index += 1
                 # update meshes
                 for layer in self.layers:
                     #TODO: REMOVE TESTCODE
-                    print(layer.name)
-                    print("".join(
-                        [str(activity) for activity in layer.getActivity()[1::2]]
-                        ))
+                    # print(layer.name)
+                    # print("".join(
+                        # [str(activity) for activity in layer.getActivity()[1::2]]
+                        # ))
                     ### END TESTCODE
                     layer.Learn()
             # evaluate metric
@@ -152,6 +163,10 @@ class Net:
     def getActivity(self):
         for layer in self.layers:
             "\n".join(layer.getActivity())
+
+    def resetActivity(self):
+        for layer in self.layers:
+            layer.resetActivity()
 
     def setLearningRule(self, rule, layerIndex: int = -1):
         '''Sets the learning rule for all forward meshes to 'rule'.
@@ -308,13 +323,22 @@ class Layer:
         # print("LEARN")
         # print(f"In layer: " + str(inLayer))
         # print(f"layer: " + str(self))
-        print(f"delta [{self.name}]: {delta}")
+        # print(f"delta [{self.name}]: {delta}")
         # print("Mesh: " + str(self.meshes[0]))
         ### END TESTCODE
         self.meshes[0].Update(delta)
 
     def getActivity(self):
         return [self.preLin, self.preAct, self.obsLin, self.obsAct]
+    
+    def resetActivity(self):
+        '''Resets all activation traces to zero vectors.'''
+        length = len(self)
+        self.preLin = np.zeros(length)
+        self.preAct = np.zeros(length)
+        
+        self.obsLin = np.zeros(length)
+        self.obsAct = np.zeros(length)
 
     def __len__(self):
         return len(self.preAct)
