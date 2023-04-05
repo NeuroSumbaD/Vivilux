@@ -1,22 +1,28 @@
+from __future__ import annotations
 import numpy as np
 
-def CHL(inLayer, outLayer):
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vivilux import Layer
+
+def CHL(inLayer: Layer, outLayer: Layer):
     '''Base Contrastive Hebbian Learning rule (CHL).
     '''
-    xp, xm = inLayer.obsAct, inLayer.preAct
-    yp, ym = outLayer.obsAct, outLayer.preAct
+    xp, xm = inLayer.phaseHist["plus"], inLayer.phaseHist["minus"]
+    yp, ym = outLayer.phaseHist["plus"], outLayer.phaseHist["minus"]
     return yp[:,np.newaxis] @ xp[np.newaxis,:] - ym[:,np.newaxis] @ xm[np.newaxis,:] 
 
-def CHL2(inLayer, outLayer):
+def CHL2(inLayer: Layer, outLayer: Layer):
     '''Base Contrastive Hebbian Learning rule (CHL).
     '''
-    xp, xm = inLayer.obsAct, inLayer.preAct
-    yp, ym = outLayer.obsAct, outLayer.preAct
+    xp, xm = inLayer.phaseHist["plus"], inLayer.phaseHist["minus"]
+    yp, ym = outLayer.phaseHist["plus"], outLayer.phaseHist["minus"]
     return yp[:,np.newaxis] @ xp[np.newaxis,:] - ym[:,np.newaxis] @ xm[np.newaxis,:] 
 
-def GeneRec(inLayer, outLayer):
+def GeneRec(inLayer: Layer, outLayer: Layer):
     '''Base GeneRec learning rule.
     '''
-    xp, xm = inLayer.obsAct, inLayer.preAct
-    yp, ym = outLayer.obsAct, outLayer.preAct
+    xp, xm = inLayer.phaseHist["plus"], inLayer.phaseHist["minus"]
+    yp, ym = outLayer.phaseHist["plus"], outLayer.phaseHist["minus"]
     return (yp - ym)[:,np.newaxis] @ (xm)[np.newaxis,:] 

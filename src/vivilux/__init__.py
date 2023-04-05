@@ -13,6 +13,7 @@ REFERENCES:
     doi: 10.1162/neco.1996.8.5.895.
 '''
 
+from __future__ import annotations
 from collections.abc import Iterator
 
 import numpy as np
@@ -29,10 +30,14 @@ DELTA_TIME = 0.1
 class Net:
     '''Base class for neural networks with Hebbian-like learning
     '''
-    def __init__(self, layers: iter, meshType, metric = RMSE, learningRate = 0.1):
+    count = 0
+    def __init__(self, layers: list[Layer], meshType, metric = RMSE, learningRate = 0.1, name = None):
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
         '''
+        self.name =  f"NET_{Layer.count}" if name == None else name
+        Net.count += 1
+
         # TODO: allow different mesh types between layers
         self.layers = layers
         self.metric = metric
@@ -46,10 +51,12 @@ class Net:
             error-driven learning scheme of neural network computation.
         '''
         # outputs = []
-        self.layers[0].ClampPre(data)
+        assert np.any(data<1), f"PREDICT ERROR: INPUT {data} GREATER THAN 1"
+        self.layers[0].Clamp(data)
 
         for layer in self.layers[1:-1]:
             layer.Predict()
+            assert np.any(layer.outAct<1), f"PREDICT ERROR: EXPLODING ACTIVATION IN {self.name},{layer.name}"
 
         output = self.layers[-1].Predict()
         
@@ -59,10 +66,13 @@ class Net:
         '''Training method called 'observe' in accordance with a predictive
             error-driven learning scheme of neural network computation.
         '''
-        self.layers[0].ClampObs(inData)
-        self.layers[-1].ClampObs(outData)
+        assert np.any(inData<1), f"OBSERVE ERROR: INPUT {inData} GREATER THAN 1"
+        assert np.any(outData<1), f"OBSERVE ERROR: OUTPUT {outData} GREATER THAN 1"
+        self.layers[0].Clamp(inData)
+        self.layers[-1].Clamp(outData)
         for layer in self.layers[1:-1]:
             layer.Observe()
+            assert np.any(layer.outAct<1), f"OBSERVE ERROR: EXPLODING ACTIVATION IN {self.name},{layer.name}"
         # self.layers[-1].ClampObs(outData)
 
         return None # observations know the outcome
@@ -73,10 +83,7 @@ class Net:
         for inDatum in inData:
             for time in range(numTimeSteps):
                 result = self.Predict(inDatum)
-            # for layer in self.layers[1:]:
-            #         layer.obsLin = layer.preLin
-            #         layer.obsAct = layer.preAct
-            outputData[index] = result
+            outputData[index][:] = result
             index += 1
         return outputData
 
@@ -104,18 +111,11 @@ class Net:
                     lastResult = self.Predict(inDatum)
                 epochResults[index][:] = lastResult
                 index += 1
-                for layer in self.layers[1:]:
-                    layer.obsLin[:] = layer.preLin
-                    layer.obsAct[:] = layer.preAct
                 for time in range(numTimeSteps):
                     self.Observe(inDatum, outDatum)
                 # update meshes
                 for layer in self.layers:
                     layer.Learn()
-                # make activation variable continuous
-                for layer in self.layers[1:]:
-                    layer.preLin[:] = layer.obsLin
-                    layer.preAct[:] = layer.obsAct
             # evaluate metric
             results[epoch+1] = self.metric(epochResults, outData)
             if verbose: print(self)
@@ -162,7 +162,7 @@ class Mesh:
     '''Base class for meshes of synaptic elements.
     '''
     count = 0
-    def __init__(self, size: int, inLayer, learningRate=0.5):
+    def __init__(self, size: int, inLayer: Layer, learningRate=0.5):
         self.size = size if size > len(inLayer) else len(inLayer)
         self.matrix = np.eye(self.size)
         self.inLayer = inLayer
@@ -177,21 +177,24 @@ class Mesh:
 
     def get(self):
         return self.matrix
+    
+    def getInput(self):
+        return self.inLayer.outAct
 
-    def apply(self, data):
+    def apply(self):
         try:
-            return self.matrix @ data
+            data = self.getInput()
+            return self.get() @ data
         except ValueError as ve:
             print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
                   f"of dimension: {self.matrix}")
-
-    def Predict(self):
-        data = self.inLayer.preAct
-        return self.apply(data)
-
-    def Observe(self):
-        data = self.inLayer.obsAct
-        return self.apply(data)
+            
+    def applyTo(self, data):
+        try:
+            return self.get() @ data
+        except ValueError as ve:
+            print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
+                  f"of dimension: {self.matrix}")
 
     def Update(self, delta):
         self.matrix += self.rate*delta
@@ -205,7 +208,7 @@ class Mesh:
 class fbMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
     '''
-    def __init__(self, mesh: Mesh, inLayer) -> None:
+    def __init__(self, mesh: Mesh, inLayer: Layer) -> None:
         super().__init__(mesh.size, inLayer)
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
@@ -215,13 +218,9 @@ class fbMesh(Mesh):
 
     def get(self):
         return self.mesh.get().T
-
-    def apply(self, data):
-        matrix = self.mesh.matrix.T
-        try:
-            return matrix @ data
-        except ValueError as ve:
-            print(f"Attempted to apply {data} (shape: {data.shape}) to mesh of dimension: {matrix}")
+    
+    def getInput(self):
+        return self.mesh.inLayer.outAct
 
     def Update(self, delta):
         return None
@@ -233,15 +232,17 @@ class Layer:
         incoming data.
     '''
     count = 0
-    def __init__(self, length, activation=Sigmoid, learningRule=CHL, isInput = False, name = None):
-        self.preLin = np.zeros(length)
-        self.preAct = np.zeros(length)
+    def __init__(self, length, activation=Sigmoid, learningRule=CHL,
+                 isInput = False, freeze = False, name = None):
+        self.inAct = np.zeros(length) # linearly integrated dendritic inputs
+        self.outAct = np.zeros(length) # axonal outputs after nonlinearity
+        self.phaseHist = {"minus": np.zeros(length),
+                          "plus": np.zeros(length)
+                          }
         
-        self.obsLin = np.zeros(length)
-        self.obsAct = np.zeros(length)
         self.act = activation
         self.rule = learningRule
-        self.meshes = [] #empty initial mesh list
+        self.meshes: list[Mesh] = [] #empty initial mesh list
 
         self.isInput = isInput
         self.freeze = False
@@ -259,26 +260,24 @@ class Layer:
         self.meshes.append(mesh)
 
     def Predict(self):
-        self.preLin -= DELTA_TIME*self.preLin
+        self.inAct -= DELTA_TIME*self.inAct
         for mesh in self.meshes:
-            self.preLin += DELTA_TIME * mesh.Predict()[:len(self)]**2
-        self.preAct = self.act(self.preLin)
-        return self.preAct
+            self.inAct += DELTA_TIME * mesh.apply()[:len(self)]**2
+        self.outAct = self.act(self.inAct)
+        self.phaseHist["minus"] = self.outAct.copy()
+        return self.outAct
 
     def Observe(self):
-        self.obsLin -= DELTA_TIME * self.obsLin
+        self.inAct -= DELTA_TIME * self.inAct
         for mesh in self.meshes:
-            self.obsLin += DELTA_TIME * mesh.Observe()[:len(self)]**2
-        self.obsAct = self.act(self.obsLin)
-        return self.obsAct
+            self.inAct += DELTA_TIME * mesh.apply()[:len(self)]**2
+        self.outAct = self.act(self.inAct)
+        self.phaseHist["plus"] = self.outAct.copy()
+        return self.outAct
 
-    def ClampPre(self, data):
-        self.preLin = data[:len(self)]
-        self.preAct = data[:len(self)]
-
-    def ClampObs(self, data):
-        self.obsLin = data[:len(self)]
-        self.obsAct = data[:len(self)]
+    def Clamp(self, data):
+        self.inAct = data[:len(self)]
+        self.outAct = data[:len(self)]
 
     def Learn(self):
         if self.isInput or self.freeze: return
@@ -288,25 +287,22 @@ class Layer:
         self.meshes[0].Update(delta)
 
     def getActivity(self):
-        return [self.preLin, self.preAct, self.obsLin, self.obsAct]
+        return [self.inAct, self.outAct]
     
     def resetActivity(self):
         '''Resets all activation traces to zero vectors.'''
         length = len(self)
-        self.preLin = np.zeros(length)
-        self.preAct = np.zeros(length)
+        self.inAct = np.zeros(length)
+        self.outAct = np.zeros(length)
         
-        self.obsLin = np.zeros(length)
-        self.obsAct = np.zeros(length)
-
     def __len__(self):
-        return len(self.preAct)
+        return len(self.inAct)
 
     def __str__(self) -> str:
         layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
         layStr += f"Rule = {self.rule}"
         layStr += f"\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.meshes])
-        layStr += f"\n\tActivity: {self.preLin}, {self.preAct}, {self.obsLin}, {self.obsAct}"
+        layStr += f"\n\tActivity: \n\t\t{self.inAct},\n\t\t{self.outAct}"
         return layStr
 
 class FFFB(Net):
