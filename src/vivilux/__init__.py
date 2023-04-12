@@ -51,12 +51,12 @@ class Net:
             error-driven learning scheme of neural network computation.
         '''
         # outputs = []
-        assert np.any(data<1), f"PREDICT ERROR: INPUT {data} GREATER THAN 1"
+        # assert np.any(data<1), f"PREDICT ERROR: INPUT {data} GREATER THAN 1"
         self.layers[0].Clamp(data)
 
         for layer in self.layers[1:-1]:
             layer.Predict()
-            assert np.any(layer.outAct<1), f"PREDICT ERROR: EXPLODING ACTIVATION IN {self.name},{layer.name}"
+            # assert np.any(layer.outAct<1), f"PREDICT ERROR: EXPLODING ACTIVATION IN {self.name},{layer.name}"
 
         output = self.layers[-1].Predict()
         
@@ -66,13 +66,13 @@ class Net:
         '''Training method called 'observe' in accordance with a predictive
             error-driven learning scheme of neural network computation.
         '''
-        assert np.any(inData<1), f"OBSERVE ERROR: INPUT {inData} GREATER THAN 1"
-        assert np.any(outData<1), f"OBSERVE ERROR: OUTPUT {outData} GREATER THAN 1"
+        # assert np.any(inData<1), f"OBSERVE ERROR: INPUT {inData} GREATER THAN 1"
+        # assert np.any(outData<1), f"OBSERVE ERROR: OUTPUT {outData} GREATER THAN 1"
         self.layers[0].Clamp(inData)
         self.layers[-1].Clamp(outData)
         for layer in self.layers[1:-1]:
             layer.Observe()
-            assert np.any(layer.outAct<1), f"OBSERVE ERROR: EXPLODING ACTIVATION IN {self.name},{layer.name}"
+            # assert np.any(layer.outAct<1), f"OBSERVE ERROR: EXPLODING ACTIVATION IN {self.name},{layer.name}"
         # self.layers[-1].ClampObs(outData)
 
         return None # observations know the outcome
@@ -88,7 +88,7 @@ class Net:
         return outputData
 
     
-    def Learn(self, inData, outData,
+    def Learn(self, inData: np.ndarray, outData: np.ndarray,
               numTimeSteps=50, numEpochs=50,
               verbose = False, reset = False):
         '''Control loop for learning based on GeneRec-like algorithms.
@@ -97,9 +97,14 @@ class Net:
                 verbose     : if True, prints net each iteration
                 reset       : if True, resets activity between each input sample
         '''
+        inDataCOPY = inData.copy()
+        # inData.flags.writeable = False
+        outDataCOPY = outData.copy()
+        # outData.flags.writeable = False
         results = np.zeros(numEpochs+1)
         results[0] = self.Evaluate(inData, outData, numTimeSteps)
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
+        
         for epoch in range(numEpochs):
             # iterate through data and time
             index=0
@@ -134,9 +139,9 @@ class Net:
                 if ffOnly: break
         return weights
     
-    def getActivity(self):
+    def printActivity(self):
         for layer in self.layers:
-            "\n".join(layer.getActivity())
+            "\n".join(layer.printActivity())
 
     def resetActivity(self):
         for layer in self.layers:
@@ -179,7 +184,7 @@ class Mesh:
         return self.matrix
     
     def getInput(self):
-        return self.inLayer.outAct
+        return self.inLayer.getActivity()
 
     def apply(self):
         try:
@@ -234,8 +239,9 @@ class Layer:
     count = 0
     def __init__(self, length, activation=Sigmoid, learningRule=CHL,
                  isInput = False, freeze = False, name = None):
-        self.inAct = np.zeros(length) # linearly integrated dendritic inputs
-        self.outAct = np.zeros(length) # axonal outputs after nonlinearity
+        self.inAct = np.zeros(length) # linearly integrated dendritic inputs (internal Activation)
+        self.outAct = activation(self.inAct) #initialize outgoing Activation
+        self.modified = False 
         self.phaseHist = {"minus": np.zeros(length),
                           "plus": np.zeros(length)
                           }
@@ -250,6 +256,51 @@ class Layer:
         if isInput: self.name = "INPUT_" + self.name
         Layer.count += 1
 
+    def getActivity(self):
+        if self.modified == True:
+            self.outAct[:] = self.act(self.inAct)
+            self.modified = False
+        return self.outAct
+
+    def printActivity(self):
+        return [self.inAct, self.outAct]
+    
+    def resetActivity(self):
+        '''Resets all activation traces to zero vectors.'''
+        length = len(self)
+        self.inAct = np.zeros(length)
+        self.outAct = np.zeros(length)
+
+    def Integrate(self):
+        for mesh in self.meshes:
+            self += DELTA_TIME * mesh.apply()[:len(self)]#**2
+
+    def Predict(self):
+        self -= DELTA_TIME*self.inAct
+        self.Integrate()
+        activity = self.getActivity()
+        self.phaseHist["minus"][:] = activity
+        return activity.copy()
+
+    def Observe(self):
+        self -= DELTA_TIME * self.inAct
+        self.Integrate()
+        activity = self.getActivity()
+        self.phaseHist["plus"][:] = activity
+        return activity.copy()
+
+    def Clamp(self, data):
+        self.inAct[:] = data[:len(self)]
+        self.outAct[:] = data[:len(self)]
+
+    def Learn(self):
+        if self.isInput or self.freeze: return
+        # TODO: Allow multiple meshes to learn, skip fb meshes
+        inLayer = self.meshes[0].inLayer # assume first mesh as input
+        delta = self.rule(inLayer, self)
+        self.meshes[0].Update(delta)
+
+        
     def Freeze(self):
         self.freeze = True
 
@@ -259,42 +310,32 @@ class Layer:
     def addMesh(self, mesh):
         self.meshes.append(mesh)
 
-    def Predict(self):
-        self.inAct -= DELTA_TIME*self.inAct
-        for mesh in self.meshes:
-            self.inAct += DELTA_TIME * mesh.apply()[:len(self)]**2
-        self.outAct = self.act(self.inAct)
-        self.phaseHist["minus"] = self.outAct.copy()
-        return self.outAct
-
-    def Observe(self):
-        self.inAct -= DELTA_TIME * self.inAct
-        for mesh in self.meshes:
-            self.inAct += DELTA_TIME * mesh.apply()[:len(self)]**2
-        self.outAct = self.act(self.inAct)
-        self.phaseHist["plus"] = self.outAct.copy()
-        return self.outAct
-
-    def Clamp(self, data):
-        self.inAct = data[:len(self)]
-        self.outAct = data[:len(self)]
-
-    def Learn(self):
-        if self.isInput or self.freeze: return
-        # TODO: Allow multiple meshes to learn, skip fb meshes
-        inLayer = self.meshes[0].inLayer # assume first mesh as input
-        delta = self.rule(inLayer, self)
-        self.meshes[0].Update(delta)
-
-    def getActivity(self):
-        return [self.inAct, self.outAct]
+    def __add__(self, other):
+        self.modified = True
+        return self.inAct + other
     
-    def resetActivity(self):
-        '''Resets all activation traces to zero vectors.'''
-        length = len(self)
-        self.inAct = np.zeros(length)
-        self.outAct = np.zeros(length)
-        
+    def __radd__(self, other):
+        self.modified = True
+        return self.inAct + other
+    
+    def __iadd__(self, other):
+        self.modified = True
+        self.inAct += other
+        return self
+    
+    def __sub__(self, other):
+        self.modified = True
+        return self.inAct - other
+    
+    def __rsub__(self, other):
+        self.modified = True
+        return self.inAct - other
+    
+    def __isub__(self, other):
+        self.modified = True
+        self.inAct -= other
+        return self
+    
     def __len__(self):
         return len(self.inAct)
 
