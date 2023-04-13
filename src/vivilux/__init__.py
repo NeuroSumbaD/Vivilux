@@ -50,13 +50,12 @@ class Net:
         '''Inference method called 'prediction' in accordance with a predictive
             error-driven learning scheme of neural network computation.
         '''
-        # outputs = []
-        # assert np.any(data<1), f"PREDICT ERROR: INPUT {data} GREATER THAN 1"
+        #Clamp input layer, set minus phase history
         self.layers[0].Clamp(data)
+        self.layers[0].phaseHist["minus"][:] = self.layers[0].getActivity()
 
         for layer in self.layers[1:-1]:
             layer.Predict()
-            # assert np.any(layer.outAct<1), f"PREDICT ERROR: EXPLODING ACTIVATION IN {self.name},{layer.name}"
 
         output = self.layers[-1].Predict()
         
@@ -66,13 +65,15 @@ class Net:
         '''Training method called 'observe' in accordance with a predictive
             error-driven learning scheme of neural network computation.
         '''
-        # assert np.any(inData<1), f"OBSERVE ERROR: INPUT {inData} GREATER THAN 1"
-        # assert np.any(outData<1), f"OBSERVE ERROR: OUTPUT {outData} GREATER THAN 1"
+        #Clamp input layer, set minus phase history
         self.layers[0].Clamp(inData)
+        self.layers[0].phaseHist["plus"][:] = self.layers[0].getActivity()
+        #Clamp output layer, set minus phase history
         self.layers[-1].Clamp(outData)
+        self.layers[-1].phaseHist["plus"][:] = self.layers[-1].getActivity()
+        
         for layer in self.layers[1:-1]:
             layer.Observe()
-            # assert np.any(layer.outAct<1), f"OBSERVE ERROR: EXPLODING ACTIVATION IN {self.name},{layer.name}"
         # self.layers[-1].ClampObs(outData)
 
         return None # observations know the outcome

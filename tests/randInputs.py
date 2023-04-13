@@ -182,7 +182,7 @@ plt.plot(oldResult, label="Old GR")
 print(f"INPUTS: {inputs}")
 print(f"TARGETS: {targets}")
 
-print("\n".join([str(matrix) for matrix in netMixed.getWeights(ffOnly=True)]))
+# print("\n".join([str(matrix) for matrix in netMixed.getWeights(ffOnly=True)]))
 resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
 # print(f"Initial {netMixed.metric}: ", resultMixed[0])
 # print(f"Final {netMixed.metric}: ", resultMixed[-1])
