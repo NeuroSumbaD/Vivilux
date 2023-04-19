@@ -174,11 +174,14 @@ class Mesh:
         self.inLayer = inLayer
         self.rate = learningRate
 
+        # flag to track when matrix updates (for nontrivial meshes like MZI)
+        self.modified = False
 
         self.name = f"MESH_{Mesh.count}"
         Mesh.count += 1
 
     def set(self, matrix):
+        self.modified = True
         self.matrix = matrix
 
     def get(self):
@@ -203,6 +206,7 @@ class Mesh:
                   f"of dimension: {self.matrix}")
 
     def Update(self, delta):
+        self.modified = True
         self.matrix += self.rate*delta
 
     def __len__(self):
