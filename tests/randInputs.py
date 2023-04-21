@@ -172,15 +172,9 @@ def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
 
 weights = netMixed.getWeights(ffOnly=True)
 
-print(f"INPUTS: {inputs}")
-print(f"TARGETS: {targets}")
-
 # oldTxt.write("\n".join([str(matrix) for matrix in weights]) + "\n")
 oldResult = trainingLoopCHL(weights[0], weights[1],inputs, targets, numEpochs=numEpochs, learningRate=0.1)
 plt.plot(oldResult, label="Old GR")
-
-print(f"INPUTS: {inputs}")
-print(f"TARGETS: {targets}")
 
 # print("\n".join([str(matrix) for matrix in netMixed.getWeights(ffOnly=True)]))
 resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
@@ -188,32 +182,20 @@ resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
 # print(f"Final {netMixed.metric}: ", resultMixed[-1])
 plt.plot(resultMixed, label="Mixed")
 
-print(f"INPUTS: {inputs}")
-print(f"TARGETS: {targets}")
+resultMixed2 = netMixed2.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
+plt.plot(resultMixed2, label="Frozen 1st layer")
 
-# resultMixed2 = netMixed2.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
-# plt.plot(resultMixed2, label="Frozen 1st layer")
+# print(f"net: {str(netGR)}")
+# print(f"Initial {netGR.metric}: ", netGR.Evaluate(inputs, targets))
+resultGR = netGR.Learn(inputs, targets, numEpochs=numEpochs)
+# print(f"Final {netGR.metric}: ", resultGR[-1])
+plt.plot(resultGR, label="GeneRec")
 
-# print(f"INPUTS: {inputs}")
-# print(f"TARGETS: {targets}")
+resultGR3 = netGR3.Learn(inputs, targets, numEpochs=numEpochs)
+plt.plot(resultGR3, label="GeneRec (3 layer)")
 
-# # print(f"net: {str(netGR)}")
-# # print(f"Initial {netGR.metric}: ", netGR.Evaluate(inputs, targets))
-# resultGR = netGR.Learn(inputs, targets, numEpochs=numEpochs)
-# # print(f"Final {netGR.metric}: ", resultGR[-1])
-# plt.plot(resultGR, label="GeneRec")
-
-# print(f"INPUTS: {inputs}")
-# print(f"TARGETS: {targets}")
-
-# resultGR3 = netGR3.Learn(inputs, targets, numEpochs=numEpochs)
-# plt.plot(resultGR3, label="GeneRec (3 layer)")
-
-# print(f"INPUTS: {inputs}")
-# print(f"TARGETS: {targets}")
-
-# resultGR4 = netGR4.Learn(inputs, targets, numEpochs=numEpochs)
-# plt.plot(resultGR4, label="GeneRec (4 layer)")
+resultGR4 = netGR4.Learn(inputs, targets, numEpochs=numEpochs)
+plt.plot(resultGR4, label="GeneRec (4 layer)")
 
 # # print(f"net: {str(netCHL)}")
 # # print(f"Initial {netCHL.metric}: ", netCHL.Evaluate(inputs, targets))

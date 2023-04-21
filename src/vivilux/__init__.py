@@ -31,7 +31,9 @@ class Net:
     '''Base class for neural networks with Hebbian-like learning
     '''
     count = 0
-    def __init__(self, layers: list[Layer], meshType, metric = RMSE, learningRate = 0.1, name = None):
+    def __init__(self, layers: list[Layer], meshType: Mesh,
+                 metric = RMSE, learningRate = 0.1, name = None,
+                 **kwargs):
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
         '''
@@ -44,7 +46,9 @@ class Net:
 
         for index, layer in enumerate(self.layers[1:], 1):
             size = len(layer)
-            layer.addMesh(meshType(size, self.layers[index-1], learningRate))
+            layer.addMesh(meshType(size, self.layers[index-1],
+                                   learningRate,
+                                   **kwargs["meshArgs"]))
 
     def Predict(self, data):
         '''Inference method called 'prediction' in accordance with a predictive
@@ -168,7 +172,9 @@ class Mesh:
     '''Base class for meshes of synaptic elements.
     '''
     count = 0
-    def __init__(self, size: int, inLayer: Layer, learningRate=0.5):
+    def __init__(self, size: int, inLayer: Layer,
+                 learningRate=0.5,
+                 **kwargs):
         self.size = size if size > len(inLayer) else len(inLayer)
         self.matrix = np.eye(self.size)
         self.inLayer = inLayer
@@ -191,12 +197,8 @@ class Mesh:
         return self.inLayer.getActivity()
 
     def apply(self):
-        try:
-            data = self.getInput()
-            return self.get() @ data
-        except ValueError as ve:
-            print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
-                  f"of dimension: {self.matrix}")
+        data = self.getInput()
+        return self.applyTo(data)
             
     def applyTo(self, data):
         try:
@@ -205,7 +207,7 @@ class Mesh:
             print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
                   f"of dimension: {self.matrix}")
 
-    def Update(self, delta):
+    def Update(self, delta: np.ndarray):
         self.modified = True
         self.matrix += self.rate*delta
 

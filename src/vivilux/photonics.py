@@ -1,5 +1,6 @@
-from . import Mesh
+from . import DELTA_TIME, Mesh, Layer
 import numpy as np
+import numpy.linalg
 from scipy.stats import ortho_group
 
 def Detect(input):
@@ -27,15 +28,18 @@ class Unitary(Mesh):
         self.set(ortho_group.rvs(len(self)))
 
 class MZImesh(Mesh):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, numDirections = 5, updateMagnitude = 0.01,
+                 **kwargs):
         super().__init__(*args, **kwargs)
+        
         self.numUnits = int(self.size*(self.size-1)/2)
         self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
 
         self.modified = True
         self.get()
 
-        self.updateMagnitude = 0.01
+        self.numDirections = numDirections
+        self.updateMagnitude = updateMagnitude
 
     def get(self):
         '''Returns full mesh matrix.
@@ -45,15 +49,42 @@ class MZImesh(Mesh):
             self.modified = False
         
         return self.matrix
+ 
+    def applyTo(self, data):
+        try:
+            return np.abs(self.get() @ data)**2
+        except ValueError as ve:
+            print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
+                  f"of dimension: {self.matrix}")
     
-    def Update(self, delta):
+    def Update(self, delta:np.ndarray):
         self.modified = True
+
+        # Make column vectors for deltas and theta
+        deltaFlat = delta.flatten().reshape(-1,1)
+        thetaFlat = self.phaseShifters.flatten().reshape(-1,1)
+
+        X = np.zeros((deltaFlat.shape[0], self.numDirections))
+        V = np.zeros((thetaFlat.shape[0], self.numDirections))
         
+        # Calculate directional derivatives
+        for i in range(self.numDirections):
+            X[:,i], V[:,i] = self.matrixGradient()
+
+        # Solve least square regression for update
+        try:
+            a = np.linalg.inv(X.T @ X) @ X.T @ deltaFlat
+        except np.linalg.LinAlgError:
+            # print("WARN: Singular matrix encountered.")
+            return
+
+        self.phaseShifters = self.phaseShifters + self.rate*(V @ a).reshape(-1,2)
+
     def psToMat(self, phaseShifters = None):
         '''Helper function which calculates the matrix of a MZI mesh from its
             set of phase shifters.
         '''
-        phaseShifters = self.phaseShifters if phaseShifters == None else phaseShifters
+        phaseShifters = self.phaseShifters if phaseShifters is None else phaseShifters
         fullMatrix = np.eye(self.size, dtype=np.cdouble)
         index = 0
         for stage in range(self.size):
@@ -71,7 +102,7 @@ class MZImesh(Mesh):
         return fullMatrix
             
         
-    def matrixGradient(self):
+    def matrixGradient(self, stepVector = None):
         '''Calculates the gradient of the matrix with respect to the phase
             shifters in the MZI mesh. This gradient is with respect to the
             magnitude of an array of detectors that serves as neural input.
@@ -79,9 +110,10 @@ class MZImesh(Mesh):
             Returns derivativeMatrix, stepVector
         '''
         # create a random step vector and set magnitude to self.updateMagnitude
-        stepVector = np.random.rand(self.numUnits,2)
-        stepVector /= np.sqrt(np.sum(np.square(stepVector)))
-        stepVector *= self.updateMagnitude
+        if stepVector is None:
+            stepVector = np.random.rand(*self.phaseShifters.shape)
+            stepVector /= np.sqrt(np.sum(np.square(stepVector)))
+            stepVector *= self.updateMagnitude
         
         derivativeMatrix = np.zeros(self.matrix.shape)
 
@@ -92,14 +124,24 @@ class MZImesh(Mesh):
             plusVector = self.phaseShifters + stepVector
             plusMatrix = self.psToMat(plusVector)
             # isolate column and shape as column vector
-            detectedVectorPlus = np.square(np.abs(plusMatrix @ mask)).reshape(-1,1)
+            detectedVectorPlus = np.square(np.abs(plusMatrix @ mask))
 
             minusVector = self.phaseShifters - stepVector
             minusMatrix = self.psToMat(minusVector)
             # isolate column and shape as column vector
-            detectedVectorMinus = np.square(np.abs(minusMatrix @ mask)).reshape(-1,1)
+            detectedVectorMinus = np.square(np.abs(minusMatrix @ mask))
 
             derivative = (detectedVectorPlus - detectedVectorMinus)/self.updateMagnitude
             derivativeMatrix[:,col] = derivative
 
-        return derivativeMatrix, stepVector
+        # return flattened vectors for the directional derivatives and their unit vector directions
+        return derivativeMatrix.flatten(), stepVector.flatten()/self.updateMagnitude
+    
+
+class PhotonicLayer(Layer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def Integrate(self):
+        for mesh in self.meshes:
+            self += DELTA_TIME * np.square(np.abs(mesh.apply()[:len(self)]))
