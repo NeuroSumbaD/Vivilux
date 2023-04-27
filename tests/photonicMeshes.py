@@ -65,7 +65,7 @@ del vecs, mags
 # resultMixed2MZI = netMixed2_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
 # plt.plot(resultMixed2MZI, label="MZI: Frozen 1st layer")
 
-RuleSet = [[CHL,CHL],[GeneRec,GeneRec][CHL, GeneRec],[ByPass, GeneRec],]
+RuleSet = [[CHL,CHL],[GeneRec,GeneRec],[CHL, GeneRec],[ByPass, GeneRec]]
 learningRates = [10, 5, 0.5, 0.1, 0.05, 0.01, 0.05]
 numDirections = [3, 5, 10, 20]
 
