@@ -109,9 +109,12 @@ class Net:
         results = np.zeros(numEpochs+1)
         results[0] = self.Evaluate(inData, outData, numTimeSteps)
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
+
+        correlations_all_epochs = []
         
         for epoch in range(numEpochs):
             # iterate through data and time
+            correlations_single_epoch = []
             index=0
             for inDatum, outDatum in zip(inData, outData):
                 if reset: self.resetActivity()
@@ -125,12 +128,14 @@ class Net:
                     self.Observe(inDatum, outDatum)
                 # update meshes
                 for layer in self.layers:
-                    layer.Learn()
+                    if not (layer.isInput or layer.freeze):
+                        correlations_single_epoch.append(layer.Learn())
             # evaluate metric
+            correlations_all_epochs.append(correlations_single_epoch)
             results[epoch+1] = self.metric(epochResults, outData)
             if verbose: print(self)
         
-        return results
+        return results, np.array(correlations_all_epochs)
     
     def Evaluate(self, inData, outData, numTimeSteps=25):
         results = self.Infer(inData, numTimeSteps)
@@ -268,7 +273,7 @@ class Layer:
             self.outAct[:] = self.act(self.inAct)
             self.modified = False
         return self.outAct
-
+    
     def printActivity(self):
         return [self.inAct, self.outAct]
     
@@ -305,7 +310,16 @@ class Layer:
         # TODO: Allow multiple meshes to learn, skip fb meshes
         inLayer = self.meshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
+        mesh_before = self.meshes[0].get().flatten()
         self.meshes[0].Update(delta)
+        mesh_after = self.meshes[0].get().flatten()
+        actual_delta = mesh_after - mesh_before
+        # calculate the correlation between the actual delta and the delta
+        angle_difference = np.arccos(np.dot(delta.flatten(), actual_delta) / (np.linalg.norm(delta.flatten()) * np.linalg.norm(actual_delta)))
+        return 1 - angle_difference / np.pi # 1 for fully correlated and 0 for opposite directions of change
+
+
+        
 
         
     def Freeze(self):

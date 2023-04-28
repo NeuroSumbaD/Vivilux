@@ -1,5 +1,8 @@
+import sys, os
+sys.path.insert(0, os.path.join(sys.path[0],'../src'))
 import vivilux as vl
 import vivilux.photonics
+from vivilux.helping import show_correlations
 from vivilux import FFFB, Layer, Mesh
 from vivilux.learningRules import CHL, GeneRec, ByPass
 
@@ -66,14 +69,18 @@ del vecs, mags
 # plt.plot(resultMixed2MZI, label="MZI: Frozen 1st layer")
 
 RuleSet = [[CHL,CHL],[GeneRec,GeneRec],[CHL, GeneRec],[ByPass, GeneRec]]
+RuleSet = [[GeneRec,GeneRec]]
 learningRates = [10, 5, 0.5, 0.1, 0.05, 0.01, 0.05]
+learningRates = [0.1]
 numDirections = [3, 5, 10, 20]
+numDirections = [5]
 
 df = pd.DataFrame(columns=["RuleSet", "numEpochs", "numDirections", "learningRate", "RMSE"])
-
+# print(vl.photonics.PhotonicLayer(4, isInput=True))
 for rules in RuleSet:
     for numDirection in numDirections:
         for lr in learningRates:
+            print(f"Running {rules} with {numDirection} directions and {lr} learning rate")
             meshArgs = {"numDirections": numDirection}
             net = FFFB(
                 [
@@ -86,8 +93,9 @@ for rules in RuleSet:
                 meshArgs = meshArgs
             )
 
-            result = net.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
+            result, correlations = net.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
             # plt.plot(result, label=net.name)
+            show_correlations(correlations)
 
             currentEntry = {
                 "RuleSet": f"[INPUT,{','.join([rule.__name__ for rule in rules])}",
