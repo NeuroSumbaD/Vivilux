@@ -77,7 +77,8 @@ class MZImesh(Mesh):
         except np.linalg.LinAlgError:
             # print("WARN: Singular matrix encountered.")
             return
-
+        # Mah: are we sure that X @ a is the same as actual delta_W? the approximation might be so off.
+        # Mah: test that the approximation is good enough for the drevative matrix X.
         self.phaseShifters = self.phaseShifters + self.rate*(V @ a).reshape(-1,2)
 
     def psToMat(self, phaseShifters = None):
