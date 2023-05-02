@@ -83,7 +83,7 @@ class Net:
         return None # observations know the outcome
 
     def Infer(self, inData, numTimeSteps=25):
-        outputData = np.zeros(inData.shape)
+        outputData = np.zeros((len(inData), len(self.layers[-1])))
         index = 0
         for inDatum in inData:
             for time in range(numTimeSteps):
@@ -198,6 +198,8 @@ class Mesh:
 
     def apply(self):
         data = self.getInput()
+        # guarantee that data can be multiplied by the mesh
+        data = np.pad(data[:self.size], (0, self.size - len(data)))
         return self.applyTo(data)
             
     def applyTo(self, data):
@@ -208,8 +210,9 @@ class Mesh:
                   f"of dimension: {self.matrix}")
 
     def Update(self, delta: np.ndarray):
+        m, n = delta.shape
         self.modified = True
-        self.matrix += self.rate*delta
+        self.matrix[:m, :n] += self.rate*delta
 
     def __len__(self):
         return self.size

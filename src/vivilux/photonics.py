@@ -50,17 +50,18 @@ class MZImesh(Mesh):
         
         return self.matrix
  
-    def applyTo(self, data):
-        try:
-            return np.abs(self.get() @ data)**2
-        except ValueError as ve:
-            print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
-                  f"of dimension: {self.matrix}")
+    # def applyTo(self, data):
+    #     try:
+    #         return np.square(np.abs(self.get() @ data))
+    #     except ValueError as ve:
+    #         print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
+    #               f"of dimension: {self.matrix}")
     
     def Update(self, delta:np.ndarray):
         self.modified = True
 
         # Make column vectors for deltas and theta
+        m, n = delta.shape # presynaptic, postsynaptic array lengths
         deltaFlat = delta.flatten().reshape(-1,1)
         thetaFlat = self.phaseShifters.flatten().reshape(-1,1)
 
@@ -69,7 +70,8 @@ class MZImesh(Mesh):
         
         # Calculate directional derivatives
         for i in range(self.numDirections):
-            X[:,i], V[:,i] = self.matrixGradient()
+            tempx, tempv= self.matrixGradient()
+            X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()
 
         # Solve least square regression for update
         try:
@@ -102,7 +104,7 @@ class MZImesh(Mesh):
         return fullMatrix
             
         
-    def matrixGradient(self, stepVector = None):
+    def matrixGradient(self, stepVector: np.ndarray = None):
         '''Calculates the gradient of the matrix with respect to the phase
             shifters in the MZI mesh. This gradient is with respect to the
             magnitude of an array of detectors that serves as neural input.
@@ -135,7 +137,7 @@ class MZImesh(Mesh):
             derivativeMatrix[:,col] = derivative
 
         # return flattened vectors for the directional derivatives and their unit vector directions
-        return derivativeMatrix.flatten(), stepVector.flatten()/self.updateMagnitude
+        return derivativeMatrix, stepVector/self.updateMagnitude
     
 
 class PhotonicLayer(Layer):

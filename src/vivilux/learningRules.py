@@ -24,4 +24,4 @@ def GeneRec(inLayer: Layer, outLayer: Layer):
 def ByPass(inLayer: Layer, outLayer: Layer):
     '''Null  learning rule.
     '''
-    return np.zeros([len(inLayer), len(outLayer)])
+    return np.zeros([len(outLayer), len(inLayer)])
