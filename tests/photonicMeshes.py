@@ -5,7 +5,6 @@ import vivilux.photonics
 from vivilux.helping import show_correlations
 from vivilux import FFFB, Layer, Mesh
 from vivilux.learningRules import CHL, GeneRec, ByPass
-
 import matplotlib.pyplot as plt
 import numpy as np
 np.random.seed(seed=0)
@@ -95,7 +94,7 @@ for rules in RuleSet:
 
             result, correlations = net.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
             # plt.plot(result, label=net.name)
-            show_correlations(correlations)
+            show_correlations(correlations, cylinderical=False)
 
             currentEntry = {
                 "RuleSet": f"[INPUT,{','.join([rule.__name__ for rule in rules])}",

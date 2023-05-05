@@ -129,8 +129,11 @@ class Net:
                 # update meshes
                 for layer in self.layers:
                     if not (layer.isInput or layer.freeze):
-                        correlations_single_epoch.append(layer.Learn())
+                        success, correlation = layer.Learn()
+                        if success:
+                            correlations_single_epoch.append(correlation)
             # evaluate metric
+            # print(len(correlations_single_epoch))
             correlations_all_epochs.append(correlations_single_epoch)
             results[epoch+1] = self.metric(epochResults, outData)
             if verbose: print(self)
@@ -311,17 +314,15 @@ class Layer:
         inLayer = self.meshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
         mesh_before = self.meshes[0].get().flatten()
-        self.meshes[0].Update(delta)
+        success = self.meshes[0].Update(delta)
         mesh_after = self.meshes[0].get().flatten()
         actual_delta = mesh_after - mesh_before
         # calculate the correlation between the actual delta and the delta
-        angle_difference = np.arccos(np.dot(delta.flatten(), actual_delta) / (np.linalg.norm(delta.flatten()) * np.linalg.norm(actual_delta)))
-        return 1 - angle_difference / np.pi # 1 for fully correlated and 0 for opposite directions of change
+        # angle_difference = np.arccos(np.dot(delta.flatten(), actual_delta) / (np.linalg.norm(delta.flatten()) * np.linalg.norm(actual_delta)))
+        # return 1 - angle_difference / np.pi # 1 for fully correlated and 0 for opposite directions of change
+        return success, np.real(np.dot(delta.flatten(), actual_delta) / (np.linalg.norm(delta.flatten()) * np.linalg.norm(actual_delta)))+1
 
 
-        
-
-        
     def Freeze(self):
         self.freeze = True
 

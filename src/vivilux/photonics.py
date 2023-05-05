@@ -2,6 +2,7 @@ from . import DELTA_TIME, Mesh, Layer
 import numpy as np
 import numpy.linalg
 from scipy.stats import ortho_group
+from vivilux.HP_Optimizer import Bayesian_Opt
 
 def Detect(input):
     '''DC power detected (no cross terms)
@@ -70,16 +71,33 @@ class MZImesh(Mesh):
         # Calculate directional derivatives
         for i in range(self.numDirections):
             X[:,i], V[:,i] = self.matrixGradient()
-
-        # Solve least square regression for update
-        try:
-            a = np.linalg.inv(X.T @ X) @ X.T @ deltaFlat
-        except np.linalg.LinAlgError:
-            # print("WARN: Singular matrix encountered.")
-            return
+        # # Solve least square regression for update
+        # try:
+        #     a = np.linalg.inv(X.T @ X) @ X.T @ deltaFlat
+        # except np.linalg.LinAlgError:
+        #     print("WARN: Singular matrix encountered.")
+        #     return False
+        # # random initialization of a with values from -1 to 1
+        a_initial =  (np.random.rand(1,self.numDirections)*2 - 1).tolist()
+        fun_to_minimize = lambda a: np.sum(np.square(deltaFlat-X @ np.array(a)))
+        bounds = [(-1,1) for _ in range(self.numDirections)]
+        out_args = Bayesian_Opt(fun_to_minimize, 
+                        bounds,
+                        n_calls=20, 
+                        x0=a_initial,
+                        labels=None,
+        #                 xi=0.01,
+        #                 n_points=10000,
+        #                 graphing =True
+                    )
+        a, best_score, _, _=out_args
+        print(a, best_score)
+        # should we include the rate and change the fun_to_maximize to include the rate?
+        # print(best_parameters, best_score)
         # Mah: are we sure that X @ a is the same as actual delta_W? the approximation might be so off.
         # Mah: test that the approximation is good enough for the drevative matrix X.
         self.phaseShifters = self.phaseShifters + self.rate*(V @ a).reshape(-1,2)
+        return True
 
     def psToMat(self, phaseShifters = None):
         '''Helper function which calculates the matrix of a MZI mesh from its
