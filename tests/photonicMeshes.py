@@ -10,7 +10,8 @@ import numpy as np
 np.random.seed(seed=0)
 
 import pandas as pd
-import seaborn as sns
+# import seaborn as sns
+import matplotlib.pyplot as plt
 
 numSamples = 40
 numEpochs = 100
@@ -107,9 +108,10 @@ for rules in RuleSet:
             df = pd.concat([df, pd.DataFrame(currentEntry)])
 
 
-g = sns.FacetGrid(df, row="RuleSet", col="numDirections", hue="learningRate", margin_titles=True)
-g.map(plt.plot, "Epoch", "RMSE")
-g.add_legend()
+# g = sns.FacetGrid(df, row="RuleSet", col="numDirections", hue="learningRate", margin_titles=True)
+# g.map(plt.plot, "Epoch", "RMSE")
+# g.add_legend()
+
 
 # plt.title("Random Input/Output Matching with MZI meshes")
 # plt.ylabel("RMSE")

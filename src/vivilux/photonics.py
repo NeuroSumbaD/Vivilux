@@ -78,19 +78,18 @@ class MZImesh(Mesh):
         #     print("WARN: Singular matrix encountered.")
         #     return False
         # # random initialization of a with values from -1 to 1
-        a_initial =  (np.random.rand(1,self.numDirections)*2 - 1).tolist()
         fun_to_minimize = lambda a: np.sum(np.square(deltaFlat-X @ np.array(a)))
         bounds = [(-1,1) for _ in range(self.numDirections)]
         out_args = Bayesian_Opt(fun_to_minimize, 
                         bounds,
-                        n_calls=20, 
-                        x0=a_initial,
-                        labels=None,
+                        n_calls=6,
+                        minimize=True,
+                        verbose=0,
         #                 xi=0.01,
         #                 n_points=10000,
         #                 graphing =True
                     )
-        a, best_score, _, _=out_args
+        a, best_score = out_args
         print(a, best_score)
         # should we include the rate and change the fun_to_maximize to include the rate?
         # print(best_parameters, best_score)

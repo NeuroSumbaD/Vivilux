@@ -1,36 +1,41 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.gaussian_process import GaussianProcessRegressor
 # from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 # from bayesian_optimization_util import plot_approximation, plot_acquisition
-from sklearn.base import clone
-from skopt import gp_minimize
+from bayes_opt import BayesianOptimization
 
-def Bayesian_Opt(fun_to_minimize,bounds,x0=None,n_calls=100,labels=None,xi=0.01,
-                 n_restarts_optimizer=5,y0=None,n_points=10000,graphing=False,target=None):
+def Bayesian_Opt(fun_to_maximize,bounds,x0=None,n_calls=100,labels=None,xi=0.01,
+                 n_restarts_optimizer=5,y0=None,n_points=10000,graphing=False,target=None,
+                 minimize = True, verbose=2):
         
 # bounds=[(x1_start,x1_end),(x2_start,x2_end)]
     # fun_to_minimize=lambda x: -fun_to_maximize(x)
-    bounds_np=np.array(bounds)
-    X_space=np.linspace(bounds_np[:,0],bounds_np[:,1],50)
+    bounds_dict={}
+    for i in range(len(bounds)):
+        bounds_dict['x'+str(i+1)]=bounds[i]
+    if minimize:
+        function = lambda x: -fun_to_maximize(x)
+    else:
+        function = fun_to_maximize
+    # X_space=np.linspace(bounds_np[:,0],bounds_np[:,1],50)
     if y0 is not None:
         y0=list(-np.array(y0))
-    minimizer = gp_minimize(fun_to_minimize, 
-                    bounds,
-                    x0=x0,
-                    n_calls=n_calls,
-                    xi=xi,
-                    n_restarts_optimizer=n_restarts_optimizer,
-                    y0=y0,
-                    n_points=n_points,
-                    n_jobs=-1,
-                   )
-    gp_estimator=minimizer.specs['args']['base_estimator']
-    gp_estimator.fit(minimizer.x_iters, -minimizer.func_vals)
-    if graphing:
-        plot_convergence(np.array(minimizer.x_iters), -minimizer.func_vals, labels=labels, target=target)
-#         plot_approximation(gp_estimator, X_space, r.x_iters, -r.func_vals, show_legend=True,Y=Y)
-    return minimizer.x, -minimizer.fun, np.array(minimizer.x_iters), -1*np.array(minimizer.func_vals)
+    maximizer = BayesianOptimization(function, 
+                bounds_dict,
+                random_state=1,
+                allow_duplicate_points=True,
+                verbose=verbose,
+               )
+    maximizer.maximize(n_iter=n_calls)
+#     if graphing:
+#         plot_convergence(np.array(minimizer.x_iters), -minimizer.func_vals, labels=labels, target=target)
+# #         plot_approximation(gp_estimator, X_space, r.x_iters, -r.func_vals, show_legend=True,Y=Y)
+#         plt.show()
+    if minimize:
+        best_result = -1*maximizer.max['target']
+    else:
+        best_result = maximizer.max['target']
+    return np.array(list(maximizer.max['params'].values())), best_result
 
 
 #------------Helpfing functions---------------------#
@@ -178,6 +183,8 @@ def plot_convergence(X_sample, Y_sample, n_init=1,labels=None ,target=None):
         plt.xlabel('Iteration')
         plt.ylabel('Distance')
         plt.title('Distance between consecutive '+x_name)
+    plt.show()
+    return
 
 
     
