@@ -2,6 +2,7 @@ from . import DELTA_TIME, Mesh, Layer
 import numpy as np
 import numpy.linalg
 from scipy.stats import ortho_group
+from vivilux.helping import generate_orthogonal_vectors
 
 def Detect(input):
     '''DC power detected (no cross terms)
@@ -59,28 +60,38 @@ class MZImesh(Mesh):
     
     def Update(self, delta:np.ndarray):
         self.modified = True
-
+        success = True
         # Make column vectors for deltas and theta
         m, n = delta.shape # presynaptic, postsynaptic array lengths
         deltaFlat = delta.flatten().reshape(-1,1)
         thetaFlat = self.phaseShifters.flatten().reshape(-1,1)
-
         X = np.zeros((deltaFlat.shape[0], self.numDirections))
         V = np.zeros((thetaFlat.shape[0], self.numDirections))
-        
+        numOfShifters = self.phaseShifters.flatten().shape[0]
         # Calculate directional derivatives
+        if self.numDirections > numOfShifters:
+            raise ValueError("numDirections must be less than or equal to the number of shifters (degrees of freedom)")
+        # generate self.numDirections directions that are equidistant from each other
+        flattened_stepVectors = generate_orthogonal_vectors(numOfShifters, self.numDirections)
         for i in range(self.numDirections):
-            tempx, tempv= self.matrixGradient()
+            tempx, tempv= self.matrixGradient(flattened_stepVectors[:,i].reshape(-1,2))
             X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()
 
         # Solve least square regression for update
-        try:
-            a = np.linalg.inv(X.T @ X) @ X.T @ deltaFlat
-        except np.linalg.LinAlgError:
-            # print("WARN: Singular matrix encountered.")
-            return
-
+        a = np.linalg.lstsq(X, deltaFlat, rcond=None)[0]
+        # try:
+        #     a = np.linalg.inv(X.T @ X) @ X.T @ deltaFlat
+        # except np.linalg.LinAlgError:
+        #     print("WARN: Singular matrix encountered.")
+        #     success = False
+        #     correlation = 0
+        #     return success, correlation
         self.phaseShifters = self.phaseShifters + self.rate*(V @ a).reshape(-1,2)
+        # a= np.random.rand(self.numDirections)
+        assumed_delta = X @ np.array(a)
+        correlation = np.dot(deltaFlat.flatten(),assumed_delta.flatten())/(np.linalg.norm(deltaFlat)*np.linalg.norm(assumed_delta))
+        return success, correlation
+
 
     def psToMat(self, phaseShifters = None):
         '''Helper function which calculates the matrix of a MZI mesh from its
@@ -116,26 +127,24 @@ class MZImesh(Mesh):
             stepVector = np.random.rand(*self.phaseShifters.shape)
             stepVector /= np.sqrt(np.sum(np.square(stepVector)))
             stepVector *= self.updateMagnitude
+        # else:
+        #     stepVector /= np.sqrt(np.sum(np.square(stepVector)))
+        #     stepVector *= self.updateMagnitude
         
         derivativeMatrix = np.zeros(self.matrix.shape)
-
+        plusVector = self.phaseShifters + stepVector
+        plusMatrix = self.psToMat(plusVector)
+        minusVector = self.phaseShifters - stepVector
+        minusMatrix = self.psToMat(minusVector)
         for col in range(self.size):
             mask = np.zeros(self.size)
             mask[col] = 1
-            
-            plusVector = self.phaseShifters + stepVector
-            plusMatrix = self.psToMat(plusVector)
             # isolate column and shape as column vector
             detectedVectorPlus = np.square(np.abs(plusMatrix @ mask))
-
-            minusVector = self.phaseShifters - stepVector
-            minusMatrix = self.psToMat(minusVector)
             # isolate column and shape as column vector
             detectedVectorMinus = np.square(np.abs(minusMatrix @ mask))
-
             derivative = (detectedVectorPlus - detectedVectorMinus)/self.updateMagnitude
             derivativeMatrix[:,col] = derivative
-
         # return flattened vectors for the directional derivatives and their unit vector directions
         return derivativeMatrix, stepVector/self.updateMagnitude
     
