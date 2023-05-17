@@ -23,6 +23,7 @@ np.random.seed(seed=0)
 from .activations import Sigmoid
 from .metrics import RMSE
 from .learningRules import CHL
+from .optimizers import ByPass
 
 # library constants
 DELTA_TIME = 0.1
@@ -33,6 +34,8 @@ class Net:
     count = 0
     def __init__(self, layers: list[Layer], meshType: Mesh,
                  metric = RMSE, learningRate = 0.1, name = None,
+                 optimizer = ByPass(),
+                 meshArgs = {},
                  **kwargs):
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
@@ -48,7 +51,8 @@ class Net:
             size = len(layer)
             layer.addMesh(meshType(size, self.layers[index-1],
                                    learningRate,
-                                   **kwargs["meshArgs"]))
+                                   **meshArgs))
+            layer.optimizer = optimizer
 
     def Predict(self, data):
         '''Inference method called 'prediction' in accordance with a predictive
@@ -107,7 +111,11 @@ class Net:
         outDataCOPY = outData.copy()
         # outData.flags.writeable = False
         results = np.zeros(numEpochs+1)
+        print("Progress:")
+        print(f"Epoch: 0, metric[{self.metric}] = {results[0]:0.2f}  ", end="\r")
         results[0] = self.Evaluate(inData, outData, numTimeSteps)
+        print(f"Epoch: 0, metric[{self.metric}] = {results[0]:0.2f}  ", end="\r")
+
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
         
         for epoch in range(numEpochs):
@@ -128,8 +136,9 @@ class Net:
                     layer.Learn()
             # evaluate metric
             results[epoch+1] = self.metric(epochResults, outData)
+            print(f"Epoch: {epoch}, metric[{self.metric}] = {results[epoch+1]:0.4f}  ", end="\r")
             if verbose: print(self)
-        
+        print("\n")
         return results
     
     def Evaluate(self, inData, outData, numTimeSteps=25):
@@ -260,6 +269,8 @@ class Layer:
         self.rule = learningRule
         self.meshes: list[Mesh] = [] #empty initial mesh list
 
+        self.optimizer = ByPass()
+
         self.isInput = isInput
         self.freeze = False
         self.name =  f"LAYER_{Layer.count}" if name == None else name
@@ -308,7 +319,8 @@ class Layer:
         # TODO: Allow multiple meshes to learn, skip fb meshes
         inLayer = self.meshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
-        self.meshes[0].Update(delta)
+        optDelta = self.optimizer(delta)
+        self.meshes[0].Update(optDelta)
 
         
     def Freeze(self):

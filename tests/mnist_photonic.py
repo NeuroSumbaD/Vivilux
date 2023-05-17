@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 np.random.seed(seed=0)
 
-numSamples = 4000
+numSamples = 500
 (train_X, train_y), (test_X, test_y) = mnist.load_data()
 
 # plt.imshow(train_X[0])
@@ -37,8 +37,8 @@ netMixed = FFFB([
                 learningRate = 0.05, name = "NET_Mixed", meshArgs = meshArgs)
 
 
-result = netMixed.Learn(samples, oneHotTargets, numEpochs=50, reset=False)
-plt.plot(result)
+result = netMixed.Learn(samples, oneHotTargets, numEpochs=20, reset=False)
+plt.plot(result, "MZI_49-32-10_frozenFirst-GeneRec")
 
 plt.title("Mnist Dataset")
 plt.ylabel("Accuracy")

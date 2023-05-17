@@ -1,4 +1,4 @@
-from CHL_MZI import *
+# from CHL_MZI import *
 from keras.datasets import mnist
 from skimage.measure import block_reduce
 import numpy as np
@@ -23,30 +23,30 @@ del mnist
 
 inputDimension = samples.shape[1]
 
-#import matplotlib.pyplot as plt
-#for index, thing in enumerate(samples):
-#    plt.imshow(thing.reshape(7,7))
-#    plt.title(f'Class: {targets[index]}')
-#    plt.show()
+import matplotlib.pyplot as plt
+for index, thing in enumerate(samples):
+   plt.imshow(thing.reshape(7,7))
+   plt.title(f'Class: {targets[index]}')
+   plt.show()
 
 
-#model  = OpticalNetwork([49, 49, 20, 10], inputDimension=inputDimension)
-model  = OpticalNetwork([49, 10], inputDimension=inputDimension)
+# #model  = OpticalNetwork([49, 49, 20, 10], inputDimension=inputDimension)
+# model  = OpticalNetwork([49, 10], inputDimension=inputDimension)
 
-print("Evaluating initial Accuracy...")
-#initEval = model.Evaluate(samples, targets, metric=HardmaxAccuracy)
-initEval = model.Evaluate(samples, targets)
-#print(f"Initial Classification Accuracy: {initEval}")
-print(f"Initial RMSE: {initEval}")
-print("Begin training...")
-#resultMZI = model.Train(samples, oneHotTargets, numTimesteps=25, numEpochs=50, learningRate=0.5, metric=HardmaxAccuracy)
-resultMZI = model.Train(samples, oneHotTargets, numTimesteps=25, numEpochs=5, learningRate=0.05)
-print(f"MZI Training occured?: {initEval < resultMZI[-1]}")
+# print("Evaluating initial Accuracy...")
+# #initEval = model.Evaluate(samples, targets, metric=HardmaxAccuracy)
+# initEval = model.Evaluate(samples, targets)
+# #print(f"Initial Classification Accuracy: {initEval}")
+# print(f"Initial RMSE: {initEval}")
+# print("Begin training...")
+# #resultMZI = model.Train(samples, oneHotTargets, numTimesteps=25, numEpochs=50, learningRate=0.5, metric=HardmaxAccuracy)
+# resultMZI = model.Train(samples, oneHotTargets, numTimesteps=25, numEpochs=5, learningRate=0.05)
+# print(f"MZI Training occured?: {initEval < resultMZI[-1]}")
 
-plt.figure()
-plt.plot(resultMZI, label="MZI")
-plt.title("CHL/MZI MNIST Classification accuracy")
-plt.ylabel("Accuracy")
-plt.xlabel("Epoch")
-# plt.legend(loc="upper right")
-plt.show()
+# plt.figure()
+# plt.plot(resultMZI, label="MZI")
+# plt.title("CHL/MZI MNIST Classification accuracy")
+# plt.ylabel("Accuracy")
+# plt.xlabel("Epoch")
+# # plt.legend(loc="upper right")
+# plt.show()

@@ -1,7 +1,7 @@
 import copy
 
 from vivilux import *
-from vivilux.learningRules import CHL, CHL2, GeneRec
+from vivilux.learningRules import CHL, GeneRec
 
 import numpy as np
 import matplotlib.pyplot as plt
