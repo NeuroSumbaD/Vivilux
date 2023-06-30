@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vivilux"
-version = "0.0.1"
+version = "0.5.0"
 authors = [
   { name="Luis El Srouji", email="lzelsrouji@ucdavis.edu" },
 ]

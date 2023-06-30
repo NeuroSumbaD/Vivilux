@@ -1,6 +1,6 @@
 '''
 A library for Hebbian-like learning implementations on MZI meshes based on the
-work of O'Reilly et al. [1] in computation.
+work of O'Reilly et al. [1] in computational neuroscience (see https://github.com/emer/leabra).
 
 REFERENCES:
 [1] O'Reilly, R. C., Munakata, Y., Frank, M. J., Hazy, T. E., and
@@ -248,6 +248,47 @@ class fbMesh(Mesh):
 
     def Update(self, delta):
         return None
+    
+class InhibMesh(Mesh):
+    '''A class for inhibitory feedback mashes based on fffb mechanism.
+        Calculates inhibitory input to a layer based on a mixture of its
+        existing activation and current input.
+    '''
+    FF = 1
+    FB = 1
+    FBTau = 1/1.4
+    FF0 = 0.1
+
+    def __init__(self, ffmesh: Mesh, inLayer: Layer) -> None:
+        self.name = "FFFB_" + ffmesh.name
+        self.ffmesh = ffmesh
+        self.size = len(inLayer)
+        self.inLayer = inLayer
+        self.fb = 0
+        self.inhib = np.zeros(self.size)
+
+    def apply(self):
+        # guarantee that data can be multiplied by the mesh
+        ffAct = self.ffmesh.apply()[:len(self)]
+        ffAct = np.pad(ffAct, (0, self.size - len(ffAct)))
+        ffAct = np.maximum(ffAct-InhibMesh.FF0,0)
+
+        self.fb += InhibMesh.FBTau * (np.mean(self.inLayer.outAct) - self.fb)
+
+        self.inhib[:] = ffAct+ self.fb
+        return -self.inhib
+
+    def set(self):
+        raise Exception("InhibMesh has no 'set' method.")
+
+    def get(self):
+        return self.apply()
+    
+    def getInput(self):
+        return self.mesh.inLayer.outAct
+
+    def Update(self, delta):
+        return None
 
 class Layer:
     '''Base class for a layer that includes input matrices and activation
@@ -378,6 +419,8 @@ class FFFB(Net):
             #skip input and output layers, add feedback matrices
             nextLayer = self.layers[index+1]
             layer.addMesh(fbMesh(nextLayer.meshes[0], nextLayer))
+            inhibitoryMesh = InhibMesh(layer.meshes[0], layer)
+            layer.addMesh(inhibitoryMesh)
 
 
 if __name__ == "__main__":
