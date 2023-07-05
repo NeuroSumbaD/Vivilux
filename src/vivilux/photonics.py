@@ -49,6 +49,12 @@ class MZImesh(Mesh):
             self.modified = False
         
         return self.matrix
+    
+    def apply(self):
+        data = self.getInput()
+        # guarantee that data can be multiplied by the mesh
+        data = np.pad(data[:self.size], (0, self.size - len(data)))
+        return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
  
     # def applyTo(self, data):
     #     try:
@@ -139,11 +145,43 @@ class MZImesh(Mesh):
         # return flattened vectors for the directional derivatives and their unit vector directions
         return derivativeMatrix, stepVector/self.updateMagnitude
     
+class phfbMesh(Mesh):
+    '''A class for photonic feedback meshes based on the transpose of an MZI mesh.
+    '''
+    def __init__(self, mesh: Mesh, inLayer: Layer) -> None:
+        super().__init__(mesh.size, inLayer)
+        self.name = "TRANSPOSE_" + mesh.name
+        self.mesh = mesh
 
+    def set(self):
+        raise Exception("Feedback mesh has no 'set' method.")
+
+    def get(self):
+        return self.mesh.get().T
+    
+    def getInput(self):
+        return self.mesh.inLayer.outAct
+
+    def Update(self, delta):
+        return None
+    
+    def apply(self):
+        data = self.getInput()
+        # guarantee that data can be multiplied by the mesh
+        data = np.pad(data[:self.size], (0, self.size - len(data)))
+        return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
+    
 class PhotonicLayer(Layer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def Integrate(self):
         for mesh in self.meshes:
-            self += DELTA_TIME * np.square(np.abs(mesh.apply()[:len(self)]))
+            # self += DELTA_TIME * np.sum(np.square(np.abs(mesh.apply()[:len(self)])), axis=1)
+            self += DELTA_TIME * mesh.apply()[:len(self)]
+
+    # def getActivity(self):
+    #     if self.modified == True:
+    #         self.outAct[:] = self.act(self.inAct)
+    #         self.modified = False
+    #     return Diagonalize(self.outAct)

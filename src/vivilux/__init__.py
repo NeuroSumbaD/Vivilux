@@ -413,12 +413,12 @@ class FFFB(Net):
     '''A network with feed forward and feedback meshes between each
         layer. Based on ideas presented in [2]
     '''
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, FeedbackMesh = fbMesh, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         for index, layer in enumerate(self.layers[1:-1], 1): 
             #skip input and output layers, add feedback matrices
             nextLayer = self.layers[index+1]
-            layer.addMesh(fbMesh(nextLayer.meshes[0], nextLayer))
+            layer.addMesh(FeedbackMesh(nextLayer.meshes[0], nextLayer))
             inhibitoryMesh = InhibMesh(layer.meshes[0], layer)
             layer.addMesh(inhibitoryMesh)
 
