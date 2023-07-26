@@ -24,8 +24,9 @@ from .activations import Sigmoid
 from .metrics import RMSE
 from .learningRules import CHL
 from .optimizers import ByPass
+from .monitors import Monitor
 
-# library constants
+# library default constants
 DELTA_TIME = 0.1
 
 class Net:
@@ -36,16 +37,22 @@ class Net:
                  metric = RMSE, learningRate = 0.1, name = None,
                  optimizer = ByPass(),
                  meshArgs = {},
+                 numTimeSteps = 50,
+                 monitoring = False,
                  **kwargs):
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
         '''
+        self.DELTA_TIME = DELTA_TIME
+        self.numTimeSteps = numTimeSteps
+        self.monitoring = monitoring
+
         self.name =  f"NET_{Layer.count}" if name == None else name
         Net.count += 1
 
         # TODO: allow different mesh types between layers
         self.layers = layers
-        self.metric = metric
+        self.metrics = [metric] if not isinstance(metric, list) else metric
 
         for index, layer in enumerate(self.layers[1:], 1):
             size = len(layer)
@@ -53,6 +60,10 @@ class Net:
                                    learningRate,
                                    **meshArgs))
             layer.optimizer = optimizer
+            layer.monitor = Monitor(name = self.name + ": " + layer.name,
+                                    labels = ["time step", "activity"],
+                                    limits=[numTimeSteps, 1],
+                                    numLines=len(layer))
 
     def Predict(self, data):
         '''Inference method called 'prediction' in accordance with a predictive
@@ -64,8 +75,9 @@ class Net:
 
         for layer in self.layers[1:-1]:
             layer.Predict()
-
+            
         output = self.layers[-1].Predict()
+        
         
         return output
 
@@ -86,7 +98,7 @@ class Net:
 
         return None # observations know the outcome
 
-    def Infer(self, inData, numTimeSteps=25):
+    def Infer(self, inData, numTimeSteps=50):
         outputData = np.zeros((len(inData), len(self.layers[-1])))
         index = 0
         for inDatum in inData:
@@ -98,7 +110,7 @@ class Net:
 
     
     def Learn(self, inData: np.ndarray, outData: np.ndarray,
-              numTimeSteps=50, numEpochs=50,
+              numTimeSteps = None, numEpochs=50,
               verbose = False, reset = False):
         '''Control loop for learning based on GeneRec-like algorithms.
                 inData      : input data
@@ -106,15 +118,15 @@ class Net:
                 verbose     : if True, prints net each iteration
                 reset       : if True, resets activity between each input sample
         '''
-        inDataCOPY = inData.copy()
-        # inData.flags.writeable = False
-        outDataCOPY = outData.copy()
-        # outData.flags.writeable = False
+        # allow update of numTimeSteps
+        if numTimeSteps is not None:
+            self.numTimeSteps = numTimeSteps
+
         results = np.zeros(numEpochs+1)
         print("Progress:")
-        print(f"Epoch: 0, metric[{self.metric}] = {results[0]:0.2f}  ", end="\r")
-        results[0] = self.Evaluate(inData, outData, numTimeSteps)
-        print(f"Epoch: 0, metric[{self.metric}] = {results[0]:0.2f}  ", end="\r")
+        print(f"Epoch: 0, metric[{self.metrics[0]}] = {results[0]:0.2f}  ", end="\r")
+        results[0] = self.Evaluate(inData, outData, self.numTimeSteps)
+        print(f"Epoch: 0, metric[{self.metrics[0]}] = {results[0]:0.2f}  ", end="\r")
 
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
         
@@ -125,25 +137,26 @@ class Net:
                 if reset: self.resetActivity()
                 # TODO: MAKE ACTIVATIONS CONTINUOUS
                 ### Data should instead be recorded and labeled at the end of each phase
-                for time in range(numTimeSteps):
+                for time in range(self.numTimeSteps):
                     lastResult = self.Predict(inDatum)
                 epochResults[index][:] = lastResult
                 index += 1
-                for time in range(numTimeSteps):
+                for time in range(self.numTimeSteps):
                     self.Observe(inDatum, outDatum)
                 # update meshes
                 for layer in self.layers:
                     layer.Learn()
             # evaluate metric
-            results[epoch+1] = self.metric(epochResults, outData)
-            print(f"Epoch: {epoch}, metric[{self.metric}] = {results[epoch+1]:0.4f}  ", end="\r")
+            #TODO: record multiple metrics
+            results[epoch+1] = self.metrics[0](epochResults, outData)
+            print(f"Epoch: {epoch}, metric[{self.metrics[0]}] = {results[epoch+1]:0.4f}  ", end="\r")
             if verbose: print(self)
         print("\n")
         return results
     
     def Evaluate(self, inData, outData, numTimeSteps=25):
         results = self.Infer(inData, numTimeSteps)
-        return self.metric(results, outData)
+        return self.metrics[0](results, outData)
 
     def getWeights(self, ffOnly):
         weights = []
@@ -316,6 +329,9 @@ class Layer:
         self.freeze = False
         self.name =  f"LAYER_{Layer.count}" if name == None else name
         if isInput: self.name = "INPUT_" + self.name
+
+        self.monitor = None
+
         Layer.count += 1
 
     def getActivity(self):
@@ -342,6 +358,7 @@ class Layer:
         self.Integrate()
         activity = self.getActivity()
         self.phaseHist["minus"][:] = activity
+        self.monitor.update(activity)
         return activity.copy()
 
     def Observe(self):
