@@ -11,7 +11,7 @@ np.random.seed(seed=0)
 import pandas as pd
 import seaborn as sns
 
-numSamples = 40
+numSamples = 10
 numEpochs = 50
 
 
@@ -31,6 +31,10 @@ optParams = {"lr" : 0.05,
             "beta2": 0.999,
             "epsilon": 1e-08}
 
+InhibMesh.FF = 0.2
+InhibMesh.FB = 0.5
+InhibMesh.FBTau = 0.5
+InhibMesh.FF0 = 0.5
 
 netMixed_MZI_Adam = FFFB([
         vl.photonics.PhotonicLayer(4, isInput=True),
@@ -38,7 +42,7 @@ netMixed_MZI_Adam = FFFB([
         vl.photonics.PhotonicLayer(4, learningRule=CHL)
     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
     learningRate = 0.1,
-    name = f"NET_Mixed_FF-{1.0:.2}_FB-{1.0:.2}_Tau-{1/1.4:.2}_FF0-{0.1:.2}",
+    name = f"NET_Mixed_FF-{0.0:.2}_FB-{1.0:.2}_Tau-{1/1.4:.2}_FF0-{0.1:.2}",
     optimizer = Adam(**optParams), monitoring = True)
 
 resultMixedMZI_Adam = netMixed_MZI_Adam.Learn(

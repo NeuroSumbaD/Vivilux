@@ -123,10 +123,13 @@ class Net:
             self.numTimeSteps = numTimeSteps
 
         results = np.zeros(numEpochs+1)
+        index = 0
+        numSamples = len(inData)
+
         print("Progress:")
-        print(f"Epoch: 0, metric[{self.metrics[0]}] = {results[0]:0.2f}  ", end="\r")
+        print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0]:0.2f}  ", end="\r")
         results[0] = self.Evaluate(inData, outData, self.numTimeSteps)
-        print(f"Epoch: 0, metric[{self.metrics[0]}] = {results[0]:0.2f}  ", end="\r")
+        print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0]:0.2f}  ", end="\r")
 
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
         
@@ -146,10 +149,11 @@ class Net:
                 # update meshes
                 for layer in self.layers:
                     layer.Learn()
+                print(f"Epoch: ({epoch}/{numEpochs}), sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[epoch]:0.4f}  ", end="\r")
             # evaluate metric
             #TODO: record multiple metrics
             results[epoch+1] = self.metrics[0](epochResults, outData)
-            print(f"Epoch: {epoch}, metric[{self.metrics[0]}] = {results[epoch+1]:0.4f}  ", end="\r")
+            print(f"Epoch: ({epoch}/{numEpochs}), sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[epoch+1]:0.4f}  ", end="\r")
             if verbose: print(self)
         print("\n")
         return results
@@ -288,7 +292,7 @@ class InhibMesh(Mesh):
 
         self.fb += InhibMesh.FBTau * (np.mean(self.inLayer.outAct) - self.fb)
 
-        self.inhib[:] = ffAct+ self.fb
+        self.inhib[:] = InhibMesh.FF * ffAct + InhibMesh.FB * self.fb
         return -self.inhib
 
     def set(self):
