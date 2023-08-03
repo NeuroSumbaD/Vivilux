@@ -60,7 +60,8 @@ class Net:
                                    learningRate,
                                    **meshArgs))
             layer.optimizer = optimizer
-            layer.monitor = Monitor(name = self.name + ": " + layer.name,
+            if monitoring:
+                layer.monitor = Monitor(name = self.name + ": " + layer.name,
                                     labels = ["time step", "activity"],
                                     limits=[numTimeSteps, 1],
                                     numLines=len(layer))
@@ -74,7 +75,7 @@ class Net:
         self.layers[0].phaseHist["minus"][:] = self.layers[0].getActivity()
 
         for layer in self.layers[1:-1]:
-            layer.Predict()
+            layer.Predict(monitoring=self.monitoring)
             
         output = self.layers[-1].Predict()
         
@@ -111,7 +112,7 @@ class Net:
     
     def Learn(self, inData: np.ndarray, outData: np.ndarray,
               numTimeSteps = None, numEpochs=50,
-              verbose = False, reset = False):
+              verbose = False, reset = False, shuffle = True):
         '''Control loop for learning based on GeneRec-like algorithms.
                 inData      : input data
                 outData     : 
@@ -132,10 +133,14 @@ class Net:
         print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0]:0.2f}  ", end="\r")
 
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
+
         
         for epoch in range(numEpochs):
-            # iterate through data and time
+            if shuffle:
+                permute = np.random.permutation(len(inData))
+                inData, outData = inData[permute], outData[permute]
             index=0
+            # iterate through data and time
             for inDatum, outDatum in zip(inData, outData):
                 if reset: self.resetActivity()
                 # TODO: MAKE ACTIVATIONS CONTINUOUS
@@ -357,12 +362,13 @@ class Layer:
         for mesh in self.meshes:
             self += DELTA_TIME * mesh.apply()[:len(self)]#**2
 
-    def Predict(self):
+    def Predict(self, monitoring = False):
         self -= DELTA_TIME*self.inAct
         self.Integrate()
         activity = self.getActivity()
         self.phaseHist["minus"][:] = activity
-        self.monitor.update(activity)
+        if monitoring:
+            self.monitor.update(activity)
         return activity.copy()
 
     def Observe(self):
