@@ -27,7 +27,7 @@ del vecs, mags
 
 df = pd.DataFrame(columns=["FF", "FB", "FBTau", "FF0"])
 
-optParams = {"lr" : 0.05,
+optArgs = {"lr" : 0.05,
             "beta1" : 0.9,
             "beta2": 0.999,
             "epsilon": 1e-08}
@@ -51,7 +51,7 @@ baseFffbNet = FFFB([
                 ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
                 learningRate = 0.1,
                 name = f"Base_FFFBnet",
-                optimizer = Adam(**optParams))
+                optimizer = Adam, optArgs=optArgs)
 
 
 for ff in FF:

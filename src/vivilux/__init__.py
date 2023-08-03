@@ -35,7 +35,8 @@ class Net:
     count = 0
     def __init__(self, layers: list[Layer], meshType: Mesh,
                  metric = RMSE, learningRate = 0.1, name = None,
-                 optimizer = ByPass(),
+                 optimizer = ByPass,
+                 optArgs = {},
                  meshArgs = {},
                  numTimeSteps = 50,
                  monitoring = False,
@@ -59,7 +60,7 @@ class Net:
             layer.addMesh(meshType(size, self.layers[index-1],
                                    learningRate,
                                    **meshArgs))
-            layer.optimizer = optimizer
+            layer.optimizer = optimizer(*optArgs)
             if monitoring:
                 layer.monitor = Monitor(name = self.name + ": " + layer.name,
                                     labels = ["time step", "activity"],

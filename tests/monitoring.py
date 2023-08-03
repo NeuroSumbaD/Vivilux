@@ -26,7 +26,7 @@ targets = np.abs(vecs/mags[...,np.newaxis])
 del vecs, mags
 
 
-optParams = {"lr" : 0.05,
+optArgs = {"lr" : 0.05,
             "beta1" : 0.9,
             "beta2": 0.999,
             "epsilon": 1e-08}
@@ -43,7 +43,7 @@ netMixed_MZI_Adam = FFFB([
     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
     learningRate = 0.1,
     name = f"NET_Mixed_FF-{0.0:.2}_FB-{1.0:.2}_Tau-{1/1.4:.2}_FF0-{0.1:.2}",
-    optimizer = Adam(**optParams), monitoring = True)
+    optimizer = Adam, optArgs=optArgs, monitoring = True)
 
 resultMixedMZI_Adam = netMixed_MZI_Adam.Learn(
     inputs, targets, numEpochs=numEpochs, reset=False)

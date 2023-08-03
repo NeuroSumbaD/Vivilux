@@ -22,7 +22,7 @@ mags = np.linalg.norm(vecs, axis=-1)
 targets = np.abs(vecs/mags[...,np.newaxis])
 del vecs, mags
 
-optParams = {"lr" : 0.05,
+optArgs = {"lr" : 0.05,
             "beta1" : 0.9,
             "beta2": 0.999,
             "epsilon": 1e-08}
@@ -31,14 +31,14 @@ netGR = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.01, name = "NET_GR", optimizer = Adam(**optParams))
+], Mesh, learningRate = 0.01, name = "NET_GR", optimizer = Adam, optArgs = optArgs)
 
 netGR3 = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.01, name = "NET_GR3", optimizer = Adam(**optParams))
+], Mesh, learningRate = 0.01, name = "NET_GR3", optimizer = Adam, optArgs = optArgs)
 
 netGR4 = FFFB([
     Layer(4, isInput=True),
@@ -46,27 +46,27 @@ netGR4 = FFFB([
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.01, name = "NET_GR4", optimizer = Adam(**optParams))
+], Mesh, learningRate = 0.01, name = "NET_GR4", optimizer = Adam, optArgs = optArgs)
 
 netCHL = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
-], Mesh, learningRate = 0.01, name = "NET_CHL", optimizer = Adam(**optParams))
+], Mesh, learningRate = 0.01, name = "NET_CHL", optimizer = Adam, optArgs = optArgs)
 
 
 netMixed = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.01, name = "NET_Mixed", optimizer = Adam(**optParams))
+], Mesh, learningRate = 0.01, name = "NET_Mixed", optimizer = Adam, optArgs = optArgs)
 
 
 netMixed2 = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
-], Mesh, learningRate = 0.01, name = "NET_Mixed-Frozen", optimizer = Adam(**optParams))
+], Mesh, learningRate = 0.01, name = "NET_Mixed-Frozen", optimizer = Adam, optArgs = optArgs)
 netMixed2.layers[1].Freeze()
 
 resultCHL = netCHL.Learn(inputs, targets, numEpochs=numEpochs, reset=False)

@@ -55,7 +55,7 @@ netMixed2_MZI = FFFB([
     learningRate = 0.1, name = "NET_CHL-Frozen")
 netMixed2_MZI.layers[1].Freeze()
 
-optParams = {"lr" : 0.01,
+optArgs = {"lr" : 0.01,
             "beta1" : 0.9,
             "beta2": 0.999,
             "epsilon": 1e-08}
@@ -65,7 +65,7 @@ netMixed_MZI_Adam = FFFB([
         vl.photonics.PhotonicLayer(4, learningRule=CHL),
         vl.photonics.PhotonicLayer(4, learningRule=GeneRec)
     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-    learningRate = 0.1, name = "NET_Mixed",  optimizer = Adam(**optParams))
+    learningRate = 0.1, name = "NET_Mixed",  optimizer = Adam, optArgs = optArgs)
 
 
 netMixed2_MZI_Adam = FFFB([
@@ -73,7 +73,7 @@ netMixed2_MZI_Adam = FFFB([
         vl.photonics.PhotonicLayer(4, learningRule=CHL),
         vl.photonics.PhotonicLayer(4, learningRule=GeneRec)
     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-    learningRate = 0.1, name = "NET_CHL-Frozen",  optimizer = Adam(**optParams))
+    learningRate = 0.1, name = "NET_CHL-Frozen",  optimizer = Adam, optArgs = optArgs)
 netMixed2_MZI.layers[1].Freeze()
 
 
