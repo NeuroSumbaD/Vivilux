@@ -40,6 +40,7 @@ class Net:
                  meshArgs = {},
                  numTimeSteps = 50,
                  monitoring = False,
+                 defMonitor = Monitor,
                  **kwargs):
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
@@ -47,6 +48,7 @@ class Net:
         self.DELTA_TIME = DELTA_TIME
         self.numTimeSteps = numTimeSteps
         self.monitoring = monitoring
+        self.defMonitor = defMonitor
 
         self.name =  f"NET_{Layer.count}" if name == None else name
         Net.count += 1
@@ -55,14 +57,21 @@ class Net:
         self.layers = layers
         self.metrics = [metric] if not isinstance(metric, list) else metric
 
+        if monitoring: 
+            index, layer = 0, self.layers[0]
+            layer.monitor = self.defMonitor(name = self.name + ": " + layer.name,
+                                    labels = ["time step", "activity"],
+                                    limits=[numTimeSteps, 1],
+                                    numLines=len(layer))
+
         for index, layer in enumerate(self.layers[1:], 1):
             size = len(layer)
             layer.addMesh(meshType(size, self.layers[index-1],
                                    learningRate,
                                    **meshArgs))
-            layer.optimizer = optimizer(*optArgs)
+            layer.optimizer = optimizer(**optArgs)
             if monitoring:
-                layer.monitor = Monitor(name = self.name + ": " + layer.name,
+                layer.monitor = self.defMonitor(name = self.name + ": " + layer.name,
                                     labels = ["time step", "activity"],
                                     limits=[numTimeSteps, 1],
                                     numLines=len(layer))
@@ -72,13 +81,13 @@ class Net:
             error-driven learning scheme of neural network computation.
         '''
         #Clamp input layer, set minus phase history
-        self.layers[0].Clamp(data)
+        self.layers[0].Clamp(data, monitoring=self.monitoring)
         self.layers[0].phaseHist["minus"][:] = self.layers[0].getActivity()
 
         for layer in self.layers[1:-1]:
             layer.Predict(monitoring=self.monitoring)
             
-        output = self.layers[-1].Predict()
+        output = self.layers[-1].Predict(monitoring=self.monitoring)
         
         
         return output
@@ -88,15 +97,14 @@ class Net:
             error-driven learning scheme of neural network computation.
         '''
         #Clamp input layer, set minus phase history
-        self.layers[0].Clamp(inData)
+        self.layers[0].Clamp(inData, monitoring=self.monitoring)
         self.layers[0].phaseHist["plus"][:] = self.layers[0].getActivity()
         #Clamp output layer, set minus phase history
-        self.layers[-1].Clamp(outData)
+        self.layers[-1].Clamp(outData, monitoring=self.monitoring)
         self.layers[-1].phaseHist["plus"][:] = self.layers[-1].getActivity()
         
         for layer in self.layers[1:-1]:
-            layer.Observe()
-        # self.layers[-1].ClampObs(outData)
+            layer.Observe(monitoring=self.monitoring)
 
         return None # observations know the outcome
 
@@ -124,14 +132,22 @@ class Net:
         if numTimeSteps is not None:
             self.numTimeSteps = numTimeSteps
 
-        results = np.zeros(numEpochs+1)
+        results = [np.zeros(numEpochs+1) for metric in self.metrics]
         index = 0
         numSamples = len(inData)
 
+        # Temporarily pause monitoring
+        monitoring = self.monitoring
+        self.monitoring = False
+        # Evaluate without training
         print("Progress:")
-        print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0]:0.2f}  ", end="\r")
-        results[0] = self.Evaluate(inData, outData, self.numTimeSteps)
-        print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0]:0.2f}  ", end="\r")
+        print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0][0]:0.2f}  ", end="\r")
+        firstResult = self.Evaluate(inData, outData, self.numTimeSteps)
+        for indexMetric, metric in enumerate(self.metrics):
+            results[indexMetric][0] = firstResult[indexMetric]
+        print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0][0]:0.2f}  ", end="\r")
+        # Unpause monitoring
+        self.monitoring = monitoring
 
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
 
@@ -155,18 +171,23 @@ class Net:
                 # update meshes
                 for layer in self.layers:
                     layer.Learn()
-                print(f"Epoch: ({epoch}/{numEpochs}), sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[epoch]:0.4f}  ", end="\r")
+                print(f"Epoch: ({epoch}/{numEpochs}), sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0][epoch]:0.4f}  ", end="\r")
             # evaluate metric
-            #TODO: record multiple metrics
-            results[epoch+1] = self.metrics[0](epochResults, outData)
-            print(f"Epoch: ({epoch}/{numEpochs}), sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[epoch+1]:0.4f}  ", end="\r")
+            # Record multiple metrics
+            for indexMetric, metric in enumerate(self.metrics):
+                results[indexMetric][epoch+1] = metric(epochResults, outData)
+            print(f"Epoch: ({epoch}/{numEpochs}), sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0][epoch+1]:0.4f}  ", end="\r")
             if verbose: print(self)
         print("\n")
+        # Unpack result if there is only one metric (for backward compatibility)
+        if len(results) == 1:
+            return results[0]
         return results
     
     def Evaluate(self, inData, outData, numTimeSteps=25):
         results = self.Infer(inData, numTimeSteps)
-        return self.metrics[0](results, outData)
+
+        return [metric(results, outData) for metric in self.metrics]
 
     def getWeights(self, ffOnly):
         weights = []
@@ -210,7 +231,7 @@ class Mesh:
         self.size = size if size > len(inLayer) else len(inLayer)
         self.matrix = np.eye(self.size)
         self.inLayer = inLayer
-        self.rate = learningRate
+        self.rate = learningRate #TODO: check if this rate being multiplied twice??
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
         self.modified = False
@@ -313,6 +334,24 @@ class InhibMesh(Mesh):
     def Update(self, delta):
         return None
 
+class AbsMesh(Mesh):
+    '''A mesh with purely positive weights to mimic biological 
+        weight strengths. Negative connections must be labeled 
+        at the neuron group level.
+    '''
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.name = "ABS_" + self.name
+
+    def set(self, matrix):
+        super().set(matrix)
+        self.matrix = np.abs(self.matrix)
+
+
+    def Update(self, delta: np.ndarray):
+        super().Update(delta)
+        self.matrix = np.abs(self.matrix)
+
 class Layer:
     '''Base class for a layer that includes input matrices and activation
         function pairings. Each layer retains a seperate state for predict
@@ -372,16 +411,20 @@ class Layer:
             self.monitor.update(activity)
         return activity.copy()
 
-    def Observe(self):
+    def Observe(self, monitoring = False):
         self -= DELTA_TIME * self.inAct
         self.Integrate()
         activity = self.getActivity()
         self.phaseHist["plus"][:] = activity
+        if monitoring:
+            self.monitor.update(activity)
         return activity.copy()
 
-    def Clamp(self, data):
+    def Clamp(self, data, monitoring = False):
         self.inAct[:] = data[:len(self)]
         self.outAct[:] = data[:len(self)]
+        if monitoring:
+            self.monitor.update(data)
 
     def Learn(self):
         if self.isInput or self.freeze: return
@@ -437,9 +480,21 @@ class Layer:
         layStr += f"\n\tActivity: \n\t\t{self.inAct},\n\t\t{self.outAct}"
         return layStr
 
+class RecurNet(Net):
+    '''A recurrent network with feed forward and feedback meshes
+        between each layer. Based on ideas presented in [2].
+    '''
+    def __init__(self, *args, FeedbackMesh = fbMesh, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        for index, layer in enumerate(self.layers[1:-1], 1): 
+            #skip input and output layers, add feedback matrices
+            nextLayer = self.layers[index+1]
+            layer.addMesh(FeedbackMesh(nextLayer.meshes[0], nextLayer))
+
 class FFFB(Net):
-    '''A network with feed forward and feedback meshes between each
-        layer. Based on ideas presented in [2]
+    '''A recurrent network with feed forward and feedback meshes
+        and a trucated lateral inhibition mechanism. Based on 
+        ideas presented in [1].
     '''
     def __init__(self, *args, FeedbackMesh = fbMesh, **kwargs) -> None:
         super().__init__(*args, **kwargs)

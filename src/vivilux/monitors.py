@@ -1,12 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import networkx as nx
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from vivilux import Net, Layer, Mesh
 
-plt.ion()
 
 class Monitor:
     '''A base class for monitoring network activity
@@ -48,3 +48,18 @@ class Monitor:
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
 
+class Record(Monitor):
+    '''A monitor for recording data without plotting.
+    '''
+    def __init__(self, name: str, labels: list[str], limits: list[float], numLines: int = 0) -> None:
+        self.name = name
+        self.xlabel = labels[0]
+        self.ylabel = labels[1]
+        self.xlim = limits[0]
+        self.ylim = limits[1]
+
+        #trace updates
+        self.data = np.zeros((1,numLines))
+    
+    def update(self, newData: np.array):
+        self.data = np.concatenate((self.data, newData.reshape(1,-1)))

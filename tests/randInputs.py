@@ -1,6 +1,7 @@
 import copy
 
 from vivilux import *
+from vivilux.metrics import RMSE
 from vivilux.learningRules import CHL, GeneRec
 
 import numpy as np
@@ -21,20 +22,22 @@ mags = np.linalg.norm(vecs, axis=-1)
 targets = np.abs(vecs/mags[...,np.newaxis])
 del vecs, mags
 
-netGR = FFFB([
+
+
+netGR = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.01, name = "NET_GR")
 
-netGR3 = FFFB([
+netGR3 = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.01, name = "NET_GR3")
 
-netGR4 = FFFB([
+netGR4 = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
@@ -42,21 +45,21 @@ netGR4 = FFFB([
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.01, name = "NET_GR4")
 
-netCHL = FFFB([
+netCHL = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
 ], Mesh, learningRate = 0.01, name = "NET_CHL")
 
 
-netMixed = FFFB([
+netMixed = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.01, name = "NET_CHL")
 
 
-netMixed2 = FFFB([
+netMixed2 = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
@@ -197,12 +200,8 @@ plt.plot(resultGR3, label="GeneRec (3 layer)")
 resultGR4 = netGR4.Learn(inputs, targets, numEpochs=numEpochs)
 plt.plot(resultGR4, label="GeneRec (4 layer)")
 
-# # print(f"net: {str(netCHL)}")
-# # print(f"Initial {netCHL.metric}: ", netCHL.Evaluate(inputs, targets))
-# resultCHL = netCHL.Learn(inputs, targets, numEpochs=numEpochs)
-# # print(f"Final {netCHL.metric}: ", resultCHL[-1])
-# plt.plot(resultCHL, label="CHL")
-
+baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
+plt.axhline(y=baseline, color="b", linestyle="--", label="guessing")
 
 plt.title("Random Input/Output Matching")
 plt.ylabel("RMSE")

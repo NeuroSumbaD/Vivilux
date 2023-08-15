@@ -27,20 +27,20 @@ optArgs = {"lr" : 0.05,
             "beta2": 0.999,
             "epsilon": 1e-08}
 
-netGR = FFFB([
+netGR = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.01, name = "NET_GR", optimizer = Adam, optArgs = optArgs)
 
-netGR3 = FFFB([
+netGR3 = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.01, name = "NET_GR3", optimizer = Adam, optArgs = optArgs)
 
-netGR4 = FFFB([
+netGR4 = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
@@ -48,21 +48,21 @@ netGR4 = FFFB([
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.01, name = "NET_GR4", optimizer = Adam, optArgs = optArgs)
 
-netCHL = FFFB([
+netCHL = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
 ], Mesh, learningRate = 0.01, name = "NET_CHL", optimizer = Adam, optArgs = optArgs)
 
 
-netMixed = FFFB([
+netMixed = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=GeneRec)
 ], Mesh, learningRate = 0.01, name = "NET_Mixed", optimizer = Adam, optArgs = optArgs)
 
 
-netMixed2 = FFFB([
+netMixed2 = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
@@ -86,6 +86,9 @@ plt.plot(resultGR3, label="GeneRec (3 layer)")
 
 resultGR4 = netGR4.Learn(inputs, targets, numEpochs=numEpochs)
 plt.plot(resultGR4, label="GeneRec (4 layer)")
+
+baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
+plt.axhline(y=baseline, color="b", linestyle="--", label="guessing")
 
 
 plt.title("Random Input/Output Matching w/ Adam")
