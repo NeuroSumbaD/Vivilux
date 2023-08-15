@@ -33,7 +33,8 @@ netMixed = FFFB([
                     vl.photonics.PhotonicLayer(49, isInput=True),
                     vl.photonics.PhotonicLayer(32, learningRule=ByPass),
                     vl.photonics.PhotonicLayer(10, learningRule=GeneRec)
-                ], vl.photonics.MZImesh, metric=HardmaxAccuracy,
+                ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
+                metric=HardmaxAccuracy,
                 learningRate = 0.05, name = "NET_Mixed", meshArgs = meshArgs)
 
 

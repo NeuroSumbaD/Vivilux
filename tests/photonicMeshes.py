@@ -1,6 +1,6 @@
 import vivilux as vl
 import vivilux.photonics
-from vivilux import FFFB, Layer, Mesh
+from vivilux import FFFB, RecurNet, Layer, Mesh
 from vivilux.learningRules import CHL, GeneRec, ByPass
 from vivilux.optimizers import Adam
 
@@ -39,7 +39,7 @@ del vecs, mags
 # ], Mesh, learningRate = 0.1, name = "NET_CHL-Frozen")
 # netMixed2.layers[1].Freeze()
 
-netMixed_MZI = FFFB([
+netMixed_MZI = RecurNet([
         vl.photonics.PhotonicLayer(4, isInput=True),
         vl.photonics.PhotonicLayer(4, learningRule=CHL),
         vl.photonics.PhotonicLayer(4, learningRule=GeneRec)
@@ -47,7 +47,7 @@ netMixed_MZI = FFFB([
     learningRate = 0.1, name = "NET_Mixed")
 
 
-netMixed2_MZI = FFFB([
+netMixed2_MZI = RecurNet([
         vl.photonics.PhotonicLayer(4, isInput=True),
         vl.photonics.PhotonicLayer(4, learningRule=CHL),
         vl.photonics.PhotonicLayer(4, learningRule=GeneRec)
@@ -60,7 +60,7 @@ optArgs = {"lr" : 0.01,
             "beta2": 0.999,
             "epsilon": 1e-08}
 
-netMixed_MZI_Adam = FFFB([
+netMixed_MZI_Adam = RecurNet([
         vl.photonics.PhotonicLayer(4, isInput=True),
         vl.photonics.PhotonicLayer(4, learningRule=CHL),
         vl.photonics.PhotonicLayer(4, learningRule=GeneRec)
@@ -68,7 +68,7 @@ netMixed_MZI_Adam = FFFB([
     learningRate = 0.1, name = "NET_Mixed",  optimizer = Adam, optArgs = optArgs)
 
 
-netMixed2_MZI_Adam = FFFB([
+netMixed2_MZI_Adam = RecurNet([
         vl.photonics.PhotonicLayer(4, isInput=True),
         vl.photonics.PhotonicLayer(4, learningRule=CHL),
         vl.photonics.PhotonicLayer(4, learningRule=GeneRec)

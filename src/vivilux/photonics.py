@@ -144,7 +144,7 @@ class MZImesh(Mesh):
 
         # return flattened vectors for the directional derivatives and their unit vector directions
         return derivativeMatrix, stepVector/self.updateMagnitude
-    
+  
 class phfbMesh(Mesh):
     '''A class for photonic feedback meshes based on the transpose of an MZI mesh.
     '''
@@ -170,6 +170,8 @@ class phfbMesh(Mesh):
         # guarantee that data can be multiplied by the mesh
         data = np.pad(data[:self.size], (0, self.size - len(data)))
         return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
+
+MZImesh.feedback = phfbMesh   
     
 class PhotonicLayer(Layer):
     def __init__(self, *args, **kwargs):

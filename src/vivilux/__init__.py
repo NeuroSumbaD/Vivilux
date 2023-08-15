@@ -293,6 +293,8 @@ class fbMesh(Mesh):
     def Update(self, delta):
         return None
     
+Mesh.feedback = fbMesh
+    
 class InhibMesh(Mesh):
     '''A class for inhibitory feedback mashes based on fffb mechanism.
         Calculates inhibitory input to a layer based on a mixture of its
