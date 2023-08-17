@@ -28,6 +28,8 @@ from .monitors import Monitor
 
 # library default constants
 DELTA_TIME = 0.1
+MAX = 1
+MIN = 0
 
 class Net:
     '''Base class for neural networks with Hebbian-like learning
@@ -192,7 +194,7 @@ class Net:
     def getWeights(self, ffOnly):
         weights = []
         for layer in self.layers:
-            for mesh in layer.meshes:
+            for mesh in layer.excMeshes:
                 weights.append(mesh.get())
                 if ffOnly: break
         return weights
@@ -363,16 +365,22 @@ class Layer:
     count = 0
     def __init__(self, length, activation=Sigmoid, learningRule=CHL,
                  isInput = False, freeze = False, name = None):
-        self.inAct = np.zeros(length) # linearly integrated dendritic inputs (internal Activation)
-        self.outAct = activation(self.inAct) #initialize outgoing Activation
         self.modified = False 
+        self.excAct = np.zeros(length) # linearly integrated dendritic inputs (internal Activation)
+        self.inhAct = np.zeros(length)
+        self.outAct = np.zeros(length)
+        self.getActivity() #initialize outgoing Activation
         self.phaseHist = {"minus": np.zeros(length),
                           "plus": np.zeros(length)
                           }
         
         self.act = activation
         self.rule = learningRule
-        self.meshes: list[Mesh] = [] #empty initial mesh list
+        
+        # Empty initial excitatory and inhibitory meshes
+        self.excMeshes: list[Mesh] = []
+        self.inhMeshes: list[Mesh] = [] 
+
 
         self.optimizer = ByPass()
 
@@ -387,25 +395,28 @@ class Layer:
 
     def getActivity(self):
         if self.modified == True:
-            self.outAct[:] = self.act(self.inAct)
+            # Conductance based integration
+            potential = self.excAct*(MAX-self.outAct) + self.outAct*(MIN - self.outAct)
+            self.outAct[:] = self.act(potential)
             self.modified = False
         return self.outAct
 
     def printActivity(self):
-        return [self.inAct, self.outAct]
+        return [self.excAct, self.outAct]
     
     def resetActivity(self):
         '''Resets all activation traces to zero vectors.'''
         length = len(self)
-        self.inAct = np.zeros(length)
+        self.excAct = np.zeros(length)
         self.outAct = np.zeros(length)
 
     def Integrate(self):
-        for mesh in self.meshes:
-            self += DELTA_TIME * mesh.apply()[:len(self)]#**2
+        for mesh in self.excMeshes:
+            self += DELTA_TIME * mesh.apply()[:len(self)]
 
     def Predict(self, monitoring = False):
-        self -= DELTA_TIME*self.inAct
+        self += -DELTA_TIME*self.excAct
+        self -= -DELTA_TIME*self.inhAct
         self.Integrate()
         activity = self.getActivity()
         self.phaseHist["minus"][:] = activity
@@ -414,7 +425,8 @@ class Layer:
         return activity.copy()
 
     def Observe(self, monitoring = False):
-        self -= DELTA_TIME * self.inAct
+        self += -DELTA_TIME * self.excAct
+        self -= -DELTA_TIME*self.inhAct
         self.Integrate()
         activity = self.getActivity()
         self.phaseHist["plus"][:] = activity
@@ -423,7 +435,7 @@ class Layer:
         return activity.copy()
 
     def Clamp(self, data, monitoring = False):
-        self.inAct[:] = data[:len(self)]
+        self.excAct[:] = data[:len(self)]
         self.outAct[:] = data[:len(self)]
         if monitoring:
             self.monitor.update(data)
@@ -431,10 +443,10 @@ class Layer:
     def Learn(self):
         if self.isInput or self.freeze: return
         # TODO: Allow multiple meshes to learn, skip fb meshes
-        inLayer = self.meshes[0].inLayer # assume first mesh as input
+        inLayer = self.excMeshes[0].inLayer # assume first mesh as input
         delta = self.rule(inLayer, self)
         optDelta = self.optimizer(delta)
-        self.meshes[0].Update(optDelta)
+        self.excMeshes[0].Update(optDelta)
 
         
     def Freeze(self):
@@ -443,43 +455,46 @@ class Layer:
     def Unfreeze(self):
         self.freeze = False
     
-    def addMesh(self, mesh):
-        self.meshes.append(mesh)
+    def addMesh(self, mesh, excitatory = True):
+        if excitatory:
+            self.excMeshes.append(mesh)
+        else:
+            self.excMeshes.append(mesh)
 
     def __add__(self, other):
         self.modified = True
-        return self.inAct + other
+        return self.excAct + other
     
     def __radd__(self, other):
         self.modified = True
-        return self.inAct + other
+        return self.excAct + other
     
     def __iadd__(self, other):
         self.modified = True
-        self.inAct += other
+        self.excAct += other
         return self
     
     def __sub__(self, other):
         self.modified = True
-        return self.inAct - other
+        return self.inhAct + other
     
     def __rsub__(self, other):
         self.modified = True
-        return self.inAct - other
+        return self.inhAct + other
     
     def __isub__(self, other):
         self.modified = True
-        self.inAct -= other
+        self.inhAct += other
         return self
     
     def __len__(self):
-        return len(self.inAct)
+        return len(self.excAct)
 
     def __str__(self) -> str:
         layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
         layStr += f"Rule = {self.rule}"
-        layStr += f"\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.meshes])
-        layStr += f"\n\tActivity: \n\t\t{self.inAct},\n\t\t{self.outAct}"
+        layStr += f"\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
+        layStr += f"\n\tActivity: \n\t\t{self.excAct},\n\t\t{self.outAct}"
         return layStr
 
 class RecurNet(Net):
@@ -491,7 +506,7 @@ class RecurNet(Net):
         for index, layer in enumerate(self.layers[1:-1], 1): 
             #skip input and output layers, add feedback matrices
             nextLayer = self.layers[index+1]
-            layer.addMesh(FeedbackMesh(nextLayer.meshes[0], nextLayer))
+            layer.addMesh(FeedbackMesh(nextLayer.excMeshes[0], nextLayer))
 
 class FFFB(Net):
     '''A recurrent network with feed forward and feedback meshes
@@ -503,9 +518,9 @@ class FFFB(Net):
         for index, layer in enumerate(self.layers[1:-1], 1): 
             #skip input and output layers, add feedback matrices
             nextLayer = self.layers[index+1]
-            layer.addMesh(FeedbackMesh(nextLayer.meshes[0], nextLayer))
-            inhibitoryMesh = InhibMesh(layer.meshes[0], layer)
-            layer.addMesh(inhibitoryMesh)
+            layer.addMesh(FeedbackMesh(nextLayer.excMeshes[0], nextLayer))
+            inhibitoryMesh = InhibMesh(layer.excMeshes[0], layer)
+            layer.addMesh(inhibitoryMesh, excitatory=False)
 
 
 if __name__ == "__main__":
