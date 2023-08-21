@@ -178,7 +178,7 @@ class PhotonicLayer(Layer):
         super().__init__(*args, **kwargs)
 
     def Integrate(self):
-        for mesh in self.meshes:
+        for mesh in self.excMeshes:
             # self += DELTA_TIME * np.sum(np.square(np.abs(mesh.apply()[:len(self)])), axis=1)
             self += DELTA_TIME * mesh.apply()[:len(self)]
 

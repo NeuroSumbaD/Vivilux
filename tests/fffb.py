@@ -62,7 +62,7 @@ resultFFFB = fffbNet.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
 plt.plot(resultFFFB, label="FFFB Net")
 
 resultFFFB_phot = fffbNet_phot.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
-plt.plot(resultFFFB, label="FFFB Net (Photonic)")
+plt.plot(resultFFFB_phot, label="FFFB Net (Photonic)")
 
 plt.title("Random Input/Output Matching with Positive Weights")
 plt.ylabel("RMSE")
