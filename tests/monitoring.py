@@ -36,6 +36,7 @@ InhibMesh.FB = 0.5
 InhibMesh.FBTau = 0.5
 InhibMesh.FF0 = 0.5
 
+plt.ion()
 netMixed_MZI_Adam = FFFB([
         vl.photonics.PhotonicLayer(4, isInput=True),
         vl.photonics.PhotonicLayer(4, learningRule=CHL),
