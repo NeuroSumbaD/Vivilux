@@ -24,7 +24,7 @@ from .activations import Sigmoid
 from .metrics import RMSE
 from .learningRules import CHL
 from .optimizers import ByPass
-from .monitors import Monitor
+from .visualize import Monitor
 
 # library default constants
 DELTA_TIME = 0.1
