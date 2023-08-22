@@ -17,8 +17,11 @@ class Monitor:
     '''A base class for monitoring network activity
     '''
     def __init__(self, name: str,
-                 labels: list[str], limits: list[float], numLines: int = 0) -> None:
+                 labels: list[str], limits: list[float],
+                 numLines: int = 0, target = "activity") -> None:
         self.name = name
+        self.target = target
+
         self.xlabel = labels[0]
         self.ylabel = labels[1]
         self.xlim = limits[0]
@@ -41,8 +44,8 @@ class Monitor:
         self.ax.legend(range(numLines))
 
 
-    def update(self, newData: np.array):
-        self.data[self.index] = newData
+    def update(self, newData: dict[str, np.array]):
+        self.data[self.index] = newData[self.target]
 
         for lineIndex, line in enumerate(self.lines):
             line.set_ydata(self.data[:, lineIndex])
@@ -52,6 +55,42 @@ class Monitor:
         #update the plot
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
+
+class Magnitude(Monitor):
+    def __init__(self, name: str, labels: list[str], 
+                 limits: list[float], numLines: int = 0,
+                 target = "activity") -> None:
+        super().__init__(name, labels, limits, numLines, target)
+        mag = np.sqrt(np.sum(np.square(self.data), axis=1))
+        self.magnitude = self.ax.plot(mag, "--")
+        self.ax.legend([*range(numLines), "magnitude"])
+    
+    def update(self, newData: dict[str, np.array]):
+        super().update(newData)
+        mag = np.sqrt(np.sum(np.square(self.data), axis=1))
+        self.magnitude[0].set_ydata(mag)
+
+        #update the plot
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
+class Multimonitor(Monitor):
+    def __init__(self, name: str, labels: list[str], limits: list[float], numLines: int = 0,
+                 targets=["activity"], defMonitor = Monitor) -> None:
+        self.targets = targets
+        self.monitors = []
+        for target in targets:
+            self.monitors.append(defMonitor(name+f"--({target})", labels,
+                                            limits, numLines, target=target))
+            
+        # numMonitor = len(self.monitors)
+        # for index, monitor in enumerate(self.monitors):
+        #     mgr = monitor.fig.canvas.manager
+        #     mgr.window.setGeometry()
+
+    def update(self, newData: dict[str, np.array]):
+        for monitor in self.monitors:
+            monitor.update(newData)
 
 class Record(Monitor):
     '''A monitor for recording data without plotting.
@@ -66,8 +105,8 @@ class Record(Monitor):
         #trace updates
         self.data = np.zeros((1,numLines))
     
-    def update(self, newData: np.array):
-        self.data = np.concatenate((self.data, newData.reshape(1,-1)))
+    def update(self, newData: dict[str, np.array]):
+        self.data = np.concatenate((self.data, newData[self.target].reshape(1,-1)))
 
 
 class Heatmap:

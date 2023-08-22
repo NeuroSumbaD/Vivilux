@@ -56,12 +56,6 @@ class MZImesh(Mesh):
         data = np.pad(data[:self.size], (0, self.size - len(data)))
         return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
  
-    # def applyTo(self, data):
-    #     try:
-    #         return np.square(np.abs(self.get() @ data))
-    #     except ValueError as ve:
-    #         print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
-    #               f"of dimension: {self.matrix}")
     
     def Update(self, delta:np.ndarray):
         self.modified = True
@@ -177,13 +171,4 @@ class PhotonicLayer(Layer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def Integrate(self):
-        for mesh in self.excMeshes:
-            # self += DELTA_TIME * np.sum(np.square(np.abs(mesh.apply()[:len(self)])), axis=1)
-            self += DELTA_TIME * mesh.apply()[:len(self)]
-
-    # def getActivity(self):
-    #     if self.modified == True:
-    #         self.outAct[:] = self.act(self.inAct)
-    #         self.modified = False
-    #     return Diagonalize(self.outAct)
+    # TODO: COUNT OPERATIONS AND ENERGY CONSUMPTION

@@ -63,7 +63,7 @@ class Net:
             index, layer = 0, self.layers[0]
             layer.monitor = self.defMonitor(name = self.name + ": " + layer.name,
                                     labels = ["time step", "activity"],
-                                    limits=[numTimeSteps, 1],
+                                    limits=[numTimeSteps, 2],
                                     numLines=len(layer))
 
         for index, layer in enumerate(self.layers[1:], 1):
@@ -75,7 +75,7 @@ class Net:
             if monitoring:
                 layer.monitor = self.defMonitor(name = self.name + ": " + layer.name,
                                     labels = ["time step", "activity"],
-                                    limits=[numTimeSteps, 1],
+                                    limits=[numTimeSteps, 2],
                                     numLines=len(layer))
 
     def Predict(self, data):
@@ -324,7 +324,7 @@ class InhibMesh(Mesh):
         self.fb += InhibMesh.FBTau * (np.mean(self.inLayer.outAct) - self.fb)
 
         self.inhib[:] = InhibMesh.FF * ffAct + InhibMesh.FB * self.fb
-        return -self.inhib
+        return self.inhib
 
     def set(self):
         raise Exception("InhibMesh has no 'set' method.")
@@ -366,16 +366,22 @@ class Layer:
     def __init__(self, length, activation=Sigmoid, learningRule=CHL,
                  isInput = False, freeze = False, name = None):
         self.modified = False 
+        self.act = activation
+        self.rule = learningRule
+        
+        self.monitor = None
+        self.snapshot = {}
+
+        # Initialize layer activities
         self.excAct = np.zeros(length) # linearly integrated dendritic inputs (internal Activation)
         self.inhAct = np.zeros(length)
+        self.potential = np.zeros(length)
         self.outAct = np.zeros(length)
+        self.modified = True
         self.getActivity() #initialize outgoing Activation
         self.phaseHist = {"minus": np.zeros(length),
                           "plus": np.zeros(length)
                           }
-        
-        self.act = activation
-        self.rule = learningRule
         
         # Empty initial excitatory and inhibitory meshes
         self.excMeshes: list[Mesh] = []
@@ -389,15 +395,24 @@ class Layer:
         self.name =  f"LAYER_{Layer.count}" if name == None else name
         if isInput: self.name = "INPUT_" + self.name
 
-        self.monitor = None
 
         Layer.count += 1
 
     def getActivity(self):
         if self.modified == True:
             # Conductance based integration
-            potential = self.excAct*(MAX-self.outAct) + self.outAct*(MIN - self.outAct)
-            self.outAct[:] = self.act(potential)
+            excCurr = self.excAct*(MAX-self.outAct)
+            inhCurr = self.inhAct*(MIN - self.outAct)
+            self.potential -= DELTA_TIME * self.potential
+            self.potential += DELTA_TIME * ( excCurr + inhCurr )
+            self.outAct[:] = self.act(self.potential)
+
+            self.snapshot["potential"] = self.potential
+            self.snapshot["excCurr"] = excCurr
+            self.snapshot["inhCurr"] = inhCurr
+
+            #TODO: Layer Normalization
+            # self.outAct[:] *= np.sqrt(np.sum(np.square(self.outAct)))
             self.modified = False
         return self.outAct
 
@@ -408,11 +423,15 @@ class Layer:
         '''Resets all activation traces to zero vectors.'''
         length = len(self)
         self.excAct = np.zeros(length)
+        self.inhAct = np.zeros(length)
         self.outAct = np.zeros(length)
 
     def Integrate(self):
         for mesh in self.excMeshes:
             self += DELTA_TIME * mesh.apply()[:len(self)]
+
+        for mesh in self.inhMeshes:
+            self -= DELTA_TIME * mesh.apply()[:len(self)]
 
     def Predict(self, monitoring = False):
         self += -DELTA_TIME*self.excAct
@@ -421,7 +440,11 @@ class Layer:
         activity = self.getActivity()
         self.phaseHist["minus"][:] = activity
         if monitoring:
-            self.monitor.update(activity)
+            self.snapshot.update({"activity": activity,
+                        "excAct": self.excAct,
+                        "inhAct": self.inhAct,
+                        })
+            self.monitor.update(self.snapshot)
         return activity.copy()
 
     def Observe(self, monitoring = False):
@@ -431,14 +454,23 @@ class Layer:
         activity = self.getActivity()
         self.phaseHist["plus"][:] = activity
         if monitoring:
-            self.monitor.update(activity)
+            self.snapshot.update({"activity": activity,
+                        "excAct": self.excAct,
+                        "inhAct": self.inhAct,
+                        })
+            self.monitor.update(self.snapshot)
         return activity.copy()
 
     def Clamp(self, data, monitoring = False):
         self.excAct[:] = data[:len(self)]
+        self.getActivity()
         self.outAct[:] = data[:len(self)]
         if monitoring:
-            self.monitor.update(data)
+            self.snapshot.update({"activity": data,
+                        "excAct": self.excAct,
+                        "inhAct": self.inhAct,
+                        })
+            self.monitor.update(self.snapshot)
 
     def Learn(self):
         if self.isInput or self.freeze: return
@@ -459,7 +491,7 @@ class Layer:
         if excitatory:
             self.excMeshes.append(mesh)
         else:
-            self.excMeshes.append(mesh)
+            self.inhMeshes.append(mesh)
 
     def __add__(self, other):
         self.modified = True
@@ -515,12 +547,17 @@ class FFFB(Net):
     '''
     def __init__(self, *args, FeedbackMesh = fbMesh, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        for index, layer in enumerate(self.layers[1:-1], 1): 
-            #skip input and output layers, add feedback matrices
+        for index, layer in enumerate(self.layers[1:-1], 1): #skip input and output layers
+            # add feedback matrices
             nextLayer = self.layers[index+1]
             layer.addMesh(FeedbackMesh(nextLayer.excMeshes[0], nextLayer))
+            # add FFFB inhibitory mesh
             inhibitoryMesh = InhibMesh(layer.excMeshes[0], layer)
             layer.addMesh(inhibitoryMesh, excitatory=False)
+        # add last layer FFFB mesh
+        layer = self.layers[-1]
+        inhibitoryMesh = InhibMesh(layer.excMeshes[0], layer)
+        layer.addMesh(inhibitoryMesh, excitatory=False)
 
 
 if __name__ == "__main__":
