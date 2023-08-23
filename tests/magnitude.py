@@ -37,7 +37,7 @@ InhibMesh.FB = 0.5
 InhibMesh.FBTau = 0.25
 InhibMesh.FF0 = 0.8
 
-multimonitor = lambda **x: Multimonitor(**x, targets=['activity',"excAct","inhAct", "potential", "excCurr", "inhCurr"])
+multimonitor = lambda **x: Multimonitor(**x, targets=['activity', "gain"], defMonitor=Magnitude)
 
 plt.ion()
 netMixed_MZI_Adam = FFFB([
@@ -48,7 +48,7 @@ netMixed_MZI_Adam = FFFB([
     learningRate = 0.1,
     name = f"NET_Mixed_FF-{InhibMesh.FF:.2}_FB-{InhibMesh.FB:.2}_Tau-{InhibMesh.FBTau:.2}_FF0-{InhibMesh.FF0:.2}",
     optimizer = Adam, optArgs=optArgs,
-    monitoring = True, defMonitor = Magnitude)
+    monitoring = True, defMonitor = multimonitor)
 
 resultMixedMZI_Adam = netMixed_MZI_Adam.Learn(
     inputs, targets, numEpochs=numEpochs, reset=False)

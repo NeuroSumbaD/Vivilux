@@ -80,8 +80,12 @@ class Multimonitor(Monitor):
         self.targets = targets
         self.monitors = []
         for target in targets:
-            self.monitors.append(defMonitor(name+f"--({target})", labels,
-                                            limits, numLines, target=target))
+            if target == "gain":
+                self.monitors.append(defMonitor(name+f"--({target})", labels,
+                                                limits, numLines = 1, target=target))
+            else:
+                self.monitors.append(defMonitor(name+f"--({target})", labels,
+                                                limits, numLines, target=target))
             
         # numMonitor = len(self.monitors)
         # for index, monitor in enumerate(self.monitors):

@@ -376,6 +376,7 @@ class Layer:
         self.excAct = np.zeros(length) # linearly integrated dendritic inputs (internal Activation)
         self.inhAct = np.zeros(length)
         self.potential = np.zeros(length)
+        self.gain = 1 # layerwise gain term
         self.outAct = np.zeros(length)
         self.modified = True
         self.getActivity() #initialize outgoing Activation
@@ -405,14 +406,18 @@ class Layer:
             inhCurr = self.inhAct*(MIN - self.outAct)
             self.potential -= DELTA_TIME * self.potential
             self.potential += DELTA_TIME * ( excCurr + inhCurr )
-            self.outAct[:] = self.act(self.potential)
+            activity = self.act(self.potential)
+            #TODO: Layer Normalization
+            self.gain -= DELTA_TIME * self.gain
+            self.gain += DELTA_TIME / np.sqrt(np.sum(np.square(activity)))
+            # Calculate output activity
+            self.outAct[:] = self.gain * activity
 
             self.snapshot["potential"] = self.potential
             self.snapshot["excCurr"] = excCurr
             self.snapshot["inhCurr"] = inhCurr
+            self.snapshot["gain"] = self.gain
 
-            #TODO: Layer Normalization
-            # self.outAct[:] *= np.sqrt(np.sum(np.square(self.outAct)))
             self.modified = False
         return self.outAct
 
