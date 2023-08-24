@@ -10,29 +10,32 @@ import matplotlib.pyplot as plt
 
 np.random.seed(0)
 
+numSamples = 200
+numEpochs = 100
+
 netCHL = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
-], Mesh, metric=HardmaxAccuracy, learningRate = 0.01)
+], AbsMesh, metric=[HardmaxAccuracy, RMSE], learningRate = 0.01)
 
 netGR = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, metric=HardmaxAccuracy, learningRate = 0.01)
+], AbsMesh, metric=[HardmaxAccuracy, RMSE], learningRate = 0.01)
 
 netMixed = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=GeneRec)
-], Mesh, metric=HardmaxAccuracy, learningRate = 0.01)
+], AbsMesh, metric=[HardmaxAccuracy, RMSE], learningRate = 0.01)
 
 netMixed2 = FFFB([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=GeneRec)
-], Mesh, metric=HardmaxAccuracy, learningRate = 0.01)
+], AbsMesh, metric=[HardmaxAccuracy, RMSE], learningRate = 0.01)
 netMixed2.setLearningRule(GeneRec, 2) #sets second layer learnRule
 netMixed2.layers[1].Freeze()
 
@@ -44,20 +47,33 @@ targets = np.zeros((len(inputs),4))
 targets[np.arange(len(inputs)), iris.target] = 1
 #shuffle both arrays in the same manner
 shuffle = np.random.permutation(len(inputs))
-inputs, targets = inputs[shuffle][:50], targets[shuffle][:50]
+inputs, targets = inputs[shuffle][:numSamples], targets[shuffle][:numSamples]
 
-resultCHL = netCHL.Learn(inputs, targets, numEpochs=300)
-plt.plot(resultCHL, label="CHL")
-resultGR = netGR.Learn(inputs, targets, numEpochs=300)
-plt.plot(resultGR, label="GeneRec")
-resultMixed = netMixed.Learn(inputs, targets, numEpochs=300)
-plt.plot(resultMixed, label="Mixed")
-resultMixed2 = netMixed2.Learn(inputs, targets, numEpochs=300)
-plt.plot(resultMixed2, label="Frozen 1st Layer")
+resultCHL = netCHL.Learn(inputs, targets, numEpochs=numEpochs)
+resultGR = netGR.Learn(inputs, targets, numEpochs=numEpochs)
+resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs)
+resultMixed2 = netMixed2.Learn(inputs, targets, numEpochs=numEpochs)
+
+plt.plot(resultCHL[0], label="CHL")
+plt.plot(resultGR[0], label="GeneRec")
+plt.plot(resultMixed[0], label="Mixed")
+plt.plot(resultMixed2[0], label="Frozen 1st Layer")
 
 
 plt.title("Iris Dataset")
 plt.ylabel("Accuracy")
+plt.xlabel("Epoch")
+plt.legend()
+plt.show()
+
+plt.plot(resultCHL[1], label="CHL")
+plt.plot(resultGR[1], label="GeneRec")
+plt.plot(resultMixed[1], label="Mixed")
+plt.plot(resultMixed2[1], label="Frozen 1st Layer")
+
+
+plt.title("Iris Dataset")
+plt.ylabel("RMSE")
 plt.xlabel("Epoch")
 plt.legend()
 plt.show()

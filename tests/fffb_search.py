@@ -13,7 +13,7 @@ import seaborn as sns
 
 from copy import deepcopy
 
-numSamples = 40
+numSamples = 300
 numEpochs = 50
 
 #define input and output data (must be normalized and positive-valued)
@@ -36,6 +36,7 @@ FF = np.linspace(0.1,0.3,5)
 FB = np.linspace(0.5,0.7,5)
 FBTau = np.linspace(0.4,0.8,5)
 FF0 = np.linspace(0.8,0.99,5)
+
 minParams = {
     "FF": 0,
     "FB": 0,
@@ -51,7 +52,8 @@ baseFffbNet = FFFB([
                 ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
                 learningRate = 0.1,
                 name = f"Base_FFFBnet",
-                optimizer = Adam, optArgs=optArgs)
+                #optimizer = Adam, optArgs=optArgs
+                )
 
 
 for ff in FF:

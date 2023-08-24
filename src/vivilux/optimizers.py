@@ -1,8 +1,25 @@
 import numpy as np
 
-def ByPass(**kwargs):
+def Simple(lr = 0.1, **kwargs):
     def opt(deltas: np.ndarray):
-        return deltas
+        return  lr * deltas
+    return opt
+
+def Decay(lr = 0.1, epsilon = 0.99, **kwargs):
+    def opt(deltas: np.ndarray):
+        nonlocal lr, epsilon
+        out = lr * deltas
+        lr *= epsilon
+        return out
+    return opt
+
+def Momentum(lr = 0.05, beta = 0.9, initial = 0):
+    m = initial #first moment (mean)
+    def opt(deltas: np.ndarray):
+        nonlocal m
+        m *= beta
+        m += (1-beta) * deltas
+        return lr * m
     return opt
 
 def Adam(lr = 0.001,
@@ -25,13 +42,4 @@ def Adam(lr = 0.001,
         mhat = m/(1-beta1**t)
         vhat = v/(1-beta2**t)
         return lr*mhat/(np.sqrt(vhat)+epsilon)
-    return opt
-
-def Momentum(lr = 0.05, beta = 0.9, initial = 0):
-    m = 0 #first moment (mean)
-    def opt(deltas: np.ndarray):
-        nonlocal m
-        m *= beta
-        m += (1-beta) * deltas
-        return lr * m
     return opt

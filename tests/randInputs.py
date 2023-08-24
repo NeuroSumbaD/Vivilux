@@ -28,14 +28,14 @@ netGR = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.01, name = "NET_GR")
+], AbsMesh, learningRate = 0.01, name = "NET_GR")
 
 netGR3 = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.01, name = "NET_GR3")
+], AbsMesh, learningRate = 0.01, name = "NET_GR3")
 
 netGR4 = RecurNet([
     Layer(4, isInput=True),
@@ -43,27 +43,27 @@ netGR4 = RecurNet([
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.01, name = "NET_GR4")
+], AbsMesh, learningRate = 0.01, name = "NET_GR4")
 
 netCHL = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
-], Mesh, learningRate = 0.01, name = "NET_CHL")
+], AbsMesh, learningRate = 0.01, name = "NET_CHL")
 
 
 netMixed = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=GeneRec)
-], Mesh, learningRate = 0.01, name = "NET_CHL")
+], AbsMesh, learningRate = 0.01, name = "NET_Mixed")
 
 
 netMixed2 = RecurNet([
     Layer(4, isInput=True),
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
-], Mesh, learningRate = 0.01, name = "NET_CHL")
+], AbsMesh, learningRate = 0.01, name = "NET_Freeze")
 netMixed2.layers[1].Freeze()
 
 def trainingLoopCHL(W1, W2, inputs, targets, numEpochs=100, numSamples=40,
@@ -200,8 +200,10 @@ plt.plot(resultGR3, label="GeneRec (3 layer)")
 resultGR4 = netGR4.Learn(inputs, targets, numEpochs=numEpochs)
 plt.plot(resultGR4, label="GeneRec (4 layer)")
 
-baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
-plt.axhline(y=baseline, color="b", linestyle="--", label="guessing")
+guesses = [RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))]
+guesses /= np.sqrt(np.sum(np.square(guesses), axis=1))
+baseline = np.mean()
+plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Random Input/Output Matching")
 plt.ylabel("RMSE")

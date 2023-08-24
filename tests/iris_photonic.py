@@ -15,10 +15,16 @@ import matplotlib.pyplot as plt
 
 np.random.seed(0)
 
-InhibMesh.FF = 0.25
+# InhibMesh.FF = 0.25
+# InhibMesh.FB = 0.5
+# InhibMesh.FBTau = 0.4
+# InhibMesh.FF0 = 0.85
+
+InhibMesh.FF = 0.1
 InhibMesh.FB = 0.5
-InhibMesh.FBTau = 0.4
-InhibMesh.FF0 = 0.85
+InhibMesh.FBTau = 0.25
+InhibMesh.FF0 = 0.8
+
 
 netCHL = RecurNet([
     vl.photonics.PhotonicLayer(4, isInput=True),

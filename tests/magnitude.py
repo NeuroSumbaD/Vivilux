@@ -37,7 +37,7 @@ InhibMesh.FB = 0.5
 InhibMesh.FBTau = 0.25
 InhibMesh.FF0 = 0.8
 
-multimonitor = lambda **x: Multimonitor(**x, targets=['activity', "gain"], defMonitor=Magnitude)
+multimonitor = lambda **x: Multimonitor(**x, targets=['activity', "potential", "gain"], defMonitor=Magnitude)
 
 plt.ion()
 netMixed_MZI_Adam = FFFB([

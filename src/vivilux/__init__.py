@@ -23,7 +23,7 @@ np.random.seed(seed=0)
 from .activations import Sigmoid
 from .metrics import RMSE
 from .learningRules import CHL
-from .optimizers import ByPass
+from .optimizers import Simple
 from .visualize import Monitor
 
 # library default constants
@@ -36,9 +36,9 @@ class Net:
     '''
     count = 0
     def __init__(self, layers: list[Layer], meshType: Mesh,
-                 metric = RMSE, learningRate = 0.1, name = None,
-                 optimizer = ByPass,
-                 optArgs = {},
+                 metric = RMSE, name = None,
+                 optimizer = Simple,
+                 optArgs = {"lr": 0.1},
                  meshArgs = {},
                  numTimeSteps = 50,
                  monitoring = False,
@@ -69,7 +69,6 @@ class Net:
         for index, layer in enumerate(self.layers[1:], 1):
             size = len(layer)
             layer.addMesh(meshType(size, self.layers[index-1],
-                                   learningRate,
                                    **meshArgs))
             layer.optimizer = optimizer(**optArgs)
             if monitoring:
@@ -228,12 +227,10 @@ class Mesh:
     '''
     count = 0
     def __init__(self, size: int, inLayer: Layer,
-                 learningRate=0.5,
                  **kwargs):
         self.size = size if size > len(inLayer) else len(inLayer)
         self.matrix = np.eye(self.size)
         self.inLayer = inLayer
-        self.rate = learningRate #TODO: check if this rate being multiplied twice??
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
         self.modified = False
@@ -267,7 +264,8 @@ class Mesh:
     def Update(self, delta: np.ndarray):
         m, n = delta.shape
         self.modified = True
-        self.matrix[:m, :n] += self.rate*delta
+        # self.matrix[:m, :n] += self.rate*delta
+        self.matrix[:m, :n] += delta
 
     def __len__(self):
         return self.size
@@ -295,17 +293,16 @@ class fbMesh(Mesh):
     def Update(self, delta):
         return None
     
-Mesh.feedback = fbMesh
     
 class InhibMesh(Mesh):
     '''A class for inhibitory feedback mashes based on fffb mechanism.
         Calculates inhibitory input to a layer based on a mixture of its
         existing activation and current input.
     '''
-    FF = 1
-    FB = 1
+    FF = 0.1
+    FB = 0.5
     FBTau = 1/1.4
-    FF0 = 0.1
+    FF0 = 0.9
 
     def __init__(self, ffmesh: Mesh, inLayer: Layer) -> None:
         self.name = "FFFB_" + ffmesh.name
@@ -389,7 +386,7 @@ class Layer:
         self.inhMeshes: list[Mesh] = [] 
 
 
-        self.optimizer = ByPass()
+        self.optimizer = Simple()
 
         self.isInput = isInput
         self.freeze = False
@@ -404,8 +401,8 @@ class Layer:
             # Conductance based integration
             excCurr = self.excAct*(MAX-self.outAct)
             inhCurr = self.inhAct*(MIN - self.outAct)
-            self.potential -= DELTA_TIME * self.potential
-            self.potential += DELTA_TIME * ( excCurr + inhCurr )
+            self.potential[:] -= DELTA_TIME * self.potential
+            self.potential[:] += DELTA_TIME * ( excCurr + inhCurr )
             activity = self.act(self.potential)
             #TODO: Layer Normalization
             self.gain -= DELTA_TIME * self.gain
