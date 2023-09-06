@@ -62,24 +62,24 @@ resultCHL = netCHL.Learn(inputs, targets, numEpochs=300)
 resultCHL_fffb = netCHL_fffb.Learn(inputs, targets, numEpochs=300)
 
 # Plot Accuracy
-plt.figure()
-plt.plot(resultCHL[0], label="CHL")
-plt.plot(resultCHL_fffb[0], label="CHL w/ FFFB")
-baseline = np.mean([HardmaxAccuracy(entry, targets) for entry in np.random.uniform(size=(2000,50,4))])
-plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
+# plt.figure()
+# plt.plot(resultCHL[0], label="CHL")
+# plt.plot(resultCHL_fffb[0], label="CHL w/ FFFB")
+# baseline = np.mean([HardmaxAccuracy(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,50,4))])
+# plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 
-plt.title("Iris Dataset")
-plt.ylabel("Accuracy")
-plt.xlabel("Epoch")
-plt.legend()
-plt.show()
+# plt.title("Iris Dataset")
+# plt.ylabel("Accuracy")
+# plt.xlabel("Epoch")
+# plt.legend()
+# plt.show()
 
 # Plot RMSE
 plt.figure()
 plt.plot(resultCHL[1], label="CHL")
 plt.plot(resultCHL_fffb[1], label="CHL w/ FFFB")
-baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,50,4))])
+baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,50,4))])
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Iris Dataset")

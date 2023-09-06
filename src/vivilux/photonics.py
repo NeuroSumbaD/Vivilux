@@ -80,7 +80,8 @@ class MZImesh(Mesh):
             # print("WARN: Singular matrix encountered.")
             return
 
-        self.phaseShifters = self.phaseShifters + self.rate*(V @ a).reshape(-1,2)
+        # self.phaseShifters = self.phaseShifters + self.rate*(V @ a).reshape(-1,2)
+        self.phaseShifters = self.phaseShifters + (V @ a).reshape(-1,2)
 
     def psToMat(self, phaseShifters = None):
         '''Helper function which calculates the matrix of a MZI mesh from its

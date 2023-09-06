@@ -53,7 +53,7 @@ netMixed_MZI_Adam = FFFB([
 resultMixedMZI_Adam = netMixed_MZI_Adam.Learn(
     inputs, targets, numEpochs=numEpochs, reset=False)
 
-
+plt.ioff()
 plt.figure()
 plt.plot(resultMixedMZI_Adam)
 plt.title("Random Input/Output Matching with MZI meshes")

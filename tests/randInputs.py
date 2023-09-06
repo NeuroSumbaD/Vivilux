@@ -200,9 +200,7 @@ plt.plot(resultGR3, label="GeneRec (3 layer)")
 resultGR4 = netGR4.Learn(inputs, targets, numEpochs=numEpochs)
 plt.plot(resultGR4, label="GeneRec (4 layer)")
 
-guesses = [RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))]
-guesses /= np.sqrt(np.sum(np.square(guesses), axis=1))
-baseline = np.mean()
+baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Random Input/Output Matching")
