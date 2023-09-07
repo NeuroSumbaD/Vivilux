@@ -374,7 +374,7 @@ class Layer:
         self.inhAct = np.zeros(length)
         self.potential = np.zeros(length)
         self.gain = 1 # layerwise gain term
-        self.magHistory = []
+        # self.magHistory = []
         self.outAct = np.zeros(length)
         self.modified = True
         self.getActivity() #initialize outgoing Activation
@@ -406,8 +406,8 @@ class Layer:
             self.potential[:] += DELTA_TIME * ( excCurr + inhCurr )
             activity = self.act(self.potential)
             #TODO: Layer Normalization
-            # self.gain -= DELTA_TIME * self.gain
-            # self.gain += DELTA_TIME / np.sqrt(np.sum(np.square(activity)))
+            self.gain -= 0.001*DELTA_TIME * self.gain
+            self.gain += 0.001*DELTA_TIME / np.sqrt(np.sum(np.square(activity)))
             # Calculate output activity
             self.outAct[:] = self.gain * activity
 
@@ -442,7 +442,7 @@ class Layer:
         self.Integrate()
         activity = self.getActivity()
         self.phaseHist["minus"][:] = activity
-        self.magHistory.append(np.sqrt(np.sum(np.square(activity))))
+        # self.magHistory.append(np.sqrt(np.sum(np.square(activity))))
         if monitoring:
             self.snapshot.update({"activity": activity,
                         "excAct": self.excAct,
@@ -485,8 +485,8 @@ class Layer:
         self.excMeshes[0].Update(optDelta)
 
         # Set gain
-        self.gain = 1/np.mean(self.magHistory)
-        self.magHistory = [] # clear history
+        # self.gain = 1/np.mean(self.magHistory)
+        # self.magHistory = [] # clear history
 
         
     def Freeze(self):

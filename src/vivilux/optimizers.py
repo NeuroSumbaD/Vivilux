@@ -1,6 +1,6 @@
 import numpy as np
 
-def Simple(lr = 0.1, **kwargs):
+def Simple(lr = 0.001084, **kwargs):
     def opt(deltas: np.ndarray):
         return  lr * deltas
     return opt

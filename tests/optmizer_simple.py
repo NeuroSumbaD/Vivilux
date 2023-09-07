@@ -27,6 +27,7 @@ del vecs, mags
 
 df = pd.DataFrame(columns=["NetType", "iteration", "lr", "RMSE", "mean", "stdDev"])
 
+# optimum after 5 iterations = 0.001084
 start = 0.0
 stop = 1.0
 numIterations = 5
@@ -107,7 +108,7 @@ for iteration in range(numIterations):
     fig = plt.figure(figsize=(12,8.5), dpi=200)
     frame = df.where(df.loc[:,"iteration"]==iteration)
     g = sns.FacetGrid(frame, row="NetType", col="lr", margin_titles=True)
-    g.map(plt.plot)
+    g.map(plt.plot, "RMSE")
     title = f"Random In-Out Matching Simple lr optimization ({iteration})"
     g.fig.suptitle(title)
     g.add_legend()
