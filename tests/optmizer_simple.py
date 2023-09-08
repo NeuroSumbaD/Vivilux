@@ -11,7 +11,7 @@ np.random.seed(seed=0)
 import pandas as pd
 import seaborn as sns
 
-from copy import deepcopy
+from datetime import date
 
 numSamples = 300
 numEpochs = 100
@@ -28,8 +28,9 @@ del vecs, mags
 df = pd.DataFrame(columns=["NetType", "iteration", "lr", "RMSE", "mean", "stdDev"])
 
 # optimum after 5 iterations = 0.001084
-start = 0.0
-stop = 1.0
+# optimum after 5 more iterations = 0.00135185
+start = 0.0005
+stop = 0.0015
 numIterations = 5
 
 optimum = {"mean": np.inf}
@@ -109,7 +110,7 @@ for iteration in range(numIterations):
     frame = df.where(df.loc[:,"iteration"]==iteration)
     g = sns.FacetGrid(frame, row="NetType", col="lr", margin_titles=True)
     g.map(plt.plot, "RMSE")
-    title = f"Random In-Out Matching Simple lr optimization ({iteration})"
+    title = f"Random In-Out Matching Simple lr optimization (iter={iteration})--{date.today()}"
     g.fig.suptitle(title)
     g.add_legend()
     # plt.show()

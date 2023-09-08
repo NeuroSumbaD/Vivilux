@@ -45,10 +45,9 @@ netMixed_MZI_Adam = FFFB([
         Layer(4, learningRule=CHL),
         Layer(4, learningRule=CHL)
     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-    learningRate = 0.1,
     name = f"NET_Mixed_FF-{InhibMesh.FF:.2}_FB-{InhibMesh.FB:.2}_Tau-{InhibMesh.FBTau:.2}_FF0-{InhibMesh.FF0:.2}",
     optimizer = Adam, optArgs=optArgs,
-    monitoring = True, defMonitor = multimonitor)
+    monitoring = True, defMonitor = Magnitude)
 
 resultMixedMZI_Adam = netMixed_MZI_Adam.Learn(
     inputs, targets, numEpochs=numEpochs, reset=False)

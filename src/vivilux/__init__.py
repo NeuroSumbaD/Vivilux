@@ -141,7 +141,7 @@ class Net:
         monitoring = self.monitoring
         self.monitoring = False
         # Evaluate without training
-        print("Progress:")
+        print(f"Progress [{self.name}]:")
         print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0][0]:0.2f}  ", end="\r")
         firstResult = self.Evaluate(inData, outData, self.numTimeSteps)
         for indexMetric, metric in enumerate(self.metrics):
@@ -190,7 +190,7 @@ class Net:
 
         return [metric(results, outData) for metric in self.metrics]
 
-    def getWeights(self, ffOnly):
+    def getWeights(self, ffOnly = True):
         weights = []
         for layer in self.layers:
             for mesh in layer.excMeshes:
@@ -229,7 +229,10 @@ class Mesh:
     def __init__(self, size: int, inLayer: Layer,
                  **kwargs):
         self.size = size if size > len(inLayer) else len(inLayer)
-        self.matrix = np.eye(self.size)
+        # self.matrix = np.eye(self.size)
+        # Glorot uniform initialization
+        glorotUniform = np.sqrt(6)/np.sqrt(2*size)
+        self.matrix = 2*glorotUniform*np.random.rand(self.size, self.size)-glorotUniform
         self.inLayer = inLayer
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
@@ -342,6 +345,7 @@ class AbsMesh(Mesh):
     '''
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        self.matrix = np.abs(self.matrix)
         self.name = "ABS_" + self.name
 
     def set(self, matrix):
@@ -406,8 +410,8 @@ class Layer:
             self.potential[:] += DELTA_TIME * ( excCurr + inhCurr )
             activity = self.act(self.potential)
             #TODO: Layer Normalization
-            self.gain -= 0.001*DELTA_TIME * self.gain
-            self.gain += 0.001*DELTA_TIME / np.sqrt(np.sum(np.square(activity)))
+            self.gain -= DELTA_TIME * self.gain
+            self.gain += DELTA_TIME / np.sqrt(np.sum(np.square(activity)))
             # Calculate output activity
             self.outAct[:] = self.gain * activity
 
