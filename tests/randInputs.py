@@ -25,43 +25,43 @@ del vecs, mags
 
 netGR = RecurNet([
     Layer(4, isInput=True),
-    Layer(4, learningRule=GeneRec),
-    Layer(4, learningRule=GeneRec)
+    GainLayer(4, learningRule=GeneRec),
+    GainLayer(4, learningRule=GeneRec)
 ], AbsMesh, name = "NET_GR")
 
 netGR3 = RecurNet([
     Layer(4, isInput=True),
-    Layer(4, learningRule=GeneRec),
-    Layer(4, learningRule=GeneRec),
-    Layer(4, learningRule=GeneRec)
+    GainLayer(4, learningRule=GeneRec),
+    GainLayer(4, learningRule=GeneRec),
+    GainLayer(4, learningRule=GeneRec)
 ], AbsMesh, name = "NET_GR3")
 
 netGR4 = RecurNet([
     Layer(4, isInput=True),
-    Layer(4, learningRule=GeneRec),
-    Layer(4, learningRule=GeneRec),
-    Layer(4, learningRule=GeneRec),
-    Layer(4, learningRule=GeneRec)
+    GainLayer(4, learningRule=GeneRec),
+    GainLayer(4, learningRule=GeneRec),
+    GainLayer(4, learningRule=GeneRec),
+    GainLayer(4, learningRule=GeneRec)
 ], AbsMesh, name = "NET_GR4")
 
 netCHL = RecurNet([
     Layer(4, isInput=True),
-    Layer(4, learningRule=CHL),
-    Layer(4, learningRule=CHL)
+    GainLayer(4, learningRule=CHL),
+    GainLayer(4, learningRule=CHL)
 ], AbsMesh, name = "NET_CHL")
 
 
 netMixed = RecurNet([
     Layer(4, isInput=True),
-    Layer(4, learningRule=CHL),
-    Layer(4, learningRule=GeneRec)
+    GainLayer(4, learningRule=CHL),
+    GainLayer(4, learningRule=GeneRec)
 ], AbsMesh, name = "NET_Mixed")
 
 
 netMixed2 = RecurNet([
     Layer(4, isInput=True),
-    Layer(4, learningRule=CHL),
-    Layer(4, learningRule=CHL)
+    GainLayer(4, learningRule=CHL),
+    GainLayer(4, learningRule=CHL)
 ], AbsMesh, name = "NET_Freeze")
 netMixed2.layers[1].Freeze()
 
@@ -79,19 +79,19 @@ refModel.compile(optimizer=tf.keras.optimizers.SGD(0.001084),
 refResult = np.sqrt(refModel.fit(inputs, targets, epochs=numEpochs, batch_size=1).history["mse"])
 plt.plot(refResult, label="SGD")
 
-resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
+resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
 plt.plot(resultMixed, label="Mixed")
 
-resultMixed2 = netMixed2.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
+resultMixed2 = netMixed2.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
 plt.plot(resultMixed2, label="Frozen 1st layer")
 
-resultGR = netGR.Learn(inputs, targets, numEpochs=numEpochs)
+resultGR = netGR.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
 plt.plot(resultGR, label="GeneRec")
 
-resultGR3 = netGR3.Learn(inputs, targets, numEpochs=numEpochs)
+resultGR3 = netGR3.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
 plt.plot(resultGR3, label="GeneRec (3 layer)")
 
-resultGR4 = netGR4.Learn(inputs, targets, numEpochs=numEpochs)
+resultGR4 = netGR4.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
 plt.plot(resultGR4, label="GeneRec (4 layer)")
 
 baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,4))])

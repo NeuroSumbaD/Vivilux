@@ -99,12 +99,15 @@ class Multimonitor(Monitor):
 class Record(Monitor):
     '''A monitor for recording data without plotting.
     '''
-    def __init__(self, name: str, labels: list[str], limits: list[float], numLines: int = 0) -> None:
+    def __init__(self, name: str, labels: list[str], limits: list[float], numLines: int = 0,
+                 target="activity") -> None:
         self.name = name
         self.xlabel = labels[0]
         self.ylabel = labels[1]
         self.xlim = limits[0]
         self.ylim = limits[1]
+
+        self.target = target
 
         #trace updates
         self.data = np.zeros((1,numLines))

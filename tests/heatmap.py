@@ -17,8 +17,8 @@ import imageio
 np.random.seed(seed=0)
 
 
-numEpochs = 5
-numSamples = 5
+numEpochs = 100
+numSamples = 1
 
 
 #define input and output data (must be normalized and positive-valued)
@@ -32,6 +32,7 @@ targets[np.arange(len(inputs)), iris.target] = 1
 shuffle = np.random.permutation(len(inputs))
 inputs, targets = inputs[shuffle][:numSamples], targets[shuffle][:numSamples]
 
+optArgs = {"lr": 0.015}
 
 netMixed = RecurNet([
     Layer(4, isInput=True),
@@ -39,24 +40,26 @@ netMixed = RecurNet([
     Layer(4, learningRule=CHL),
     Layer(4, learningRule=CHL)
     ],
-    Mesh, learningRate = 0.01,
+    AbsMesh,
     monitoring=True, defMonitor = vl.visualize.Record,
+    optArgs=optArgs,
     name = "NET_Mixed")
 
 heatmap = Heatmap(netMixed, numEpochs, numSamples)
 
 resultMixed = netMixed.Learn(inputs, targets,
                              numEpochs=numEpochs,
+                             shuffle=False,
                              reset=False)
 
-heatmap.animate("neural_network_activities")
+heatmap.animate("single-training-Run")
 
 # Plot RMSE over time
 plt.figure()
 plt.plot(resultMixed, label="Mixed")
 baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
-plt.title("Iris Dataset")
+plt.title("Training Demo on Single Sample")
 plt.ylabel("Accuracy")
 plt.xlabel("Epoch")
 plt.legend()

@@ -35,64 +35,58 @@ netCHL = RecurNet([
     GainLayer(4, learningRule=CHL),
     GainLayer(4, learningRule=CHL)
     ],
-    vl.photonics.MZImesh,
-    FeedbackMesh=vl.photonics.phfbMesh,
+    AbsMesh,
     metric=RMSE,
-    learningRate = 0.01)
+    )
 
 netCHL_fffb = FFFB([
     Layer(4, isInput=True),
     GainLayer(4, learningRule=CHL),
     GainLayer(4, learningRule=CHL)
     ],
-    vl.photonics.MZImesh,
-    FeedbackMesh=vl.photonics.phfbMesh,
+    AbsMesh,
     metric=RMSE,
-    learningRate = 0.01)
+    )
 
 netCHL_momentum = RecurNet([
     Layer(4, isInput=True),
     GainLayer(4, learningRule=CHL),
     GainLayer(4, learningRule=CHL)
     ],
-    vl.photonics.MZImesh,
-    FeedbackMesh=vl.photonics.phfbMesh,
+    AbsMesh,
     metric=RMSE,
     optimizer = Momentum, optArgs = momArgs,
-    learningRate = 0.01)
+    )
 
 netCHL_fffb_momentum = FFFB([
     Layer(4, isInput=True),
     GainLayer(4, learningRule=CHL),
     GainLayer(4, learningRule=CHL)
     ],
-    vl.photonics.MZImesh,
-    FeedbackMesh=vl.photonics.phfbMesh,
+    AbsMesh,
     optimizer = Momentum, optArgs = momArgs,
     metric=RMSE,
-    learningRate = 0.01)
+    )
 
 netCHL_adam = RecurNet([
     Layer(4, isInput=True),
     GainLayer(4, learningRule=CHL),
     GainLayer(4, learningRule=CHL)
     ],
-    vl.photonics.MZImesh,
-    FeedbackMesh=vl.photonics.phfbMesh,
+    AbsMesh,
     optimizer = Adam, optArgs = adamArgs,
     metric=RMSE,
-    learningRate = 0.01)
+    )
 
 netCHL_fffb_adam = FFFB([
     Layer(4, isInput=True),
     GainLayer(4, learningRule=CHL),
     GainLayer(4, learningRule=CHL)
     ],
-    vl.photonics.MZImesh,
-    FeedbackMesh=vl.photonics.phfbMesh,
+    AbsMesh,
     optimizer = Adam, optArgs = adamArgs,
     metric=RMSE,
-    learningRate = 0.01)
+    )
 
 numSamples = 50
 

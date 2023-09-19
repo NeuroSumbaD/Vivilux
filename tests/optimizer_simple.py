@@ -1,6 +1,6 @@
 import vivilux as vl
 import vivilux.photonics
-from vivilux import FFFB, Layer, AbsMesh, RecurNet
+from vivilux import FFFB, Layer, GainLayer, ConductanceLayer, AbsMesh, RecurNet
 from vivilux.learningRules import CHL, GeneRec, ByPass
 from vivilux.optimizers import Simple
 
@@ -29,9 +29,9 @@ df = pd.DataFrame(columns=["NetType", "iteration", "lr", "RMSE", "mean", "stdDev
 
 # optimum after 5 iterations = 0.001084
 # optimum after 5 more iterations = 0.00135185
-start = 0.0005
-stop = 0.0015
-numIterations = 5
+start = 0 #0.0005
+stop = 1 #0.0015
+numIterations = 3
 
 optimum = {"mean": np.inf}
 
@@ -48,15 +48,15 @@ for iteration in range(numIterations):
         for netType in netTypes:
             net = netType([
                                 Layer(4, isInput=True),
-                                Layer(4, learningRule=CHL),
-                                Layer(4, learningRule=CHL)
+                                GainLayer(4, learningRule=CHL),
+                                ConductanceLayer(4, learningRule=CHL)
                             ], AbsMesh,
                             optimizer = Simple,
                             optArgs = optArgs,
                             name = netType.__name__,
                             )
             
-            result = net.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
+            result = net.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
             currentEntry = {
                         "NetType": netType.__name__,
                         "iteration": iteration,
@@ -75,15 +75,15 @@ for iteration in range(numIterations):
                 optimum = currentEntry
 
             netPhot = netType([
-                                vl.photonics.PhotonicLayer(4, isInput=True),
-                                vl.photonics.PhotonicLayer(4, learningRule=CHL),
-                                vl.photonics.PhotonicLayer(4, learningRule=CHL)
+                                Layer(4, isInput=True),
+                                GainLayer(4, learningRule=CHL),
+                                ConductanceLayer(4, learningRule=CHL)
                             ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
                             optimizer = Simple,
                             optArgs = optArgs,
                             name = "Phot_" + netType.__name__,
                             )
-            result = net.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
+            result = net.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
             currentEntry = {
                         "NetType": "Phot_" + netType.__name__,
                         "iteration": iteration,

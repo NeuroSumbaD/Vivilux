@@ -17,6 +17,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import numpy as np
+
+from vivilux.activations import Sigmoid
+from vivilux.learningRules import CHL
 np.random.seed(seed=0)
 
 # import defaults
@@ -109,10 +112,11 @@ class Net:
 
         return None # observations know the outcome
 
-    def Infer(self, inData, numTimeSteps=50):
+    def Infer(self, inData, numTimeSteps=50, reset=False):
         outputData = np.zeros((len(inData), len(self.layers[-1])))
         index = 0
         for inDatum in inData:
+            if reset: self.resetActivity()
             for time in range(numTimeSteps):
                 result = self.Predict(inDatum)
             outputData[index][:] = result
@@ -143,7 +147,7 @@ class Net:
         # Evaluate without training
         print(f"Progress [{self.name}]:")
         print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0][0]:0.2f}  ", end="\r")
-        firstResult = self.Evaluate(inData, outData, self.numTimeSteps)
+        firstResult = self.Evaluate(inData, outData, self.numTimeSteps, reset)
         for indexMetric, metric in enumerate(self.metrics):
             results[indexMetric][0] = firstResult[indexMetric]
         print(f"Epoch: 0, sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0][0]:0.2f}  ", end="\r")
@@ -185,8 +189,8 @@ class Net:
             return results[0]
         return results
     
-    def Evaluate(self, inData, outData, numTimeSteps=25):
-        results = self.Infer(inData, numTimeSteps)
+    def Evaluate(self, inData, outData, numTimeSteps=25, reset=False):
+        results = self.Infer(inData, numTimeSteps, reset)
 
         return [metric(results, outData) for metric in self.metrics]
 
@@ -377,22 +381,17 @@ class Layer:
         self.excAct = np.zeros(length) # linearly integrated dendritic inputs (internal Activation)
         self.inhAct = np.zeros(length)
         self.potential = np.zeros(length)
-        self.gain = 1 # layerwise gain term
-        # self.magHistory = []
         self.outAct = np.zeros(length)
         self.modified = True
-        self.getActivity() #initialize outgoing Activation
-        self.phaseHist = {"minus": np.zeros(length),
-                          "plus": np.zeros(length)
-                          }
-        
         # Empty initial excitatory and inhibitory meshes
         self.excMeshes: list[Mesh] = []
         self.inhMeshes: list[Mesh] = [] 
+        self.getActivity() #initialize outgoing Activation
 
-
+        self.phaseHist = {"minus": np.zeros(length),
+                          "plus": np.zeros(length)
+                          }
         self.optimizer = Simple()
-
         self.isInput = isInput
         self.freeze = False
         self.name =  f"LAYER_{Layer.count}" if name == None else name
@@ -401,24 +400,13 @@ class Layer:
 
         Layer.count += 1
 
-    def getActivity(self):
-        if self.modified == True:
-            # Conductance based integration
-            excCurr = self.excAct*(MAX-self.outAct)
-            inhCurr = self.inhAct*(MIN - self.outAct)
-            self.potential[:] -= DELTA_TIME * self.potential
-            self.potential[:] += DELTA_TIME * ( excCurr + inhCurr )
-            activity = self.act(self.potential)
-            #TODO: Layer Normalization
-            self.gain -= DELTA_TIME * self.gain
-            self.gain += DELTA_TIME / np.sqrt(np.sum(np.square(activity)))
+    def getActivity(self, modify = False):
+        if self.modified == True or modify:
+            self += -DELTA_TIME*self.excAct
+            self.Integrate()
             # Calculate output activity
-            self.outAct[:] = self.gain * activity
+            self.outAct[:] = self.act(self.excAct)
 
-            self.snapshot["potential"] = self.potential
-            self.snapshot["excCurr"] = excCurr
-            self.snapshot["inhCurr"] = inhCurr
-            self.snapshot["gain"] = self.gain
 
             self.modified = False
         return self.outAct
@@ -438,13 +426,10 @@ class Layer:
             self += DELTA_TIME * mesh.apply()[:len(self)]
 
         for mesh in self.inhMeshes:
-            self -= DELTA_TIME * mesh.apply()[:len(self)]
+            self += -DELTA_TIME * mesh.apply()[:len(self)]
 
     def Predict(self, monitoring = False):
-        self += -DELTA_TIME*self.excAct
-        self -= -DELTA_TIME*self.inhAct
-        self.Integrate()
-        activity = self.getActivity()
+        activity = self.getActivity(modify=True)
         self.phaseHist["minus"][:] = activity
         # self.magHistory.append(np.sqrt(np.sum(np.square(activity))))
         if monitoring:
@@ -456,10 +441,7 @@ class Layer:
         return activity.copy()
 
     def Observe(self, monitoring = False):
-        self += -DELTA_TIME * self.excAct
-        self -= -DELTA_TIME*self.inhAct
-        self.Integrate()
-        activity = self.getActivity()
+        activity = self.getActivity(modify=True)
         self.phaseHist["plus"][:] = activity
         if monitoring:
             self.snapshot.update({"activity": activity,
@@ -471,7 +453,7 @@ class Layer:
 
     def Clamp(self, data, monitoring = False):
         self.excAct[:] = data[:len(self)]
-        self.getActivity()
+        self.inhAct[:] = data[:len(self)]
         self.outAct[:] = data[:len(self)]
         if monitoring:
             self.snapshot.update({"activity": data,
@@ -540,6 +522,80 @@ class Layer:
         layStr += f"\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
         layStr += f"\n\tActivity: \n\t\t{self.excAct},\n\t\t{self.outAct}"
         return layStr
+    
+class ConductanceLayer(Layer):
+    '''A layer type with a conductance based neuron model.'''
+    def __init__(self, length, activation=Sigmoid, learningRule=CHL, isInput=False, freeze=False, name=None):
+        super().__init__(length, activation, learningRule, isInput, freeze, name)
+
+    def getActivity(self, modify = False):
+        if self.modified == True or modify:
+            self += -DELTA_TIME * self.excAct
+            self -= -DELTA_TIME * self.inhAct
+            self.Integrate()
+            # Conductance based integration
+            excCurr = self.excAct*(MAX-self.outAct)
+            inhCurr = self.inhAct*(MIN - self.outAct)
+            self.potential[:] -= DELTA_TIME * self.potential
+            self.potential[:] += DELTA_TIME * ( excCurr + inhCurr )
+            # Calculate output activity
+            self.outAct[:] = self.act(self.potential)
+
+            self.snapshot["potential"] = self.potential
+            self.snapshot["excCurr"] = excCurr
+            self.snapshot["inhCurr"] = inhCurr
+
+            self.modified = False
+        return self.outAct
+    
+    def Integrate(self):
+        for mesh in self.excMeshes:
+            self += DELTA_TIME * mesh.apply()[:len(self)]
+
+        for mesh in self.inhMeshes:
+            self -= DELTA_TIME * mesh.apply()[:len(self)]
+
+class GainLayer(Layer):
+    '''A layer type with a onductance based neuron model and a layer normalization
+        mechanism that multiplies activity by a gain term to normalize the output vector.
+    '''
+    def __init__(self, length, activation=Sigmoid, learningRule=CHL,
+                 isInput=False, freeze=False, name=None, gainInit = 1, homeostaticMag = 1):
+        self.gain = gainInit
+        self.homeostaticMag = homeostaticMag
+        Layer.__init__(self, length, activation, learningRule, isInput, freeze, name)
+
+    def getActivity(self, modify = False):
+        if self.modified == True or modify:
+            self += -DELTA_TIME * self.excAct
+            self -= -DELTA_TIME * self.inhAct
+            self.Integrate()
+            # Conductance based integration
+            excCurr = self.excAct*(MAX-self.outAct)
+            inhCurr = self.inhAct*(MIN - self.outAct)
+            self.potential[:] -= DELTA_TIME * self.potential
+            self.potential[:] += self.homeostaticMag * DELTA_TIME * ( excCurr + inhCurr )
+            activity = self.act(self.potential)
+            #TODO: Layer Normalization
+            self.gain -= DELTA_TIME * self.gain
+            self.gain += DELTA_TIME / np.sqrt(np.sum(np.square(activity)))
+            # Calculate output activity
+            self.outAct[:] = self.gain * activity
+
+            self.snapshot["potential"] = self.potential
+            self.snapshot["excCurr"] = excCurr
+            self.snapshot["inhCurr"] = inhCurr
+            self.snapshot["gain"] = self.gain
+
+            self.modified = False
+        return self.outAct
+    
+    def Integrate(self):
+        for mesh in self.excMeshes:
+            self += DELTA_TIME * mesh.apply()[:len(self)]
+
+        for mesh in self.inhMeshes:
+            self -= DELTA_TIME * mesh.apply()[:len(self)]
 
 class RecurNet(Net):
     '''A recurrent network with feed forward and feedback meshes

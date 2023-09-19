@@ -1,6 +1,6 @@
 import vivilux as vl
 import vivilux.photonics
-from vivilux import FFFB, Layer, Mesh, InhibMesh
+from vivilux import RecurNet, Layer, GainLayer, ConductanceLayer, Mesh, InhibMesh
 from vivilux.learningRules import CHL, GeneRec, ByPass
 from vivilux.optimizers import Adam
 from vivilux.visualize import Magnitude, Monitor, Multimonitor
@@ -40,10 +40,10 @@ InhibMesh.FF0 = 0.8
 multimonitor = lambda **x: Multimonitor(**x, targets=['activity', "potential", "gain"], defMonitor=Magnitude)
 
 plt.ion()
-netMixed_MZI_Adam = FFFB([
+netMixed_MZI_Adam = RecurNet([
         Layer(4, isInput=True),
-        Layer(4, learningRule=CHL),
-        Layer(4, learningRule=CHL)
+        GainLayer(4, learningRule=CHL),
+        ConductanceLayer(4, learningRule=CHL)
     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
     name = f"NET_Mixed_FF-{InhibMesh.FF:.2}_FB-{InhibMesh.FB:.2}_Tau-{InhibMesh.FBTau:.2}_FF0-{InhibMesh.FF0:.2}",
     optimizer = Adam, optArgs=optArgs,
