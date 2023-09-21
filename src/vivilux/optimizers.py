@@ -5,6 +5,14 @@ def Simple(lr = 0.001084, **kwargs):
         return  lr * deltas
     return opt
 
+def Decay( lr2 = 1, decayRate = 0.9, base = Simple, **kwargs):
+    baseOpt = Simple(**kwargs)
+    def opt(deltas: np.ndarray):
+        nonlocal lr2
+        lr2 *= decayRate
+        return lr2*baseOpt(deltas)
+    return opt
+
 def Decay(lr = 0.1, epsilon = 0.99, **kwargs):
     def opt(deltas: np.ndarray):
         nonlocal lr, epsilon

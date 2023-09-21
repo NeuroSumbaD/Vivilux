@@ -141,6 +141,9 @@ class Net:
         index = 0
         numSamples = len(inData)
 
+        inData = inData.reshape(-1,1) if len(inData.shape) == 1 else inData
+        outData = outData.reshape(-1,1) if len(outData.shape) == 1 else inData
+
         # Temporarily pause monitoring
         monitoring = self.monitoring
         self.monitoring = False
@@ -469,11 +472,6 @@ class Layer:
         delta = self.rule(inLayer, self)
         optDelta = self.optimizer(delta)
         self.excMeshes[0].Update(optDelta)
-
-        # Set gain
-        # self.gain = 1/np.mean(self.magHistory)
-        # self.magHistory = [] # clear history
-
         
     def Freeze(self):
         self.freeze = True
@@ -555,7 +553,7 @@ class ConductanceLayer(Layer):
         for mesh in self.inhMeshes:
             self -= DELTA_TIME * mesh.apply()[:len(self)]
 
-class GainLayer(Layer):
+class GainLayer(ConductanceLayer):
     '''A layer type with a onductance based neuron model and a layer normalization
         mechanism that multiplies activity by a gain term to normalize the output vector.
     '''
@@ -563,7 +561,7 @@ class GainLayer(Layer):
                  isInput=False, freeze=False, name=None, gainInit = 1, homeostaticMag = 1):
         self.gain = gainInit
         self.homeostaticMag = homeostaticMag
-        Layer.__init__(self, length, activation, learningRule, isInput, freeze, name)
+        super().__init__(length, activation, learningRule, isInput, freeze, name)
 
     def getActivity(self, modify = False):
         if self.modified == True or modify:
@@ -589,13 +587,66 @@ class GainLayer(Layer):
 
             self.modified = False
         return self.outAct
-    
-    def Integrate(self):
-        for mesh in self.excMeshes:
-            self += DELTA_TIME * mesh.apply()[:len(self)]
 
-        for mesh in self.inhMeshes:
-            self -= DELTA_TIME * mesh.apply()[:len(self)]
+class SlowGainLayer(ConductanceLayer):
+    '''A layer type with a onductance based neuron model and a layer normalization
+        mechanism that multiplies activity by a gain term to normalize the output
+        vector. Gain mechanism in this neuron model is slow and is learned using
+        the average magnitude over the epoch.
+    '''
+    def __init__(self, length, activation=Sigmoid, learningRule=CHL,
+                 isInput=False, freeze=False, name=None, gainInit = 1, homeostaticMag = 1):
+        self.gain = gainInit
+        self.homeostaticMag = homeostaticMag
+        self.magHistory = []
+        super().__init__(length, activation, learningRule, isInput, freeze, name)
+
+    def getActivity(self, modify = False):
+        if self.modified == True or modify:
+            self += -DELTA_TIME * self.excAct
+            self -= -DELTA_TIME * self.inhAct
+            self.Integrate()
+            # Conductance based integration
+            excCurr = self.excAct*(MAX-self.outAct)
+            inhCurr = self.inhAct*(MIN - self.outAct)
+            self.potential[:] -= DELTA_TIME * self.potential
+            self.potential[:] += self.homeostaticMag * DELTA_TIME * ( excCurr + inhCurr )
+            activity = self.act(self.potential)
+            
+            # Calculate output activity
+            self.outAct[:] = self.gain * activity
+
+            self.snapshot["potential"] = self.potential
+            self.snapshot["excCurr"] = excCurr
+            self.snapshot["inhCurr"] = inhCurr
+            self.snapshot["gain"] = self.gain
+
+            self.modified = False
+        return self.outAct
+    
+    def Predict(self, monitoring = False):
+        activity = self.getActivity(modify=True)
+        self.phaseHist["minus"][:] = activity
+        self.magHistory.append(np.sqrt(np.sum(np.square(activity))))
+        if monitoring:
+            self.snapshot.update({"activity": activity,
+                        "excAct": self.excAct,
+                        "inhAct": self.inhAct,
+                        })
+            self.monitor.update(self.snapshot)
+        return activity.copy()
+    
+    def Learn(self):
+        if self.isInput or self.freeze: return
+        # TODO: Allow multiple meshes to learn, skip fb meshes
+        inLayer = self.excMeshes[0].inLayer # assume first mesh as input
+        delta = self.rule(inLayer, self)
+        optDelta = self.optimizer(delta)
+        self.excMeshes[0].Update(optDelta)
+
+        # Set gain
+        self.gain = 1/np.mean(self.magHistory)
+        self.magHistory = [] # clear history
 
 class RecurNet(Net):
     '''A recurrent network with feed forward and feedback meshes
