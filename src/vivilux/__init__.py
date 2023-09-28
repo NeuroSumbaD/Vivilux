@@ -15,6 +15,7 @@ REFERENCES:
 
 from __future__ import annotations
 from collections.abc import Iterator
+import math
 
 import numpy as np
 
@@ -125,7 +126,7 @@ class Net:
 
     
     def Learn(self, inData: np.ndarray, outData: np.ndarray,
-              numTimeSteps = None, numEpochs=50,
+              numTimeSteps = None, numEpochs=50, batchSize = 1, repeat=1,
               verbose = False, reset = False, shuffle = True):
         '''Control loop for learning based on GeneRec-like algorithms.
                 inData      : input data
@@ -137,12 +138,16 @@ class Net:
         if numTimeSteps is not None:
             self.numTimeSteps = numTimeSteps
 
+        # isolate input and output data
+        # inData = deepcopy(inData)
+        # outData = deepcopy(outData)
+
         results = [np.zeros(numEpochs+1) for metric in self.metrics]
         index = 0
         numSamples = len(inData)
 
         inData = inData.reshape(-1,1) if len(inData.shape) == 1 else inData
-        outData = outData.reshape(-1,1) if len(outData.shape) == 1 else inData
+        outData = outData.reshape(-1,1) if len(outData.shape) == 1 else outData
 
         # Temporarily pause monitoring
         monitoring = self.monitoring
@@ -158,28 +163,45 @@ class Net:
         self.monitoring = monitoring
 
         epochResults = np.zeros((len(outData), len(self.layers[-1])))
+        # epochResults = np.zeros((len(outData), repeat, len(self.layers[-1])))
+        # add mechanism for repetitions
 
+        # batch mode
+        if batchSize > 1:
+            for layer in self.layers:
+                layer.batchMode = True
         
         for epoch in range(numEpochs):
             if shuffle:
                 permute = np.random.permutation(len(inData))
                 inData, outData = inData[permute], outData[permute]
             index=0
+            if batchSize > 1:
+                batchInData = [inData[batchSize*i:batchSize*(i+1)] for i in range(math.ceil(len(inData)/batchSize))]
+                batchOutData = [outData[batchSize*i:batchSize*(i+1)] for i in range(math.ceil(len(outData)/batchSize))]
+            else:
+                batchInData = inData
+                batchOutData = outData
             # iterate through data and time
-            for inDatum, outDatum in zip(inData, outData):
-                if reset: self.resetActivity()
-                # TODO: MAKE ACTIVATIONS CONTINUOUS
-                ### Data should instead be recorded and labeled at the end of each phase
-                for time in range(self.numTimeSteps):
-                    lastResult = self.Predict(inDatum)
-                epochResults[index][:] = lastResult
-                index += 1
-                for time in range(self.numTimeSteps):
-                    self.Observe(inDatum, outDatum)
-                # update meshes
+            for inBatch, outBatch in zip(batchInData, batchOutData):
+                for inDatum, outDatum in zip(inBatch, outBatch):
+                    for iteration in range(repeat):
+                        if reset: self.resetActivity()
+                        # TODO: MAKE ACTIVATIONS CONTINUOUS
+                        ### Data should instead be recorded and labeled at the end of each phase
+                        for time in range(self.numTimeSteps):
+                            lastResult = self.Predict(inDatum)
+                        epochResults[index][:] = lastResult
+                        index += 1
+                        for time in range(self.numTimeSteps):
+                            self.Observe(inDatum, outDatum)
+                        # update meshes
+                        for layer in self.layers:
+                            layer.Learn()
+                    print(f"Epoch: ({epoch}/{numEpochs}), sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0][epoch]:0.4f}  ", end="\r")
+            if batchSize > 1: # batched mode
                 for layer in self.layers:
-                    layer.Learn()
-                print(f"Epoch: ({epoch}/{numEpochs}), sample: ({index}/{numSamples}), metric[{self.metrics[0].__name__}] = {results[0][epoch]:0.4f}  ", end="\r")
+                    layer.Learn(batchComplete=True)
             # evaluate metric
             # Record multiple metrics
             for indexMetric, metric in enumerate(self.metrics):
@@ -248,6 +270,8 @@ class Mesh:
         self.name = f"MESH_{Mesh.count}"
         Mesh.count += 1
 
+        self.trainable = True
+
     def set(self, matrix):
         self.modified = True
         self.matrix = matrix
@@ -291,6 +315,8 @@ class fbMesh(Mesh):
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
 
+        self.trainable = False
+
     def set(self):
         raise Exception("Feedback mesh has no 'set' method.")
 
@@ -321,6 +347,8 @@ class InhibMesh(Mesh):
         self.inLayer = inLayer
         self.fb = 0
         self.inhib = np.zeros(self.size)
+
+        self.trainable = False
 
     def apply(self):
         # guarantee that data can be multiplied by the mesh
@@ -371,14 +399,17 @@ class Layer:
         incoming data.
     '''
     count = 0
-    def __init__(self, length, activation=Sigmoid, learningRule=CHL,
-                 isInput = False, freeze = False, name = None):
+    def __init__(self, length, activation=Sigmoid(), learningRule=CHL,
+                 isInput = False, freeze = False, batchMode=False, name = None):
         self.modified = False 
         self.act = activation
         self.rule = learningRule
         
         self.monitor = None
         self.snapshot = {}
+
+        self.batchMode = batchMode
+        self.deltas = [] # only used during batched training
 
         # Initialize layer activities
         self.excAct = np.zeros(length) # linearly integrated dendritic inputs (internal Activation)
@@ -465,13 +496,21 @@ class Layer:
                         })
             self.monitor.update(self.snapshot)
 
-    def Learn(self):
+    def Learn(self, batchComplete=False):
         if self.isInput or self.freeze: return
-        # TODO: Allow multiple meshes to learn, skip fb meshes
-        inLayer = self.excMeshes[0].inLayer # assume first mesh as input
-        delta = self.rule(inLayer, self)
-        optDelta = self.optimizer(delta)
-        self.excMeshes[0].Update(optDelta)
+        for mesh in self.excMeshes:
+            if not mesh.trainable: continue
+            inLayer = mesh.inLayer # assume first mesh as input
+            delta = self.rule(inLayer, self)
+            if self.batchMode:
+                self.deltas.append(delta)
+                if batchComplete:
+                    delta = np.mean(self.deltas, axis=0)
+                    self.deltas = []
+                else:
+                    return # exit without update for batching
+            optDelta = self.optimizer(delta)
+            mesh.Update(optDelta)
         
     def Freeze(self):
         self.freeze = True
@@ -595,11 +634,11 @@ class SlowGainLayer(ConductanceLayer):
         the average magnitude over the epoch.
     '''
     def __init__(self, length, activation=Sigmoid, learningRule=CHL,
-                 isInput=False, freeze=False, name=None, gainInit = 1, homeostaticMag = 1):
+                 isInput=False, freeze=False, name=None, gainInit = 1, homeostaticMag = 1, **kwargs):
         self.gain = gainInit
         self.homeostaticMag = homeostaticMag
         self.magHistory = []
-        super().__init__(length, activation, learningRule, isInput, freeze, name)
+        super().__init__(length, activation=activation, learningRule=learningRule, isInput=isInput, freeze=freeze, name=name, **kwargs)
 
     def getActivity(self, modify = False):
         if self.modified == True or modify:
@@ -637,16 +676,60 @@ class SlowGainLayer(ConductanceLayer):
         return activity.copy()
     
     def Learn(self):
-        if self.isInput or self.freeze: return
-        # TODO: Allow multiple meshes to learn, skip fb meshes
-        inLayer = self.excMeshes[0].inLayer # assume first mesh as input
-        delta = self.rule(inLayer, self)
-        optDelta = self.optimizer(delta)
-        self.excMeshes[0].Update(optDelta)
+        super().Learn()
+        if self.batchComplete:
+            # Set gain
+            self.gain = self.homeostaticMag/np.mean(self.magHistory)
+            self.magHistory = [] # clear history
 
-        # Set gain
-        self.gain = 1/np.mean(self.magHistory)
-        self.magHistory = [] # clear history
+
+class RateCode(Layer):
+    '''A layer type which assumes a rate code proportional to excitatory 
+        conductance minus threshold conductance.'''
+    def __init__(self, length, activation=Sigmoid, learningRule=CHL,
+                 threshold = 0.75*(MAX-MIN), conductances = [DELTA_TIME, 1, 1],
+                 isInput=False, freeze=False, name=None):
+        
+        # Set hyperparameters relevant to rate coding
+        self.threshold = threshold # threshold voltage
+        self.leakCon = conductances[0] # leak conductance
+        self.excCon = conductances[1] # scaling of excitatory conductance
+        self.inhCon = conductances[2] # scaling of inhibitory conductance
+        super().__init__(length, activation, learningRule, isInput, freeze, name)
+        self.snapshot["totalCon"] = self.excAct
+        self.snapshot["thresholdCon"] = self.excAct
+        self.snapshot["inhCurr"] = self.excAct
+
+    def getActivity(self, modify = False):
+        if self.modified == True or modify:
+            # Settling dynamics of the excitatory/inhibitory conductances
+            self += -DELTA_TIME * self.excAct
+            self -= -DELTA_TIME * self.inhAct
+            self.Integrate()
+
+            # Calculate threshold conductance
+            inhCurr = self.inhAct*self.inhCon*(self.threshold-MIN)
+            leakCurr = self.leakCon*(self.threshold-MIN)
+            thresholdCon = (inhCurr+leakCurr)/(MAX-self.threshold)
+
+            # Calculate rate of firing from excitatory conductance
+            self.outAct[:] = self.act(self.excAct*self.excCon - thresholdCon)
+            
+            # Store snapshots for monitoring
+            self.snapshot["excAct"] = self.excAct
+            self.snapshot["totalCon"] = self.excAct-thresholdCon
+            self.snapshot["thresholdCon"] = thresholdCon
+            self.snapshot["inhCurr"] = inhCurr
+
+            self.modified = False
+        return self.outAct
+    
+    def Integrate(self):
+        for mesh in self.excMeshes:
+            self += DELTA_TIME * mesh.apply()[:len(self)]
+
+        for mesh in self.inhMeshes:
+            self -= DELTA_TIME * mesh.apply()[:len(self)]
 
 class RecurNet(Net):
     '''A recurrent network with feed forward and feedback meshes

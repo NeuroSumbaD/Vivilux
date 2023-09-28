@@ -13,14 +13,6 @@ def Decay( lr2 = 1, decayRate = 0.9, base = Simple, **kwargs):
         return lr2*baseOpt(deltas)
     return opt
 
-def Decay(lr = 0.1, epsilon = 0.99, **kwargs):
-    def opt(deltas: np.ndarray):
-        nonlocal lr, epsilon
-        out = lr * deltas
-        lr *= epsilon
-        return out
-    return opt
-
 def Momentum(lr = 0.05, beta = 0.9, initial = 0):
     m = initial #first moment (mean)
     def opt(deltas: np.ndarray):

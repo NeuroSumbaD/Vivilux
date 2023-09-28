@@ -1,4 +1,4 @@
 import numpy as np
 
-def Sigmoid(input):
-    return 1/(1 + np.exp(-10*(input-0.5)))
+def Sigmoid(A=1, B=10, C=0.5):
+    return lambda input: A/(1 + np.exp(-B*(input-C)))
