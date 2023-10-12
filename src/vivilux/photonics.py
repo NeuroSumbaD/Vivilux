@@ -6,7 +6,7 @@ from scipy.stats import ortho_group
 def Detect(input):
     '''DC power detected (no cross terms)
     '''
-    return np.square(np.sum(input, axis=-1))
+    return np.square(np.abs(np.sum(input, axis=-1)))
 
 def Diagonalize(vector):
     '''Turns a vector into a diagonal matrix to simulate independent wavelength
@@ -18,8 +18,11 @@ def Diagonalize(vector):
     return diag
 
 def BoundTheta(thetas):
+    '''Bounds the size of phase shifts between 1-2pi.
+    '''
     thetas[thetas > (2*np.pi)] -= 2*np.pi
     thetas[thetas < 0] += 2*np.pi
+    return thetas
 
 
 class Unitary(Mesh):
@@ -28,6 +31,8 @@ class Unitary(Mesh):
         self.set(ortho_group.rvs(len(self)))
 
 class MZImesh(Mesh):
+    '''Base class for a single rectangular MZI used in incoherent mode.
+    '''
     def __init__(self, *args, numDirections = 5, updateMagnitude = 0.01,
                  **kwargs):
         super().__init__(*args, **kwargs)
@@ -38,22 +43,48 @@ class MZImesh(Mesh):
         self.modified = True
         self.get()
 
-        self.numDirections = numDirections
-        self.updateMagnitude = updateMagnitude
+        # self.numDirections = numDirections
+        numParams = int(np.concatenate([param.flatten() for param in self.getParams()]).size)
+        self.numDirections = int(np.round(numParams/3)) # arbitrary guess for how many directions are needed
+        self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
 
-    def get(self):
+    def get(self, params=None):
         '''Returns full mesh matrix.
         '''
+        if params is not None: # calculate matrix using params
+            return self.Gscale * self.psToMat(params[0])
+        
         if (self.modified == True): # only recalculate matrix when modified
             self.set(self.psToMat())
             self.modified = False
         
-        return self.matrix
+        return self.Gscale * self.matrix
     
+    def getParams(self):
+        return [self.phaseShifters]
+    
+    def setParams(self, params):
+        ps = params[0]
+        self.phaseShifters = BoundTheta(ps)
+    
+    def reshapeParams(self, flatParams):
+        '''Helper function to reshape a flattened set of parameters to list format
+            accepted by getter and setter functions.
+        '''
+        startIndex = 0
+        reshapedParams = []
+        for param in self.getParams():
+            numElements = param.size
+            reshapedParams.append(flatParams[startIndex:startIndex+numElements].reshape(*param.shape))
+            startIndex += numElements
+        return reshapedParams
+
     def apply(self):
         data = self.getInput()
         # guarantee that data can be multiplied by the mesh
         data = np.pad(data[:self.size], (0, self.size - len(data)))
+        # Split data into diagonal matrix
+        ## Take the sum of squared magnitude (power)
         return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
  
     
@@ -63,7 +94,7 @@ class MZImesh(Mesh):
         # Make column vectors for deltas and theta
         m, n = delta.shape # presynaptic, postsynaptic array lengths
         deltaFlat = delta.flatten().reshape(-1,1)
-        thetaFlat = self.phaseShifters.flatten().reshape(-1,1)
+        thetaFlat = np.concatenate([param.flatten() for param in self.getParams()]).reshape(-1,1)
 
         X = np.zeros((deltaFlat.shape[0], self.numDirections))
         V = np.zeros((thetaFlat.shape[0], self.numDirections))
@@ -71,17 +102,35 @@ class MZImesh(Mesh):
         # Calculate directional derivatives
         for i in range(self.numDirections):
             tempx, tempv= self.matrixGradient()
+            tempv = np.concatenate([param.flatten() for param in tempv])
             X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()
 
         # Solve least square regression for update
-        try:
-            a = np.linalg.inv(X.T @ X) @ X.T @ deltaFlat
-        except np.linalg.LinAlgError:
-            # print("WARN: Singular matrix encountered.")
-            return
+        for iteration in range(self.numDirections):
+            xtx = X.T @ X
+            rank = np.linalg.matrix_rank(xtx)
+            if rank == len(xtx): # matrix will have an inverse
+                a = np.linalg.inv(xtx) @ X.T @ deltaFlat
+                break
+            else: # direction vectors cary redundant information use one less
+                X = X[:,:-1]
+                V = V[:,:-1]
+                continue
+        # try:
+        #     a = np.linalg.inv(X.T @ X) @ X.T @ deltaFlat
+        #     # results = np.linalg.lstsq(X, deltaFlat)
+        #     # a = results[0]
+        #     # residuals = results[1]
+        # except np.linalg.LinAlgError:
+        #     print("WARN: Singular matrix encountered. Skipping current Delta.")
+        #     return
 
         # self.phaseShifters = self.phaseShifters + self.rate*(V @ a).reshape(-1,2)
-        self.phaseShifters = self.phaseShifters + (V @ a).reshape(-1,2)
+        # self.phaseShifters = self.phaseShifters + (V @ a).reshape(-1,2)
+        linearCombination = V @ a
+        optParams = [param + opt for param, opt in zip(self.getParams(), self.reshapeParams(linearCombination))]
+        self.setParams(optParams)
+
 
     def psToMat(self, phaseShifters = None):
         '''Helper function which calculates the matrix of a MZI mesh from its
@@ -112,25 +161,29 @@ class MZImesh(Mesh):
 
             Returns derivativeMatrix, stepVector
         '''
+        paramsList = self.getParams()
         # create a random step vector and set magnitude to self.updateMagnitude
         if stepVector is None:
-            stepVector = np.random.rand(*self.phaseShifters.shape)
-            stepVector /= np.sqrt(np.sum(np.square(stepVector)))
-            stepVector *= self.updateMagnitude
+            stepVectors = [np.random.rand(*param.shape) for param in paramsList]
+            randMagnitude = np.sqrt(np.sum(np.square(np.concatenate([stepVector.flatten() for stepVector in stepVectors]))))
+            stepVectors = [stepVector/randMagnitude for stepVector in stepVectors]
+            stepVectors = [stepVector*self.updateMagnitude for stepVector in stepVectors]
         
         derivativeMatrix = np.zeros(self.matrix.shape)
 
+        # Forward step
+        plusVectors = [param + stepVector for param, stepVector in zip(paramsList, stepVectors)]
+        plusMatrix = self.get(plusVectors)
+        # Backward step
+        minusVectors = [param - stepVector for param, stepVector in zip(paramsList, stepVectors)]
+        minusMatrix = self.get(minusVectors)
         for col in range(self.size):
             mask = np.zeros(self.size)
-            mask[col] = 1
+            mask[col] = 1 # mask off contribution from a single input waveguide
             
-            plusVector = self.phaseShifters + stepVector
-            plusMatrix = self.psToMat(plusVector)
             # isolate column and shape as column vector
             detectedVectorPlus = np.square(np.abs(plusMatrix @ mask))
 
-            minusVector = self.phaseShifters - stepVector
-            minusMatrix = self.psToMat(minusVector)
             # isolate column and shape as column vector
             detectedVectorMinus = np.square(np.abs(minusMatrix @ mask))
 
@@ -138,21 +191,151 @@ class MZImesh(Mesh):
             derivativeMatrix[:,col] = derivative
 
         # return flattened vectors for the directional derivatives and their unit vector directions
-        return derivativeMatrix, stepVector/self.updateMagnitude
-  
+        return derivativeMatrix, stepVectors
+        # return derivativeMatrix, [stepVector/self.updateMagnitude for stepVector in stepVectors]
+    
+
+class CohMZIMesh(MZImesh):
+    '''A single rectangular MZI mesh used as a coherent matrix multiplier.'''
+    def __init__(self, *args, numDirections=5, updateMagnitude=0.01, **kwargs):
+        super().__init__(*args, numDirections=numDirections, updateMagnitude=updateMagnitude, **kwargs)
+
+    def apply(self):
+        data = self.getInput()
+        # guarantee that data can be multiplied by the mesh
+        data = np.pad(data[:self.size], (0, self.size - len(data)))
+        # Return the output magnitude squared
+        return np.square(np.abs(self.applyTo(data)))
+    
+
+class DiagMZI(MZImesh):
+    '''Class of MZI mesh followed by a set of amplifier/attenuators forming
+        a unitary*diagonal matrix configuration.
+    '''
+    def __init__(self, *args, numDirections=5, updateMagnitude=0.01, **kwargs):
+        Mesh.__init__(self, *args, **kwargs)
+        self.numUnits = int(self.size*(self.size-1)/2)
+        self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
+        self.diagonals = np.random.rand(self.size)
+
+        self.modified = True
+        self.get()
+
+        # self.numDirections = numDirections
+        numParams = int(np.concatenate([param.flatten() for param in self.getParams()]).size)
+        self.numDirections = int(np.round(numParams/3))
+        self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
+
+    def get(self, params=None):
+        '''Returns full mesh matrix.
+        '''
+        if params is not None: # calculate matrix using params
+            mat = self.psToMat(params[0])
+            return self.Gscale * Diagonalize(self.diagonals) @ mat
+        
+        if (self.modified == True): # only recalculate matrix when modified
+            mat= self.psToMat()
+            fullMatrix = Diagonalize(self.diagonals) @ mat
+            self.set(fullMatrix)
+            self.modified = False
+        
+        return self.Gscale * self.matrix
+
+    def getParams(self):
+        return [self.phaseShifters, self.diagonals]
+    
+    def setParams(self, params):
+        self.phaseShifters = params[0]
+        self.diagonals = params[1]
+
+class SVDMZI(MZImesh):
+    '''Class of MZI mesh following the SVD decomposition scheme. There are
+        two rectangular MZI meshes with a set of amplifier/attenuators in
+        between creating a unitary*diagonal*unitary matrix configuration.
+    '''
+    def __init__(self, *args, numDirections=5, updateMagnitude=0.01, **kwargs):
+        Mesh.__init__(self,*args, **kwargs)
+        self.numUnits = int(self.size*(self.size-1)/2)
+        self.phaseShifters = np.random.rand(self.numUnits*2,2)*2*np.pi
+        self.diagonals = np.random.rand(self.size)
+
+        self.modified = True
+        self.get()
+
+        # self.numDirections = numDirections
+        numParams = int(np.concatenate([param.flatten() for param in self.getParams()]).size)
+        self.numDirections = int(np.round(numParams/3))
+        self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
+
+    def psToMat(self, phaseShifters = None):
+        '''Helper function which calculates the matrix of a MZI mesh from its
+            set of phase shifters.
+        '''
+        phaseShiftersAll = self.phaseShifters if phaseShifters is None else phaseShifters
+        phaseShifters1 = phaseShiftersAll[:self.numUnits,:]
+        phaseShifters2 = phaseShiftersAll[self.numUnits:,:]
+        fullMatrix1 = np.eye(self.size, dtype=np.cdouble)
+        fullMatrix2 = np.eye(self.size, dtype=np.cdouble)
+        index = 0
+        for stage in range(self.size):
+            stageMatrix1 = np.eye(self.size, dtype=np.cdouble)
+            stageMatrix2 = np.eye(self.size, dtype=np.cdouble)
+            parity = stage % 2 # even or odd stage
+            for wg in range(parity, self.size, 2): 
+                # add MZI weights in pairs
+                if wg >= self.size-1: break # handle case of last pair
+                theta1, phi1 = phaseShifters1[index]
+                theta2, phi2 = phaseShifters2[index]
+                index += 1
+                stageMatrix1[wg:wg+2,wg:wg+2] = np.array([[np.exp(1j*phi1)*np.sin(theta1),np.cos(theta1)],
+                                                            [np.exp(1j*phi1)*np.cos(theta1),-np.sin(theta1)]],
+                                                            dtype=np.cdouble)
+                stageMatrix2[wg:wg+2,wg:wg+2] = np.array([[np.exp(1j*phi2)*np.sin(theta2),np.cos(theta2)],
+                                                            [np.exp(1j*phi2)*np.cos(theta2),-np.sin(theta2)]],
+                                                            dtype=np.cdouble)
+            fullMatrix1[:] = stageMatrix1 @ fullMatrix1
+            fullMatrix2[:] = stageMatrix2 @ fullMatrix2
+        return fullMatrix1, fullMatrix2
+    
+    def get(self, params=None):
+        '''Returns full mesh matrix.
+        '''
+        if params is not None: # calculate matrix using params
+            mat1, mat2 = self.psToMat(params[0])
+            return self.Gscale * mat2 @ Diagonalize(self.diagonals) @ mat1
+        
+        if (self.modified == True): # only recalculate matrix when modified
+            matrix1, matrix2 = self.psToMat()
+            fullMatrix = matrix2 @ Diagonalize(self.diagonals) @ matrix1
+            self.set(fullMatrix)
+            self.modified = False
+        
+        return self.Gscale * self.matrix
+
+    def getParams(self):
+        return [self.phaseShifters, self.diagonals]
+    
+    def setParams(self, params):
+        self.phaseShifters = params[0]
+        self.diagonals = params[1]
+        
 class phfbMesh(Mesh):
     '''A class for photonic feedback meshes based on the transpose of an MZI mesh.
     '''
-    def __init__(self, mesh: Mesh, inLayer: Layer) -> None:
+    def __init__(self, mesh: Mesh, inLayer: Layer, fbScale = 0.2) -> None:
         super().__init__(mesh.size, inLayer)
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
+
+        self.fbScale = fbScale
+
+        self.trainable = False
 
     def set(self):
         raise Exception("Feedback mesh has no 'set' method.")
 
     def get(self):
-        return self.mesh.get().T
+        return self.fbScale * self.mesh.Gscale * self.mesh.get().T
     
     def getInput(self):
         return self.mesh.inLayer.outAct
