@@ -32,6 +32,7 @@ from .visualize import Monitor
 
 # library default constants
 DELTA_TIME = 0.1
+DELTA_Vm = DELTA_TIME/2.81
 MAX = 1
 MIN = 0
 
@@ -56,7 +57,7 @@ class Net:
         self.monitoring = monitoring
         self.defMonitor = defMonitor
 
-        self.name =  f"NET_{Layer.count}" if name == None else name
+        self.name =  f"NET_{Net.count}" if name == None else name
         Net.count += 1
 
         # TODO: allow different mesh types between layers
@@ -102,11 +103,22 @@ class Net:
             error-driven learning scheme of neural network computation.
         '''
         #Clamp input layer, set minus phase history
-        self.layers[0].Clamp(inData, monitoring=self.monitoring)
-        self.layers[0].phaseHist["plus"][:] = self.layers[0].getActivity()
+        inLayer = self.layers[0]
+        inLayer.Clamp(inData, monitoring=self.monitoring)
+        inActivity = inLayer.getActivity()
+        inLayer.phaseHist["plus"][:] = inActivity
+        deltaPAvg = np.mean(inActivity) - inLayer.ActPAvg
+        inLayer.ActPAvg += DELTA_TIME/50*(deltaPAvg) #For updating Gscale
+        inLayer.snapshot["deltaPAvg"] = deltaPAvg
+
         #Clamp output layer, set minus phase history
-        self.layers[-1].Clamp(outData, monitoring=self.monitoring)
-        self.layers[-1].phaseHist["plus"][:] = self.layers[-1].getActivity()
+        outLayer = self.layers[-1]
+        outLayer.Clamp(outData, monitoring=self.monitoring)
+        outActivity = outLayer.getActivity()
+        outLayer.phaseHist["plus"][:] = outActivity
+        deltaPAvg = np.mean(outActivity) - outLayer.ActPAvg
+        outLayer.ActPAvg += DELTA_TIME/50*(deltaPAvg) #For updating Gscale
+        outLayer.snapshot["deltaPAvg"] = deltaPAvg
         
         for layer in self.layers[1:-1]:
             layer.Observe(monitoring=self.monitoring)
@@ -180,8 +192,8 @@ class Net:
                 batchInData = [inData[batchSize*i:batchSize*(i+1)] for i in range(math.ceil(len(inData)/batchSize))]
                 batchOutData = [outData[batchSize*i:batchSize*(i+1)] for i in range(math.ceil(len(outData)/batchSize))]
             else:
-                batchInData = inData
-                batchOutData = outData
+                batchInData = inData.reshape(1,*inData.shape)
+                batchOutData = outData.reshape(1,*outData.shape)
             # iterate through data and time
             for inBatch, outBatch in zip(batchInData, batchOutData):
                 for inDatum, outDatum in zip(inBatch, outBatch):
@@ -262,6 +274,7 @@ class Mesh:
         # Glorot uniform initialization
         glorotUniform = np.sqrt(6)/np.sqrt(2*size)
         self.matrix = 2*glorotUniform*np.random.rand(self.size, self.size)-glorotUniform
+        self.Gscale = 1/len(inLayer)
         self.inLayer = inLayer
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
@@ -275,6 +288,12 @@ class Mesh:
     def set(self, matrix):
         self.modified = True
         self.matrix = matrix
+
+    def setGscale(self, avgActP):
+        #calculate average number of active neurons in sending layer
+        sendLayActN = np.maximum(np.round(avgActP*len(self.inLayer)), 1)
+        sc = 1/sendLayActN # TODO: implement relative importance
+        self.Gscale = sc
 
     def get(self):
         return self.matrix
@@ -310,10 +329,12 @@ class Mesh:
 class fbMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
     '''
-    def __init__(self, mesh: Mesh, inLayer: Layer) -> None:
+    def __init__(self, mesh: Mesh, inLayer: Layer, fbScale = 0.5) -> None:
         super().__init__(mesh.size, inLayer)
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
+
+        self.fbScale = fbScale
 
         self.trainable = False
 
@@ -321,7 +342,8 @@ class fbMesh(Mesh):
         raise Exception("Feedback mesh has no 'set' method.")
 
     def get(self):
-        return self.mesh.get().T
+        self.setGscale(self.inLayer.ActPAvg)
+        return self.fbScale * self.mesh.Gscale * self.mesh.get().T 
     
     def getInput(self):
         return self.mesh.inLayer.outAct
@@ -335,10 +357,11 @@ class InhibMesh(Mesh):
         Calculates inhibitory input to a layer based on a mixture of its
         existing activation and current input.
     '''
-    FF = 0.1
-    FB = 0.5
+    FF = 1
+    FB = 1
     FBTau = 1/1.4
-    FF0 = 0.9
+    FF0 = 0.1
+    Gi = 1.8
 
     def __init__(self, ffmesh: Mesh, inLayer: Layer) -> None:
         self.name = "FFFB_" + ffmesh.name
@@ -359,7 +382,7 @@ class InhibMesh(Mesh):
         self.fb += InhibMesh.FBTau * (np.mean(self.inLayer.outAct) - self.fb)
 
         self.inhib[:] = InhibMesh.FF * ffAct + InhibMesh.FB * self.fb
-        return self.inhib
+        return InhibMesh.Gi * self.inhib
 
     def set(self):
         raise Exception("InhibMesh has no 'set' method.")
@@ -375,8 +398,8 @@ class InhibMesh(Mesh):
 
 class AbsMesh(Mesh):
     '''A mesh with purely positive weights to mimic biological 
-        weight strengths. Negative connections must be labeled 
-        at the neuron group level.
+        weight strengths. Positive weighting is enforced by absolute value. 
+        Negative connections must be labeled at the neuron group level.
     '''
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -392,6 +415,60 @@ class AbsMesh(Mesh):
         super().Update(delta)
         self.matrix = np.abs(self.matrix)
 
+
+
+class SoftMesh(Mesh):
+    '''A mesh with purely positive bounded weights (0 < w < 1) to mimic biological 
+        weight strengths. Positive weighting is enforced by soft bounding. Negative
+        connections must be labeled at the neuron group level. 
+    '''
+    def __init__(self, size: int, inLayer: Layer, Inc = 1, Dec = 1,
+                 **kwargs):
+        self.size = size if size > len(inLayer) else len(inLayer)
+        # Glorot uniform initialization
+        self.matrix = np.random.rand(self.size, self.size)
+        self.Gscale = 1/len(inLayer)
+        self.inLayer = inLayer
+
+        # flag to track when matrix updates (for nontrivial meshes like MZI)
+        self.modified = False
+
+        self.name = f"MESH_{Mesh.count}"
+        Mesh.count += 1
+
+        self.trainable = True
+
+        self.name = "SOFT_" + self.name
+        self.Inc = Inc
+        self.Dec = Dec
+
+        # Sanity check
+        assert(self.matrix.max() < 1)
+        assert(self.matrix.min() > 0)
+
+    # def get(self):
+    #     mat =  self.matrix
+    #     return 1/(1+np.exp(-3*mat))
+
+    def Update(self, delta: np.ndarray):
+        mat = self.get()
+        # mm, mn = mat.shape
+        m, n = delta.shape
+        ones = -0.1*np.ones(self.matrix.shape) # OR decay unnecessary weights to zero
+        ones[:m, :n] = delta
+        delta = ones
+        mask = delta > 0
+        softBound = np.multiply(mask, (self.Inc*(1-mat))) + np.multiply(np.logical_not(mask), (self.Dec*mat))
+        # delta = np.pad(delta, [[0, mm-m], [0, mn-n]]) # zero pad delta matrix
+        # delta[:] = np.multiply(delta,softBound[:m, :n]) # OR clip softBound to match delta
+        delta[:] = np.multiply(delta,softBound)
+        super().Update(delta)
+        # bound weights within stable range
+        self.matrix = np.minimum(self.matrix, 1)
+        self.matrix = np.maximum(self.matrix, 0)
+        # assert(self.matrix.max() < 1)
+        # assert(self.matrix.min() > 0)
+    
 class Layer:
     '''Base class for a layer that includes input matrices and activation
         function pairings. Each layer retains a seperate state for predict
@@ -420,11 +497,12 @@ class Layer:
         # Empty initial excitatory and inhibitory meshes
         self.excMeshes: list[Mesh] = []
         self.inhMeshes: list[Mesh] = [] 
-        self.getActivity() #initialize outgoing Activation
-
         self.phaseHist = {"minus": np.zeros(length),
                           "plus": np.zeros(length)
                           }
+        self.ActPAvg = np.mean(self.outAct) # initialize for Gscale
+        self.getActivity() #initialize outgoing Activation
+
         self.optimizer = Simple()
         self.isInput = isInput
         self.freeze = False
@@ -476,6 +554,9 @@ class Layer:
 
     def Observe(self, monitoring = False):
         activity = self.getActivity(modify=True)
+        deltaPAvg = np.mean(activity) - self.ActPAvg
+        self.ActPAvg += DELTA_TIME/50*(deltaPAvg) #For updating Gscale
+        self.snapshot["deltaPAvg"] = deltaPAvg
         self.phaseHist["plus"][:] = activity
         if monitoring:
             self.snapshot.update({"activity": activity,
@@ -502,6 +583,7 @@ class Layer:
             if not mesh.trainable: continue
             inLayer = mesh.inLayer # assume first mesh as input
             delta = self.rule(inLayer, self)
+            self.snapshot["delta"] = delta
             if self.batchMode:
                 self.deltas.append(delta)
                 if batchComplete:
@@ -562,7 +644,7 @@ class Layer:
     
 class ConductanceLayer(Layer):
     '''A layer type with a conductance based neuron model.'''
-    def __init__(self, length, activation=Sigmoid, learningRule=CHL, isInput=False, freeze=False, name=None):
+    def __init__(self, length, activation=Sigmoid(), learningRule=CHL, isInput=False, freeze=False, name=None):
         super().__init__(length, activation, learningRule, isInput, freeze, name)
 
     def getActivity(self, modify = False):
@@ -596,7 +678,7 @@ class GainLayer(ConductanceLayer):
     '''A layer type with a onductance based neuron model and a layer normalization
         mechanism that multiplies activity by a gain term to normalize the output vector.
     '''
-    def __init__(self, length, activation=Sigmoid, learningRule=CHL,
+    def __init__(self, length, activation=Sigmoid(), learningRule=CHL,
                  isInput=False, freeze=False, name=None, gainInit = 1, homeostaticMag = 1):
         self.gain = gainInit
         self.homeostaticMag = homeostaticMag
@@ -633,7 +715,7 @@ class SlowGainLayer(ConductanceLayer):
         vector. Gain mechanism in this neuron model is slow and is learned using
         the average magnitude over the epoch.
     '''
-    def __init__(self, length, activation=Sigmoid, learningRule=CHL,
+    def __init__(self, length, activation=Sigmoid(), learningRule=CHL,
                  isInput=False, freeze=False, name=None, gainInit = 1, homeostaticMag = 1, **kwargs):
         self.gain = gainInit
         self.homeostaticMag = homeostaticMag
@@ -686,12 +768,17 @@ class SlowGainLayer(ConductanceLayer):
 class RateCode(Layer):
     '''A layer type which assumes a rate code proportional to excitatory 
         conductance minus threshold conductance.'''
-    def __init__(self, length, activation=Sigmoid, learningRule=CHL,
-                 threshold = 0.75*(MAX-MIN), conductances = [DELTA_TIME, 1, 1],
+    def __init__(self, length, activation=Sigmoid(), learningRule=CHL,
+                 threshold = 0.5, revPot=[0.3, 1, 0.25], conductances = [0.1, 1, 1],
                  isInput=False, freeze=False, name=None):
         
         # Set hyperparameters relevant to rate coding
         self.threshold = threshold # threshold voltage
+
+        self.revPotL = revPot[0]
+        self.revPotE = revPot[1]
+        self.revPotI = revPot[2]
+
         self.leakCon = conductances[0] # leak conductance
         self.excCon = conductances[1] # scaling of excitatory conductance
         self.inhCon = conductances[2] # scaling of inhibitory conductance
@@ -703,33 +790,40 @@ class RateCode(Layer):
     def getActivity(self, modify = False):
         if self.modified == True or modify:
             # Settling dynamics of the excitatory/inhibitory conductances
-            self += -DELTA_TIME * self.excAct
-            self -= -DELTA_TIME * self.inhAct
             self.Integrate()
 
             # Calculate threshold conductance
-            inhCurr = self.inhAct*self.inhCon*(self.threshold-MIN)
-            leakCurr = self.leakCon*(self.threshold-MIN)
-            thresholdCon = (inhCurr+leakCurr)/(MAX-self.threshold)
+            inhCurr = self.inhAct*self.inhCon*(self.threshold-self.revPotI)
+            leakCurr = self.leakCon*(self.threshold-self.revPotL)
+            thresholdCon = (inhCurr+leakCurr)/(self.revPotE-self.threshold)
 
             # Calculate rate of firing from excitatory conductance
-            self.outAct[:] = self.act(self.excAct*self.excCon - thresholdCon)
+            deltaOut = DELTA_TIME*(self.act(self.excAct*self.excCon - thresholdCon)-self.outAct)
+            self.outAct[:] += deltaOut
             
             # Store snapshots for monitoring
             self.snapshot["excAct"] = self.excAct
             self.snapshot["totalCon"] = self.excAct-thresholdCon
             self.snapshot["thresholdCon"] = thresholdCon
             self.snapshot["inhCurr"] = inhCurr
+            self.snapshot["deltaOut"] = deltaOut # to determine convergence
 
             self.modified = False
         return self.outAct
     
     def Integrate(self):
+        # self.excAct[:] -= DELTA_TIME*self.excAct
+        # self.inhAct[:] -= DELTA_TIME*self.inhAct
+        self.excAct[:] = 0
+        self.inhAct[:] = 0
         for mesh in self.excMeshes:
-            self += DELTA_TIME * mesh.apply()[:len(self)]
+            # self += DELTA_TIME * mesh.apply()[:len(self)]
+            self += mesh.apply()[:len(self)]
 
         for mesh in self.inhMeshes:
-            self -= DELTA_TIME * mesh.apply()[:len(self)]
+            # self -= DELTA_TIME * mesh.apply()[:len(self)]
+            self -= mesh.apply()[:len(self)]
+
 
 class RecurNet(Net):
     '''A recurrent network with feed forward and feedback meshes
