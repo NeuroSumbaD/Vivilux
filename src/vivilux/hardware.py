@@ -42,12 +42,15 @@ except Exception as e:
 
 
 class HardMZI(MZImesh):
-    upperThreshold = 10
-    def __init__(self, *args, numDirections=5, updateMagnitude=0.01, **kwargs):
-        Mesh().__init__(*args, numDirections=numDirections, updateMagnitude=updateMagnitude, **kwargs)
+    upperThreshold = 4.5
+    availablePins = 20
+    def __init__(self, *args, updateMagnitude=0.01, **kwargs):
+        Mesh().__init__(*args, **kwargs)
 
         self.numUnits = int(self.size*(self.size-1)/2)
-        self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
+        self.voltages = np.random.rand(self.numUnits,2)*(HardMZI.upperThreshold/2) #bound to middle of range
+
+        self.outChannels = np.arange(0, self.size)
 
         self.modified = True
         self.get()
@@ -59,17 +62,75 @@ class HardMZI(MZImesh):
 
 
     def setParams(self, params):
-        return super().setParams(params)
+        ps = params[0]
+        self.voltages = self.BoundParams(ps)
+        for chan, volt in enumerate(self.voltages.flatten()):
+            ul.v_out(1, chan, ao_range, volt)
+
+    def testParams(self, params):
+        '''Temporarily set the params'''
+        for chan, volt in enumerate(params.flatten()):
+            ul.v_out(1, chan, ao_range, volt)
+
+    def resetParams(self):
+        for chan, volt in enumerate(self.voltages.flatten()):
+            ul.v_out(1, chan, ao_range, volt)
     
     def getParams(self):
-        return super().getParams()
+        return [self.voltages]
     
     def get(self, params=None):
-        return super().get(params)
+        '''Returns full mesh matrix.
+        '''
+        powerMatrix = np.zeros((self.size, self.size))
+        if params is not None: # calculate matrix using params
+            # return self.Gscale * self.psToMat(params[0])
+            self.testParams(params[0])
+            for chan in self.outChannels:
+                oneHot = np.zeros(self.outChannels.shape)
+                oneHot[int(chan)] = 1
+                InputGenerator(oneHot)
+                column = self.readOut()
+                powerMatrix[:,chan] = column
+            self.resetParams()
+
+        
+        if (self.modified == True): # only recalculate matrix when modified
+            for chan in self.outChannels:
+                oneHot = np.zeros(self.outChannels.shape)
+                oneHot[int(chan)] = 1
+                InputGenerator(oneHot)
+                column = self.readOut()
+                powerMatrix[:,chan] = column
+            self.set(powerMatrix)
+            self.modified = False
+        
+        return powerMatrix
     
-    def BoundParams(self):
+    def applyTo(self, data):
+        InputGenerator(data)
+        return self.readOut()
+    
+    def readOut(self):
+        with nidaqmx.Task() as task:
+            for k in self.outChannels:
+                task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(k),min_val=-0.0,
+                    max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
+            data = np.array(task.read(number_of_samples_per_channel=100))
+
+        return np.mean(data[:,10:],axis=1)
+    
+    def BoundParams(self, params):
         '''If a param is reaching some threshold of its upper limit, return to zero
             and step up to find equivalent param (according to its periodicity). Use
             binary search (somehow)
         '''
-        resetParams = self.getParams()[0] > HardMZI.upperThreshold
+        paramsToReset = params[0] > HardMZI.upperThreshold
+        if np.sum(paramsToReset) > 0: #some of the values
+            pass
+        else:
+            return params
+
+
+def InputGenerator(vector):
+    pass
