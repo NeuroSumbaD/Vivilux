@@ -245,7 +245,7 @@ class DiagMZI(MZImesh):
         return [self.phaseShifters, self.diagonals]
     
     def setParams(self, params):
-        self.phaseShifters = params[0]
+        self.phaseShifters = BoundTheta(params[0])
         self.diagonals = params[1]
 
 class SVDMZI(MZImesh):
@@ -316,7 +316,7 @@ class SVDMZI(MZImesh):
         return [self.phaseShifters, self.diagonals]
     
     def setParams(self, params):
-        self.phaseShifters = params[0]
+        self.phaseShifters = BoundTheta(params[0])
         self.diagonals = params[1]
         
 class phfbMesh(Mesh):
