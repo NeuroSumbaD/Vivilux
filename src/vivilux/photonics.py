@@ -177,18 +177,20 @@ class MZImesh(Mesh):
         # Backward step
         minusVectors = [param - stepVector for param, stepVector in zip(paramsList, stepVectors)]
         minusMatrix = self.get(minusVectors)
-        for col in range(self.size):
-            mask = np.zeros(self.size)
-            mask[col] = 1 # mask off contribution from a single input waveguide
+
+        derivativeMatrix = (plusMatrix-minusMatrix)/self.updateMagnitude
+        # for col in range(self.size):
+        #     mask = np.zeros(self.size)
+        #     mask[col] = 1 # mask off contribution from a single input waveguide
             
-            # isolate column and shape as column vector
-            detectedVectorPlus = np.square(np.abs(plusMatrix @ mask))
+        #     # isolate column and shape as column vector
+        #     detectedVectorPlus = np.square(np.abs(plusMatrix @ mask))
 
-            # isolate column and shape as column vector
-            detectedVectorMinus = np.square(np.abs(minusMatrix @ mask))
+        #     # isolate column and shape as column vector
+        #     detectedVectorMinus = np.square(np.abs(minusMatrix @ mask))
 
-            derivative = (detectedVectorPlus - detectedVectorMinus)/self.updateMagnitude
-            derivativeMatrix[:,col] = derivative
+        #     derivative = (detectedVectorPlus - detectedVectorMinus)/self.updateMagnitude
+        #     derivativeMatrix[:,col] = derivative
 
         # return flattened vectors for the directional derivatives and their unit vector directions
         return derivativeMatrix, stepVectors

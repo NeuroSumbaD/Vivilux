@@ -99,7 +99,7 @@ def matrixGradient(phaseShifters, stepVector = None, updateMagnitude=0.01):
         derivativeMatrix = (plusMatrix-minusMatrix)/updateMagnitude
         
 
-        return derivativeMatrix, stepVector
+        return derivativeMatrix, stepVector/updateMagnitude
 
 
 def getGradients(delta:np.ndarray, phaseShifters: np.ndarray, numDirections=5):
@@ -128,6 +128,8 @@ def magnitude(a):
     return np.sqrt(np.sum(np.square(a)))
 
 def stepGradient(delta: np.ndarray, phaseShifters: np.ndarray, eta=0.5, numDirections=5, numSteps=5):
+    '''Calculate gradients and step towards desired delta.
+    '''
     deltaFlat = delta.copy().flatten().reshape(-1,1)
     record = [magnitude(deltaFlat)]
 
@@ -135,7 +137,7 @@ def stepGradient(delta: np.ndarray, phaseShifters: np.ndarray, eta=0.5, numDirec
 
     newPs = phaseShifters.copy()
     for step in range(numSteps):
-        print(f"Step: {step}")  
+        # print(f"Step: {step}")  
         X, V = getGradients(delta, newPs, numDirections)
         # minimize least squares difference to deltas
         for iteration in range(numDirections):
@@ -154,25 +156,25 @@ def stepGradient(delta: np.ndarray, phaseShifters: np.ndarray, eta=0.5, numDirec
         predDelta = eta *  (X @ a)
         trueDelta = fieldToPower(toMat(newPs+eta*update)) - fieldToPower(toMat(newPs))
         newPs += eta * update
-        print("Correlation between update and derivative after step:")
-        print(correlate(trueDelta.flatten(), eta * predDelta.flatten()))
-        print("Correlation between update and target delta after step:")
-        print(correlate(deltaFlat.flatten(), predDelta.flatten()))
+        # print("Correlation between update and derivative after step:")
+        # print(correlate(trueDelta.flatten(), eta * predDelta.flatten()))
+        # print("Correlation between update and target delta after step:")
+        # print(correlate(deltaFlat.flatten(), predDelta.flatten()))
         deltaFlat -= trueDelta.flatten().reshape(-1,1)
         record.append(magnitude(deltaFlat))
-        print(f"Magnitude of delta: {magnitude(deltaFlat)}")
+        newMat = fieldToPower(toMat(newPs))
+        # print(f"Magnitude of delta: {magnitude(deltaFlat)}")
         if magnitude(deltaFlat) < 1e-3:
-            print(f"Break after {step} steps")
+            # print(f"Break after {step} steps")
             break
 
-        newMat = fieldToPower(toMat(newPs))
 
     return newMat, newPs, record
 
 
 reshape = mesh.reshapeParams
 
-newMat, newPs, record = stepGradient(delta, ps, eta=2, numSteps=2000, numDirections=10)
+newMat, newPs, record = stepGradient(delta, ps, eta=1, numSteps=2000, numDirections=10)
 
 print(f"Target delta: {delta}")
 print(f"Implemented delta: {newMat-mat}")
@@ -183,25 +185,39 @@ plt.xlabel("Iteration")
 plt.ylabel("Magnitude of delta")
 plt.show()
 
-numDeltas = 100
-magnitudes = np.logspace(-2.9,0, 100)
-numIter = []
-stdNumIter = []
-print("Testing magnitude vs number of iterations to converge")
-for mag in magnitudes:
-    deltas = [delta-np.mean(delta) for delta in np.random.rand(numDeltas,4,4)]
-    deltas = np.array([delta/magnitude(delta) for delta in deltas]) #normalize magnitudes
-    deltas *= mag
-    numIterMag = []
-    for delta in deltas:
-        newMat, newPs, record = stepGradient(delta, ps, eta=2, numSteps=2000, numDirections=10)
-        numIterMag.append(len(record))
 
-    numIter.append(np.mean(numIterMag))
-    stdNumIter.append(np.std(numIterMag))
+totNumIter = []
+totStdNumIter = []
+etas = [0.01, 0.05, 0.1, 0.25, 0.5, 1]
+fig = plt.figure()
+ax = plt.axes()
+ax.set_xscale("log")
+for eta in etas:
+    print(f"Solvings eta={eta}...")
+    numDeltas = 30
+    magnitudes = np.logspace(-2.9,-1, 50)
+    numIter = []
+    stdNumIter = []
+    eta = 1
+    print("Testing magnitude vs number of iterations to converge to delta < 1e-3")
+    for mag in magnitudes:
+        print(f"\tSolving magnitude={mag}...")
+        deltas = [delta-np.mean(delta) for delta in np.random.rand(numDeltas,4,4)]
+        deltas = np.array([delta/magnitude(delta) for delta in deltas]) #normalize magnitudes
+        deltas *= mag
+        numIterMag = []
+        for delta in deltas:
+            newMat, newPs, record = stepGradient(delta, ps, eta=eta, numSteps=2000, numDirections=10)
+            numIterMag.append(len(record))
 
-plt.errorbar(magnitudes, numIter, yerr=stdNumIter)
-plt.title("Number of iterations vs magnitude of delta")
+        numIter.append(np.mean(numIterMag))
+        stdNumIter.append(np.std(numIterMag))
+    totNumIter.append(numIter)
+    totStdNumIter.append(stdNumIter)
+    plt.errorbar(magnitudes, numIter, yerr=stdNumIter)
+
+plt.title(f"Number of iterations vs magnitude of delta (eta={eta})")
 plt.xlabel("Delta magnitude")
 plt.ylabel("Number of iterations")
+plt.legend(etas)
 plt.show()
