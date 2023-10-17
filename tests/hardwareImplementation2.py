@@ -48,12 +48,12 @@ meshArgs = {"mziMapping": mziMapping,
 
 netCHL_MZI = RecurNet([
         Layer(4, isInput=True),
-        GainLayer(4, learningRule=CHL),
-        Layer(1, learningRule=CHL)
+        Layer(4, learningRule=CHL),
     ], vl.hardware.HardMZI, FeedbackMesh=vl.photonics.phfbMesh,
     # optimizer = Adam,
     optimizer = Simple,
     optArgs = optArgs,
+    meshArgs=meshArgs,
     name = "Net_CHL(MZI)")
 
 
@@ -85,3 +85,7 @@ plt.title("Magnitude of delta vs iteration")
 plt.xlabel("Iteration")
 plt.ylabel("Magnitude of delta")
 plt.show()
+
+
+inGen.agilent.lasers_on([0,0,0,0])
+vl.hardware.DAC_Init()

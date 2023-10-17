@@ -6,12 +6,82 @@ import nidaqmx
 import nidaqmx.system
 from mcculw import ul
 from mcculw.device_info import DaqDeviceInfo
+from mcculw.enums import InterfaceType
 import pyvisa as visa
 
-try:
-    from examples.examples.console.console_examples_util import config_first_detected_device
-except ImportError:
-    from .console_examples_util import config_first_detected_device
+    
+def config_first_detected_device(board_num, dev_id_list=None):
+    """Adds the first available device to the UL.  If a types_list is specified,
+    the first available device in the types list will be add to the UL.
+
+    Parameters
+    ----------
+    board_num : int
+        The board number to assign to the board when configuring the device.
+
+    dev_id_list : list[int], optional
+        A list of product IDs used to filter the results. Default is None.
+        See UL documentation for device IDs.
+    """
+    ul.ignore_instacal()
+    devices = ul.get_daq_device_inventory(InterfaceType.ANY)
+    if not devices:
+        raise Exception('Error: No DAQ devices found')
+
+    print('Found', len(devices), 'DAQ device(s):')
+    for device in devices:
+        print('  ', device.product_name, ' (', device.unique_id, ') - ',
+              'Device ID = ', device.product_id, sep='')
+
+    device = devices[0]
+    if dev_id_list:
+        device = next((device for device in devices
+                       if device.product_id in dev_id_list), None)
+        if not device:
+            err_str = 'Error: No DAQ device found in device ID list: '
+            err_str += ','.join(str(dev_id) for dev_id in dev_id_list)
+            raise Exception(err_str)
+            
+            
+
+    # Add the first DAQ device to the UL with the specified board number
+    ul.create_daq_device(0, devices[0])
+    ul.create_daq_device(1, devices[1])
+    ul.create_daq_device(2, devices[2])
+    #ul.create_daq_device(3, devices[3])
+    
+# DAC initialization
+def DAC_Init():
+    use_device_detection = True
+    dev_id_list = []
+    board_num = 0
+     
+    try:
+        if use_device_detection:
+            config_first_detected_device(board_num, dev_id_list)
+    
+        daq_dev_info = DaqDeviceInfo(board_num)
+        if not daq_dev_info.supports_analog_output:
+            raise Exception('Error: The DAQ device does not support '
+                            'analog output')
+    
+        print('\nActive DAQ device: ', daq_dev_info.product_name, ' (',
+              daq_dev_info.unique_id, ')\n', sep='')
+    
+        ao_info = daq_dev_info.get_ao_info()
+        ao_range = ao_info.supported_ranges[0]
+        return ao_range
+    except Exception as e:
+        print('\n', e)
+
+ao_range = DAC_Init()
+    
+# ADC initialization
+system = nidaqmx.system.System.local()
+print("Driver version: ", system.driver_version)
+for device in system.devices:
+    print("Device:\n", device) 
+
 
 
 def correlate(a, b):
@@ -71,23 +141,22 @@ class Agilent8164():
 class HardMZI(MZImesh):
     upperThreshold = 4.5
     availablePins = 20
-    def __init__(self, *args, updateMagnitude=0.01, mziMappping=[], barMZI = [],
+    def __init__(self, *args, updateMagnitude=0.01, mziMapping=[], barMZI = [],
                  inChannels=[12,8,9,10], outChannels=None,
                  **kwargs):
-        Mesh().__init__(*args, **kwargs)
+        Mesh.__init__(self, *args, **kwargs)
 
         self.numUnits = int(self.size*(self.size-1)/2)
-        if len(mziMappping) == 0:
+        if len(mziMapping) == 0:
             raise ValueError("Must define MZI mesh mapping with list of "
                              "(board num, channel) mappings")
-        self.mziMapping = mziMappping
+        self.mziMapping = mziMapping
         # bound initial voltages to middle of range
         ## only use 6 phase shifters (for now)
         self.voltages = np.random.rand(self.numUnits,1)*(HardMZI.upperThreshold/2)
 
         self.outChannels = np.arange(0, self.size) if outChannels is None else outChannels
         self.inGen = InputGenerator(self.size, detectors=inChannels)
-        self.inGen.calibratePower()
         self.resetDelta = np.zeros((self.size))
 
         self.modified = True
@@ -105,7 +174,11 @@ class HardMZI(MZImesh):
         '''Takes a list of MZI->device mappingss and sets each MZI to the bar state.
         '''
         for device, chan, value in mzis:
-            ul.v_out(device, chan, ao_range,value)
+            print(f"Device: {device}, type: {type(device)}")
+            print(f"Chan: {chan}, type: {type(chan)}")
+            print(f"Value: {value}, type: {type(value)}")
+            print(f"AO_range: {ao_range}, type: {type(ao_range)}")
+            ul.v_out(device, chan, ao_range, value)
 
 
     def setParams(self, params):
@@ -133,8 +206,8 @@ class HardMZI(MZImesh):
         if params is not None: # calculate matrix using params
             # return self.Gscale * self.psToMat(params[0])
             self.testParams(params[0])
-            for chan in self.outChannels:
-                oneHot = np.zeros(self.outChannels.shape)
+            for chan in range(self.size):
+                oneHot = np.zeros(self.size)
                 oneHot[int(chan)] = 1
                 # first check min laser power
                 self.inGen(np.zeros(self.size))
@@ -149,8 +222,8 @@ class HardMZI(MZImesh):
 
         
         if (self.modified == True): # only recalculate matrix when modified
-            for chan in self.outChannels:
-                oneHot = np.zeros(self.outChannels.shape)
+            for chan in range(self.size):
+                oneHot = np.zeros(self.size)
                 oneHot[int(chan)] = 1
                 # first check min laser power
                 self.inGen(np.zeros(self.size))
@@ -303,7 +376,7 @@ class InputGenerator:
         self.maxMagnitude = limits[1]-limits[0]
         self.lowerLimit = limits[0]
         self.chanScalingTable = np.ones((50, size)) #initialize scaling table
-        self.calibratePower(verbose)
+        self.calibratePower()
 
     def calibratePower(self):
         '''Create a table for the scaling factors between power setting and the
@@ -326,13 +399,17 @@ class InputGenerator:
         for chan in range(self.size):
             intendedPower = vector[chan]
             scaling = self.chanScalingTable[chan]
+            # Find index for sorted insertion
             tableIndex = np.searchsorted(self.powers, vector[chan])
-            lowerPower = self.powers[tableIndex-1]
-            upperPower = self.powers[tableIndex]
-            lowerFactor = scaling[tableIndex-1]
-            upperFactor = scaling[tableIndex]
-            linInterpolation = (intendedPower-lowerPower)/(upperPower-lowerPower)
-            scaleFactors[chan] = (linInterpolation)*upperFactor + (1-linInterpolation)*lowerFactor
+            if tableIndex == 0 or tableIndex==len(self.powers):
+                scaleFactors[chan] = scaling[tableIndex] if tableIndex == 0 else scaling[tableIndex-1]
+            else:
+                lowerPower = self.powers[tableIndex-1] 
+                upperPower = self.powers[tableIndex] 
+                lowerFactor = scaling[tableIndex-1] 
+                upperFactor = scaling[tableIndex]
+                linInterpolation = (intendedPower-lowerPower)/(upperPower-lowerPower)
+                scaleFactors[chan] = (linInterpolation)*upperFactor + (1-linInterpolation)*lowerFactor
         return np.multiply(vector, scaleFactors)
 
     def scalePower(self, vector):
@@ -341,7 +418,8 @@ class InputGenerator:
             factors between channels.
         '''
         scaledVector = vector*self.maxMagnitude + self.lowerLimit
-        scaledVector = self.chanScaling(scaledVector)
+        if hasattr(self, "powers"):
+            scaledVector = self.chanScaling(scaledVector)
         return scaledVector
     
     def readDetectors(self):
@@ -361,28 +439,3 @@ class InputGenerator:
         if verbose:
             reading = self.readDetectors()
             print(f"Input detectors: {reading}, normalized: {reading/magnitude(reading)}")
-
-
-
-# DAC initialization
-
-use_device_detection = True
-dev_id_list = []
-board_num = 0
- 
-try:
-    if use_device_detection:
-        config_first_detected_device(board_num, dev_id_list)
-
-    daq_dev_info = DaqDeviceInfo(board_num)
-    if not daq_dev_info.supports_analog_output:
-        raise Exception('Error: The DAQ device does not support '
-                        'analog output')
-
-    print('\nActive DAQ device: ', daq_dev_info.product_name, ' (',
-          daq_dev_info.unique_id, ')\n', sep='')
-
-    ao_info = daq_dev_info.get_ao_info()
-    ao_range = ao_info.supported_ranges[0]
-except Exception as e:
-    print('\n', e)
