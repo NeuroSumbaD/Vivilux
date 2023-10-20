@@ -75,12 +75,13 @@ class RingOscillator(Layer):
         # Initialize layer activities
         self.excAct = np.zeros(length) # linearly integrated dendritic inputs (internal Activation)
         self.inhAct = np.zeros(length)
-        self.outAct = np.zeros(length)
+        self.outAct = np.zeros(length).astype(bool)
         self.counter = np.array(self.offset) # counts steps since last flip
         self.modified = True
         # Empty initial excitatory and inhibitory meshes
         self.excMeshes: list[Mesh] = []
-        self.inhMeshes: list[Mesh] = [] 
+        self.inhMeshes: list[Mesh] = []
+        self.EXT = np.ones(length).astype(bool)
         
         self.freeze = False
         self.name =  f"OSC_LAYER_{Layer.count}" if name == None else name
@@ -92,11 +93,15 @@ class RingOscillator(Layer):
             self.Integrate()
             DET = self.act(self.excAct) > 0.5 # TIA output above logical threshold
             EXT = np.logical_not(np.logical_and(DET, self.EN))
+            fallingEdge = np.logical_and(self.EXT, np.logical_not(EXT))
+            self.EXT = EXT
             # Calculate output activity
             boolAct = self.outAct.astype(bool)
             self.counter +=1
             flipMask = self.counter > np.floor(self.period/2)
-            self.counter *= np.logical_or(np.logical_not(flipMask), np.logical_not(EXT)) # reset counter
+            # reset counter each time falling edge or flip is true
+            reset = np.logical_or(fallingEdge, flipMask)
+            self.counter *= np.logical_not(reset) 
             internalOscillation = np.logical_xor(flipMask, boolAct)
             externalOscillation = np.logical_and(EXT, internalOscillation)
             self.outAct = externalOscillation
@@ -104,11 +109,13 @@ class RingOscillator(Layer):
         return self.outAct
     
     def Integrate(self):
+        self.excAct = np.zeros(len(self))
+        self.inhAct = np.zeros(len(self))
         for mesh in self.excMeshes:
-            self.excAct += DELTA_TIME * mesh.apply()[:len(self)]
+            self.excAct += mesh.apply()[:len(self)]
 
         for mesh in self.inhMeshes:
-            self.inhAct += -DELTA_TIME * mesh.apply()[:len(self)]
+            self.inhAct += mesh.apply()[:len(self)]
 
     
     def setEN(self, EN: np.ndarray):

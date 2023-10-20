@@ -5,7 +5,7 @@ from vivilux import photonics
 import numpy as np
 import matplotlib.pyplot as plt
 
-offsets = [0, 3, 7, 5]
+offsets = [1, 6, 7, 5]
 EN = [0,0,0,0]
 
 ringOscillator = ising.RingOscillator(4, offset=offsets, EN=EN)
