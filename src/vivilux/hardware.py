@@ -9,6 +9,11 @@ from mcculw.device_info import DaqDeviceInfo
 from mcculw.enums import InterfaceType
 import pyvisa as visa
 
+from time import sleep
+
+SLEEP = 0.5 # seconds
+LONG_SLEEP = 0.5 # seconds
+
     
 def config_first_detected_device(board_num, dev_id_list=None):
     """Adds the first available device to the UL.  If a types_list is specified,
@@ -91,6 +96,9 @@ def correlate(a, b):
 
 def magnitude(a):
     return np.sqrt(np.sum(np.square(a)))
+
+def L1norm(a):
+    return np.sum(np.abs(a))
     
 class Agilent8164():
     def __init__(self, port='GPIB0::20::INSTR'):
@@ -139,7 +147,8 @@ class Agilent8164():
         self.main.write('sour4:pow:stat '+str(inpt[3]))
 
 class HardMZI(MZImesh):
-    upperThreshold = 4.5
+    upperThreshold = 5.5
+    upperLimit = 6
     availablePins = 20
     def __init__(self, *args, updateMagnitude=0.01, mziMapping=[], barMZI = [],
                  inChannels=[12,8,9,10], outChannels=None,
@@ -157,39 +166,45 @@ class HardMZI(MZImesh):
 
         self.outChannels = np.arange(0, self.size) if outChannels is None else outChannels
         self.inGen = InputGenerator(self.size, detectors=inChannels)
-        self.resetDelta = np.zeros((self.size))
+        self.resetDelta = np.zeros((self.size, self.size))
+        self.makeBar(barMZI)
 
         self.modified = True
-        self.get()
+        initMatrix = self.get()
+        print('Initialized matrix with voltages: \n', self.voltages)
+        print('Matrix: \n', initMatrix)
 
         # self.numDirections = numDirections
         numParams = int(np.concatenate([param.flatten() for param in self.getParams()]).size)
         self.numDirections = int(np.round(0.8*numParams)) # arbitrary guess for how many directions are needed
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
 
-        self.makeBar(barMZI)
 
 
     def makeBar(self, mzis):
         '''Takes a list of MZI->device mappingss and sets each MZI to the bar state.
         '''
         for device, chan, value in mzis:
-            print(f"Device: {device}, type: {type(device)}")
-            print(f"Chan: {chan}, type: {type(chan)}")
-            print(f"Value: {value}, type: {type(value)}")
-            print(f"AO_range: {ao_range}, type: {type(ao_range)}")
+            # print(f"Device: {device}, type: {type(device)}")
+            # print(f"Chan: {chan}, type: {type(chan)}")
+            # print(f"Value: {value}, type: {type(value)}")
+            # print(f"AO_range: {ao_range}, type: {type(ao_range)}")
             ul.v_out(device, chan, ao_range, value)
 
 
     def setParams(self, params):
         ps = params[0]
-        self.voltages = self.BoundParams(ps)
+        assert(ps.size == self.numUnits), f"Error: {ps.size} != {self.numUnits}"
+        self.voltages = self.BoundParams(params)[0]
         for (dev, chan), volt in zip(self.mziMapping, self.voltages.flatten()):
             ul.v_out(dev, chan, ao_range, volt)
+            
+        self.modified = True
 
     def testParams(self, params):
         '''Temporarily set the params'''
         for (dev, chan), volt in zip(self.mziMapping, params.flatten()):
+            assert volt >= 0 and volt <= self.upperLimit, f"ERROR voltage out of bounds: {params}"
             ul.v_out(dev, chan, ao_range, volt)
 
     def resetParams(self):
@@ -199,40 +214,85 @@ class HardMZI(MZImesh):
     def getParams(self):
         return [self.voltages]
     
+    def measureMatrix(self, powerMatrix):
+        for chan in range(self.size):
+            oneHot = np.zeros(self.size)
+            oneHot[chan] = 1
+            scale = 350/np.max(self.inGen.scalePower(oneHot))
+            # first check min laser power
+            self.inGen(np.zeros(self.size), scale=scale)
+            offset = self.readOut()
+            offset /= L1norm(self.inGen.readDetectors()) 
+            # print(f"Offset readout: {offset}")
+            # now offset input vector and normalize result
+            # print(f"Get using one-hot: {oneHot}")
+            self.inGen(oneHot, scale=scale)
+            columnReadout = self.readOut()
+            columnReadout /= L1norm(self.inGen.readDetectors()) 
+            # print(f"Column readout: {columnReadout}")
+            column = np.maximum(columnReadout - offset, 0) # assume negative values are noise
+            norm = np.sum(np.abs(column)) #L1 norm
+            # print(self.getParams())
+            assert norm != 0, f"ERROR: Zero norm on chan={chan} with scale={scale}. Column readout:\n{columnReadout}\nOffset:\n{offset}"
+            # column /= norm
+            # column /= magnitude(column) #L2 norm
+            powerMatrix[:,chan] = column
+        # print(f"Current voltages: {self.voltages}")
+        # print("Power matrix before invScatter:")
+        # print(np.round(powerMatrix,2))
+        # powerMatrix = powerMatrix @ self.inGen.invScatter#/np.max(np.abs(self.inGen.invScatter))
+        # print("Power matrix after invScatter:")
+        # print(np.round(powerMatrix,2))
+        for col in range(len(powerMatrix)): # re-norm the output
+            powerMatrix[:,col] /= L1norm(powerMatrix[:,col])
+        # print("Power matrix after L1 column norm:")
+        # print(np.round(powerMatrix,2))
+        return powerMatrix
+            
     def get(self, params=None):
         '''Returns full mesh matrix.
         '''
         powerMatrix = np.zeros((self.size, self.size))
         if params is not None: # calculate matrix using params
             # return self.Gscale * self.psToMat(params[0])
+            # print(f'Get params={params}')
+            assert(params[0].size ==self.numUnits), f"Error: {params[0].size} != {self.numUnits}, params[0]"
+            assert params[0].max() <= self.upperLimit and params[0].min() >= 0, f"Error params out of bounds: {params}"
             self.testParams(params[0])
-            for chan in range(self.size):
-                oneHot = np.zeros(self.size)
-                oneHot[int(chan)] = 1
-                # first check min laser power
-                self.inGen(np.zeros(self.size))
-                offset = self.readOut()
-                # now offset input vector and normalize result
-                self.inGen(oneHot)
-                column = self.readOut() - offset
-                column /= magnitude(column)
-                powerMatrix[:,chan] = column
+            # for chan in range(self.size):
+            #     oneHot = np.zeros(self.size)
+            #     oneHot[int(chan)] = 1
+            #     scale = 1#350/np.max(self.inGen.scalePower(oneHot))
+            #     # first offset min laser power
+            #     self.inGen(np.zeros(self.size), scale=scale)
+            #     offset = self.readOut()
+            #     offset /= L1norm(self.inGen.readDetectors()) 
+            #     # print(f"Offset readout: {offset}")
+            #     # print(f"Offset readout: {np.sum(offset)}")
+            #     # now offset input vector and normalize result
+            #     self.inGen(oneHot, scale=scale)
+            #     columnReadout = self.readOut()
+            #     columnReadout /= L1norm(self.inGen.readDetectors()) 
+            #     # print(f"Column readout: {columnReadout}")
+            #     # print(f"Column readout: {np.sum(columnReadout)}")
+
+            #     # column = np.maximum(columnReadout - offset, -0.05)
+            #     column = np.maximum(columnReadout - offset, 0) # assume negative values are noise
+            #     norm = np.sum(np.abs(column)) #L1 norm
+            #     assert norm != 0, f"ERROR: Zero norm on chan={chan} with scale={scale}. Column readout:\n{columnReadout}\nOffset:\n{offset}"
+            #     print(params)
+            #     # column /= norm
+            #     # assert(np.any(np.isnan(column))), f"Error: column readout: {columnReadout}, column: {column}"
+            #     # column /= magnitude(column) #L2 norm
+            #     powerMatrix[:,chan] = column
+            # powerMatrix = powerMatrix @ self.inGen.invScatter
+            powerMatrix = self.measureMatrix(powerMatrix)
             self.resetParams()
             return powerMatrix
 
         
         if (self.modified == True): # only recalculate matrix when modified
-            for chan in range(self.size):
-                oneHot = np.zeros(self.size)
-                oneHot[int(chan)] = 1
-                # first check min laser power
-                self.inGen(np.zeros(self.size))
-                offset = self.readOut()
-                # now offset input vector and normalize result
-                self.inGen(oneHot)
-                column = self.readOut()
-                column /= magnitude(column) #normalize readout
-                powerMatrix[:,chan] = column
+            powerMatrix = self.measureMatrix(powerMatrix)
             self.set(powerMatrix)
             self.modified = False
         else:
@@ -249,57 +309,95 @@ class HardMZI(MZImesh):
         return outData
     
     def readOut(self):
+        if not hasattr(self, "detectorOffset"):
+            self.inGen.agilent.lasers_on(np.zeros(self.size))
+            sleep(LONG_SLEEP)
+            with nidaqmx.Task() as task:
+                for chan in self.outChannels:
+                    task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
+                    max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
+                data = np.array(task.read(number_of_samples_per_channel=100))
+                data = np.mean(data[:,10:],axis=1)
+            self.detectorOffset = data
+            self.inGen.agilent.lasers_on(np.ones(self.size))
+            sleep(LONG_SLEEP)
         with nidaqmx.Task() as task:
             for k in self.outChannels:
                 task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(k),min_val=-0.0,
                     max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
             data = np.array(task.read(number_of_samples_per_channel=100))
-
-        return np.mean(data[:,10:],axis=1)
+            data = np.mean(data[:,10:],axis=1)
+        return np.maximum((self.detectorOffset - data), 0)/220*1e3
     
     def BoundParams(self, params):
         '''If a param is reaching some threshold of its upper limit, return to zero
             and step up to find equivalent param (according to its periodicity). Use
             binary search (somehow)?
         '''
-        paramsToReset = params[0] > HardMZI.upperThreshold
+        # params[0] = np.maximum(params[0],0)
+        paramsToReset =  params[0] > HardMZI.upperThreshold
+        paramsToReset = np.logical_or(params[0] < 0, paramsToReset)
+        # print(f"paramsToReset: {paramsToReset}")
         if np.sum(paramsToReset) > 0: #check if any values need resetting
             matrix = self.get()
-            params[0][paramsToReset] = 0
+            numParams = np.sum(paramsToReset)
+            randomReInit = 2*(np.random.rand(numParams)-0.5) + (self.upperThreshold/2)
+            params[0][paramsToReset] = randomReInit
             self.resetDelta = self.get(params) - matrix
+            print("Reset delta:", self.resetDelta, ", magnitude: ", magnitude(self.resetDelta))
 
         return params
     
-    def matrixGradient(self, voltages: np.ndarray, stepVector = None, updateMagnitude=0.01):
+    def matrixGradient(self, voltages: np.ndarray, stepVector = None):
         '''Calculates the gradient of the matrix with respect to the phase
             shifters in the MZI mesh. This gradient is with respect to the
             magnitude of an array of detectors that serves as neural input.
 
             Returns derivativeMatrix, stepVector
         '''
-        
-        stepVector = np.random.rand(*voltages.shape) if stepVector is None else stepVector
+        updateMagnitude = self.updateMagnitude
+        stepVector = (np.random.rand(*voltages.shape)-0.5) if stepVector is None else stepVector
+        # stepVector = np.sign(np.random.rand(*voltages.shape)-0.5) if stepVector is None else stepVector
         randMagnitude = np.sqrt(np.sum(np.square(stepVector)))
         stepVector = stepVector/randMagnitude
         stepVector = stepVector*updateMagnitude
+        # Push step vector within the bounds
+        diffToMax = self.upperLimit - voltages
+        stepVector = np.minimum(stepVector, diffToMax) # prevent plus going over
+        stepVector = np.maximum(stepVector, -diffToMax) # prevent minus going over
+        stepVector = np.maximum(stepVector, -voltages) # prevent minus going under
+        stepVector = np.minimum(stepVector, voltages) # prevent plus going under
+            
+        # print(stepVector)
         
         currMat = self.get()
         derivativeMatrix = np.zeros(currMat.shape)
 
+        # print("\t\tCurrent Voltages:\n\t\t", str(voltages).replace('\n','\n\t\t'))
         # Forward step
-        plusVectors = voltages + stepVector 
-        plusMatrix = self.get(plusVectors)
+        plusVectors = voltages + stepVector
+        assert (plusVectors.max() <= self.upperLimit or plusVectors.min() >= 0), f"Error: plus vector out of bounds: {plusVectors}"
+        # print("\t\tForward step:\n\t\t", str(plusVectors).replace('\n','\n\t\t'))
+        plusMatrix = self.get([plusVectors])
         # Backward step
         minusVectors = voltages - stepVector
-        minusMatrix = self.get(minusVectors)
+        assert (minusVectors.max() <= self.upperLimit or minusVectors.min() >= 0), f"Error: minus vector out of bounds: {minusVectors}"
+        # print("\t\tBackward step:\n\t\t", str(minusVectors).replace('\n','\n\t\t'))
+        minusMatrix = self.get([minusVectors])
 
-        derivativeMatrix = (plusMatrix-minusMatrix)/updateMagnitude
+        differenceMatrix = plusMatrix-minusMatrix
+        # diffMatStr = str(differenceMatrix).replace('\n','\n\t\t')
+        # print(f"\t\tDifference matrix:\n\t\t{diffMatStr}"
+        #       "\n\t\tmagnitude:"
+        #       f" {magnitude(differenceMatrix.flatten())}")
+        derivativeMatrix = differenceMatrix/updateMagnitude
         
 
         return derivativeMatrix, stepVector/updateMagnitude
 
 
-    def getGradients(self, delta:np.ndarray, voltages: np.ndarray, numDirections=5):
+    def getGradients(self, delta:np.ndarray, voltages: np.ndarray,
+                     numDirections=5, verbose=False):
         # Make column vectors for deltas and theta
         m, n = delta.shape # presynaptic, postsynaptic array lengths
         deltaFlat = delta.flatten().reshape(-1,1)
@@ -310,6 +408,8 @@ class HardMZI(MZImesh):
         
         # Calculate directional derivatives
         for i in range(numDirections):
+            if verbose:
+                print(f"\tGetting derivative {i}")
             tempx, tempv= self.matrixGradient(voltages)
             tempv = np.concatenate([param.flatten() for param in tempv])
             X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()
@@ -321,16 +421,17 @@ class HardMZI(MZImesh):
                      numSteps=5, earlyStop = 1e-3, verbose=False):
         '''Calculate gradients and step towards desired delta.
         '''
-        voltages = self.voltages
+
         deltaFlat = delta.copy().flatten().reshape(-1,1)
         self.record = [magnitude(deltaFlat)]
+        params=[]
+        matrices = []
 
-
-        newPs = voltages.copy()
         for step in range(numSteps):
+            newPs = self.voltages.copy()
             currMat = self.get()
-            print(f"Step: {step}")  
-            X, V = self.getGradients(delta, newPs, numDirections)
+            print(f"Step: {step}, magnitude delta = {magnitude(deltaFlat)}")  
+            X, V = self.getGradients(delta, newPs, numDirections, verbose)
             # minimize least squares difference to deltas
             for iteration in range(numDirections):
                     xtx = X.T @ X
@@ -343,11 +444,13 @@ class HardMZI(MZImesh):
                         V = V[:,:-1]
                         continue
 
-            update = (V @ a).reshape(-1,2)
+            update = (V @ a).reshape(-1,1)
             scaledUpdate = eta*update
-
-            self.setParams(scaledUpdate) # sets the parameters and bounds if necessary
+            self.setParams([newPs + scaledUpdate]) # sets the parameters and bounds if necessary
+            params.append(newPs + scaledUpdate)
+            print("Voltages: ", self.voltages)
             trueDelta = self.get() - currMat
+            matrices.append(trueDelta + currMat)
             
             if verbose:
                 predDelta = eta *  (X @ a)
@@ -356,18 +459,18 @@ class HardMZI(MZImesh):
                 print("Correlation between update and target delta after step:")
                 print(correlate(deltaFlat.flatten(), predDelta.flatten()))
             deltaFlat -= trueDelta.flatten().reshape(-1,1) # substract update
-            deltaFlat -= self.resetDelta.flatten().reshape(-1.1) # subtract any delta due to voltage reset
+            deltaFlat -= self.resetDelta.flatten().reshape(-1,1) # subtract any delta due to voltage reset
             self.resetDelta = np.zeros((self.size, self.size)) # reset the reset delta
             self.record.append(magnitude(deltaFlat))
             if verbose: print(f"Magnitude of delta: {magnitude(deltaFlat)}")
             if magnitude(deltaFlat) < earlyStop:
-                print(f"Break after {step} steps")
+                print(f"Break after {step} steps, magnitude of delta: {magnitude(deltaFlat)}")
                 break
-        return self.record
+        return self.record, params, matrices
 
 
 class InputGenerator:
-    def __init__(self, size=4, detectors = [12,8,9,10], limits=[100,350], verbose=False) -> None:
+    def __init__(self, size=4, detectors = [12,8,9,10], limits=[160,350], verbose=False) -> None:
         self.size = size
         self.agilent = Agilent8164()
         self.agilent.lasers_on()
@@ -375,67 +478,122 @@ class InputGenerator:
         self.limits=limits
         self.maxMagnitude = limits[1]-limits[0]
         self.lowerLimit = limits[0]
-        self.chanScalingTable = np.ones((50, size)) #initialize scaling table
-        self.calibratePower()
-
-    def calibratePower(self):
-        '''Create a table for the scaling factors between power setting and the
-            true measured values detected on chip.
-        '''
-        self.powers = self.scalePower(np.arange(0,1,50))
-
-        for index, power in enumerate(self.powers):
-            vector = np.ones(self.size) * power
-            self.__call__(vector)
-            detectors = self.readDetectors()
-            self.chanScalingTable[index,:] = np.min(detectors)/detectors # scaling factors
-
-    def chanScaling(self, vector):
-        '''Accounts for differing coupling factors when putting an input into
-            the MZI mesh. The scaling table must first be generated by running 
-            `calibratePower()`.
-        '''
-        scaleFactors = np.ones(self.size)
+        self.chanScalingTable = np.ones((20, size)) #initialize scaling table
+        self.calibrated = False
+        # self.calibratePower()
+        self.readDetectors()
+        sleep(SLEEP)
+        self.calculateScatter()
+        
+    def calculateScatter(self):
+        print("Calculating the scatter matrix...")
+        Y = np.zeros((self.size,self.size))
+        Xinv = np.zeros((self.size,self.size))
         for chan in range(self.size):
-            intendedPower = vector[chan]
-            scaling = self.chanScalingTable[chan]
-            # Find index for sorted insertion
-            tableIndex = np.searchsorted(self.powers, vector[chan])
-            if tableIndex == 0 or tableIndex==len(self.powers):
-                scaleFactors[chan] = scaling[tableIndex] if tableIndex == 0 else scaling[tableIndex-1]
-            else:
-                lowerPower = self.powers[tableIndex-1] 
-                upperPower = self.powers[tableIndex] 
-                lowerFactor = scaling[tableIndex-1] 
-                upperFactor = scaling[tableIndex]
-                linInterpolation = (intendedPower-lowerPower)/(upperPower-lowerPower)
-                scaleFactors[chan] = (linInterpolation)*upperFactor + (1-linInterpolation)*lowerFactor
-        return np.multiply(vector, scaleFactors)
+            oneHot = np.zeros(self.size)
+            oneHot[chan] = 1
+            print("\tOne-hot: ", oneHot)
+            self.agilent.lasers_on(oneHot.astype(int))
+            sleep(LONG_SLEEP)
+            self.agilent.laserpower(oneHot*350)
+            sleep(LONG_SLEEP)
+            Y[:,chan] = self.readDetectors()
+            Xinv[:,chan] = oneHot/350
+            sleep(LONG_SLEEP)
+        # print("Detector outputs:\n", Y)
+        self.scatter = Y @ Xinv
+        # print("Scatter matrix:\n", self.scatter)
+        self.invScatter = np.linalg.inv(self.scatter)
+        print("Inverse scatter matrix:\n", self.invScatter)
+        # maxS = np.max(self.invScatter)
+        # minS = np.min(self.invScatter)
+        # self.a = 250/(maxS-minS)
+        # self.b = 350 - self.a*maxS
+        self.a = 350-100
+        self.b = 100
+        
+            
+
+    # def calibratePower(self):
+    #     '''Create a table for the scaling factors between power setting and the
+    #         true measured values detected on chip.
+    #     '''
+    #     print("Calibrating power...")
+    #     self.powers = np.linspace(0,1,20)
+
+    #     for index, power in enumerate(self.powers):
+    #         vector = np.ones(self.size) * power
+    #         self.__call__(vector)
+    #         detectors = self.readDetectors()
+    #         # print(f"\tDetector values: {detectors}")
+    #         self.chanScalingTable[index,:] = np.min(detectors)/detectors # scaling factors
+    #     print("Scaling table:")
+    #     print(self.chanScalingTable)
+    #     self.calibrated = True
+
+    # def chanScaling(self, vector):
+    #     '''Accounts for differing coupling factors when putting an input into
+    #         the MZI mesh. The scaling table must first be generated by running 
+    #         `calibratePower()`.
+    #     '''
+    #     scaleFactors = np.ones(self.size)
+    #     for chan in range(self.size):
+    #         intendedPower = vector[chan]
+    #         scaling = self.chanScalingTable[:, chan]
+    #         # Find index for sorted insertion
+    #         tableIndex = np.searchsorted(self.powers, intendedPower)
+    #         if tableIndex == 0 or tableIndex==len(self.powers):
+    #             scaleFactors[chan] = scaling[tableIndex] if tableIndex == 0 else scaling[tableIndex-1]
+    #         else:
+    #             lowerPower = self.powers[tableIndex-1] 
+    #             upperPower = self.powers[tableIndex] 
+    #             lowerFactor = scaling[tableIndex-1] 
+    #             upperFactor = scaling[tableIndex]
+    #             linInterpolation = (intendedPower-lowerPower)/(upperPower-lowerPower)
+    #             scaleFactors[chan] = (linInterpolation)*upperFactor + (1-linInterpolation)*lowerFactor
+    #     return np.multiply(vector, scaleFactors)
 
     def scalePower(self, vector):
         '''Takes in a vector with values on the range [0,1] and scales
             according to the max and min of the lasers and the attenuation
             factors between channels.
         '''
-        scaledVector = vector*self.maxMagnitude + self.lowerLimit
-        if hasattr(self, "powers"):
-            scaledVector = self.chanScaling(scaledVector)
-        return scaledVector
+        # scaledVector = self.a * (self.invScatter @ vector)
+        scaledVector = self.a * vector
+        # if self.calibrated:
+        #     scaledVector = self.chanScaling(scaledVector)
+        return scaledVector + self.b
     
     def readDetectors(self):
+        if not hasattr(self, "offset"):
+            self.agilent.lasers_on(np.zeros(self.size))
+            sleep(LONG_SLEEP)
+            with nidaqmx.Task() as task:
+                for chan in self.detectors:
+                    task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
+                    max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
+                data = np.array(task.read(number_of_samples_per_channel=100))
+                data = np.mean(data[:,10:],axis=1)
+            self.offset = data
+            self.agilent.lasers_on(np.ones(self.size))
+            sleep(LONG_SLEEP)
         with nidaqmx.Task() as task:
             for chan in self.detectors:
                 task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
                 max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
             data = np.array(task.read(number_of_samples_per_channel=100))
             data = np.mean(data[:,10:],axis=1)
-        return data
+        return np.maximum((self.offset - data),0)/220*1e3
 
-    def __call__(self, vector, verbose=False, **kwds: Any) -> Any:
+    def __call__(self, vector, verbose=False, scale=1, **kwds: Any) -> Any:
         '''Sets the lasers powers according to the desired vector
         '''
+
         vector = self.scalePower(vector)
+        vector *= scale
+        if verbose: print(f"Inputting power: {vector}")
         self.agilent.laserpower(vector)
+        sleep(SLEEP)
         if verbose:
             reading = self.readDetectors()
             print(f"Input detectors: {reading}, normalized: {reading/magnitude(reading)}")
