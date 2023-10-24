@@ -38,6 +38,17 @@ barMZI = [(1,4,4.4),
           (2,1,3.4)
           ]
 
+# mziMapping = [(2,0),
+#               (2,1),
+#               (2,3),
+#               (2,5),
+#               (2,6),
+#               (1,0)
+#               ]
+# barMZI = [(2,4,4.4),
+#           (1,1,3.4)
+#           ]
+
 optArgs = {"lr" : 0.1,
             "beta1" : 0.9,
             "beta2": 0.999,
@@ -65,7 +76,7 @@ netCHL_MZI = RecurNet([
 
 
 mesh = netCHL_MZI.layers[1].excMeshes[0]
-# mesh.setParams([np.array([4,4,4,4,4,4]).reshape(6,1)])
+mesh.setParams([np.array([0,0,0,0,0,0]).reshape(6,1)])
 
 #%%
 # TEST INPUT GENERATOR
@@ -102,27 +113,27 @@ inGen = mesh.inGen
 # zeroMatrix = mesh.get()
 # print(zeroMatrix)
 #%%
-mesh.setParams([np.array([2,2,2,2,2,2]).reshape(6,1)])
-startMatrix = mesh.get()
-print(f"Initial (random) matrix:\n{startMatrix}")
-print(f"Initial voltages: {mesh.getParams()}")
-targetMatrix = mesh.get([np.ones((6,1))*4])
-print("Target matrix:\n", targetMatrix)
-delta = targetMatrix - startMatrix
-print(f"Delta magnitude: {vl.hardware.magnitude(delta)}")
+# mesh.setParams([np.array([2,2,2,2,2,2]).reshape(6,1)])
+# startMatrix = mesh.get()
+# print(f"Initial (random) matrix:\n{startMatrix}")
+# print(f"Initial voltages: {mesh.getParams()}")
+# targetMatrix = np.array([[0.,1.,0.,0.],[0.,0.,1.,0],[0.,0.,0.,1.],[1.,0.,0.,0]])#mesh.get([np.ones((6,1))*4])
+# print("Target matrix:\n", targetMatrix)
+# delta = targetMatrix - startMatrix
+# print(f"Delta magnitude: {vl.hardware.magnitude(delta)}")
 
-print("-"*80,"\n\nSTARTING DELTA IMPLEMENTATION\n\n")
-start = time()
-record, params, matrices = mesh.stepGradient(delta, eta=1, numDirections=3, numSteps=10, verbose=True)
-# record, params, matrices = mesh.stepGradient(delta, eta=10, numDirections=1, numSteps=30, verbose=True)
-end = time()
-print("Execution took: ", timedelta(seconds=(end-start)))
+# print("-"*80,"\n\nSTARTING DELTA IMPLEMENTATION\n\n")
+# start = time()
+# record, params, matrices = mesh.stepGradient(delta, eta=1, numDirections=2, numSteps=3, verbose=True)
+# # record, params, matrices = mesh.stepGradient(delta, eta=10, numDirections=1, numSteps=30, verbose=True)
+# end = time()
+# print("Execution took: ", timedelta(seconds=(end-start)))
 
-plt.plot(record)
-plt.title("Magnitude of delta vs iteration (Hardware)")
-plt.xlabel("Iteration")
-plt.ylabel("Magnitude of delta")
-plt.show()
+# plt.plot(record)
+# plt.title("Magnitude of delta vs iteration (Hardware)")
+# plt.xlabel("Iteration")
+# plt.ylabel("Magnitude of delta")
+# plt.show()
 
 # vl.hardware.DAC_Init()
 # inGen.agilent.lasers_on([0,0,0,0])

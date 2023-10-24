@@ -448,7 +448,7 @@ class HardMZI(MZImesh):
             scaledUpdate = eta*update
             self.setParams([newPs + scaledUpdate]) # sets the parameters and bounds if necessary
             params.append(newPs + scaledUpdate)
-            print("Voltages: ", self.voltages)
+            # print("Voltages: ", self.voltages)
             trueDelta = self.get() - currMat
             matrices.append(trueDelta + currMat)
             

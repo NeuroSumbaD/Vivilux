@@ -1,15 +1,13 @@
 import vivilux as vl
 import vivilux.photonics
-from vivilux import FFFB, RecurNet, Layer, GainLayer, ConductanceLayer, AbsMesh
-from vivilux.learningRules import CHL, GeneRec, ByPass, Nonsense
-from vivilux.optimizers import Adam, Momentum, Simple
+from vivilux import RecurNet, Layer
+from vivilux.learningRules import CHL
+from vivilux.optimizers import Simple
 
 import matplotlib.pyplot as plt
 import numpy as np
 np.random.seed(seed=0)
 
-import pandas as pd
-import seaborn as sns
 from sklearn import datasets
 
 numSamples = 1
@@ -31,7 +29,7 @@ optArgs = {"lr" : 0.1,
 
 netCHL_MZI = RecurNet([
         Layer(4, isInput=True),
-        GainLayer(4, learningRule=CHL),
+        Layer(4, learningRule=CHL),
         Layer(1, learningRule=CHL)
     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
     # optimizer = Adam,
@@ -70,7 +68,10 @@ def fieldToPower(weights):
     return np.square(np.abs(weights))
 
 mat = fieldToPower(vToMat(v))
-targetMat = fieldToPower(vToMat(v2))
+targetMat = np.array([[0,0,0,1],
+                      [0,0,1,0],
+                      [0,1,0,0],
+                      [1,0,0,0]])
 delta = targetMat - mat
 
 def matrixGradient(phaseShifters, stepVector = None, updateMagnitude=0.01):
@@ -156,10 +157,10 @@ def stepGradient(delta: np.ndarray, phaseShifters: np.ndarray, eta=0.5, numDirec
         predDelta = eta *  (X @ a)
         trueDelta = fieldToPower(toMat(newPs+eta*update)) - fieldToPower(toMat(newPs))
         newPs += eta * update
-        # print("Correlation between update and derivative after step:")
-        # print(correlate(trueDelta.flatten(), eta * predDelta.flatten()))
-        # print("Correlation between update and target delta after step:")
-        # print(correlate(deltaFlat.flatten(), predDelta.flatten()))
+        print("Correlation between update and derivative after step:")
+        print(correlate(trueDelta.flatten(), eta * predDelta.flatten()))
+        print("Correlation between update and target delta after step:")
+        print(correlate(deltaFlat.flatten(), predDelta.flatten()))
         deltaFlat -= trueDelta.flatten().reshape(-1,1)
         record.append(magnitude(deltaFlat))
         newMat = fieldToPower(toMat(newPs))
@@ -186,38 +187,38 @@ plt.ylabel("Magnitude of delta")
 plt.show()
 
 
-totNumIter = []
-totStdNumIter = []
-etas = [0.01, 0.05, 0.1, 0.25, 0.5, 1]
-fig = plt.figure()
-ax = plt.axes()
-ax.set_xscale("log")
-for eta in etas:
-    print(f"Solvings eta={eta}...")
-    numDeltas = 30
-    magnitudes = np.logspace(-2.9,-1, 50)
-    numIter = []
-    stdNumIter = []
-    eta = 1
-    print("Testing magnitude vs number of iterations to converge to delta < 1e-3")
-    for mag in magnitudes:
-        print(f"\tSolving magnitude={mag}...")
-        deltas = [delta-np.mean(delta) for delta in np.random.rand(numDeltas,4,4)]
-        deltas = np.array([delta/magnitude(delta) for delta in deltas]) #normalize magnitudes
-        deltas *= mag
-        numIterMag = []
-        for delta in deltas:
-            newMat, newPs, record = stepGradient(delta, ps, eta=eta, numSteps=2000, numDirections=10)
-            numIterMag.append(len(record))
+# totNumIter = []
+# totStdNumIter = []
+# etas = [0.01, 0.05, 0.1, 0.25, 0.5, 1]
+# fig = plt.figure()
+# ax = plt.axes()
+# ax.set_xscale("log")
+# for eta in etas:
+#     print(f"Solvings eta={eta}...")
+#     numDeltas = 30
+#     magnitudes = np.logspace(-2.9,-1, 50)
+#     numIter = []
+#     stdNumIter = []
+#     eta = 1
+#     print("Testing magnitude vs number of iterations to converge to delta < 1e-3")
+#     for mag in magnitudes:
+#         print(f"\tSolving magnitude={mag}...")
+#         deltas = [delta-np.mean(delta) for delta in np.random.rand(numDeltas,4,4)]
+#         deltas = np.array([delta/magnitude(delta) for delta in deltas]) #normalize magnitudes
+#         deltas *= mag
+#         numIterMag = []
+#         for delta in deltas:
+#             newMat, newPs, record = stepGradient(delta, ps, eta=eta, numSteps=2000, numDirections=10)
+#             numIterMag.append(len(record))
 
-        numIter.append(np.mean(numIterMag))
-        stdNumIter.append(np.std(numIterMag))
-    totNumIter.append(numIter)
-    totStdNumIter.append(stdNumIter)
-    plt.errorbar(magnitudes, numIter, yerr=stdNumIter)
+#         numIter.append(np.mean(numIterMag))
+#         stdNumIter.append(np.std(numIterMag))
+#     totNumIter.append(numIter)
+#     totStdNumIter.append(stdNumIter)
+#     plt.errorbar(magnitudes, numIter, yerr=stdNumIter)
 
-plt.title(f"Number of iterations vs magnitude of delta (eta={eta})")
-plt.xlabel("Delta magnitude")
-plt.ylabel("Number of iterations")
-plt.legend(etas)
-plt.show()
+# plt.title(f"Number of iterations vs magnitude of delta (eta={eta})")
+# plt.xlabel("Delta magnitude")
+# plt.ylabel("Number of iterations")
+# plt.legend(etas)
+# plt.show()
