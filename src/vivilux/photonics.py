@@ -48,17 +48,17 @@ class MZImesh(Mesh):
         self.numDirections = int(np.round(numParams/3)) # arbitrary guess for how many directions are needed
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
 
-    def get(self, params=None):
+    def get(self, params=None, complex=True):
         '''Returns full mesh matrix.
         '''
         if params is not None: # calculate matrix using params
-            return self.Gscale * self.psToMat(params[0])
+            return self.Gscale * self.psToMat(params[0]) if complex else np.square(np.abs(self.Gscale * self.psToMat(params[0])))
         
         if (self.modified == True): # only recalculate matrix when modified
             self.set(self.psToMat())
             self.modified = False
         
-        return self.Gscale * self.matrix
+        return self.Gscale * self.matrix if complex else np.square(np.abs(self.Gscale * self.matrix))
     
     def getParams(self):
         return [self.phaseShifters]
@@ -88,7 +88,8 @@ class MZImesh(Mesh):
         return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
  
     
-    def Update(self, delta:np.ndarray):
+    def Update(self, delta:np.ndarray, numSteps = 100, earlyStop = 1e-3, verbose=False):
+        # FIXME:: Update does not converge on delta. Possibly not enough iterations?
         self.modified = True
 
         # Make column vectors for deltas and theta
@@ -96,40 +97,47 @@ class MZImesh(Mesh):
         deltaFlat = delta.flatten().reshape(-1,1)
         thetaFlat = np.concatenate([param.flatten() for param in self.getParams()]).reshape(-1,1)
 
-        X = np.zeros((deltaFlat.shape[0], self.numDirections))
-        V = np.zeros((thetaFlat.shape[0], self.numDirections))
-        
-        # Calculate directional derivatives
-        for i in range(self.numDirections):
-            tempx, tempv= self.matrixGradient()
-            tempv = np.concatenate([param.flatten() for param in tempv])
-            X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()
+        initDeltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
+        earlyStop *= initDeltaMagnitude
+        if verbose:
+            print(f"Initial delta magnitude: {initDeltaMagnitude}")
 
-        # Solve least square regression for update
-        for iteration in range(self.numDirections):
-            xtx = X.T @ X
-            rank = np.linalg.matrix_rank(xtx)
-            if rank == len(xtx): # matrix will have an inverse
-                a = np.linalg.inv(xtx) @ X.T @ deltaFlat
+        for step in range(numSteps):
+            currMat = self.get(complex=False)
+            X = np.zeros((deltaFlat.shape[0], self.numDirections))
+            V = np.zeros((thetaFlat.shape[0], self.numDirections))
+            
+            # Calculate directional derivatives
+            for i in range(self.numDirections):
+                tempx, tempv= self.matrixGradient()
+                tempv = np.concatenate([param.flatten() for param in tempv])
+                X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()
+
+            # Solve least square regression for update
+            for iteration in range(self.numDirections):
+                xtx = X.T @ X
+                rank = np.linalg.matrix_rank(xtx)
+                if rank == len(xtx): # matrix will have an inverse
+                    a = np.linalg.inv(xtx) @ X.T @ deltaFlat
+                    break
+                else: # direction vectors cary redundant information use one less
+                    X = X[:,:-1]
+                    V = V[:,:-1]
+                    continue
+            
+            linearCombination = V @ a
+            updatedParams = [param + opt for param, opt in zip(self.getParams(), self.reshapeParams(linearCombination))]
+            self.setParams(updatedParams)
+            
+            trueDelta = self.get(complex=False) - currMat
+            deltaFlat -= trueDelta.flatten().reshape(-1,1)
+            deltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
+            if deltaMagnitude < earlyStop:
+                if verbose:
+                    print(f"Break after {step+1} steps, delta magnitude: {deltaMagnitude}")
                 break
-            else: # direction vectors cary redundant information use one less
-                X = X[:,:-1]
-                V = V[:,:-1]
-                continue
-        # try:
-        #     a = np.linalg.inv(X.T @ X) @ X.T @ deltaFlat
-        #     # results = np.linalg.lstsq(X, deltaFlat)
-        #     # a = results[0]
-        #     # residuals = results[1]
-        # except np.linalg.LinAlgError:
-        #     print("WARN: Singular matrix encountered. Skipping current Delta.")
-        #     return
-
-        # self.phaseShifters = self.phaseShifters + self.rate*(V @ a).reshape(-1,2)
-        # self.phaseShifters = self.phaseShifters + (V @ a).reshape(-1,2)
-        linearCombination = V @ a
-        optParams = [param + opt for param, opt in zip(self.getParams(), self.reshapeParams(linearCombination))]
-        self.setParams(optParams)
+        if verbose:
+            print(f"Final delta magnitude: {deltaMagnitude}, success: {initDeltaMagnitude > deltaMagnitude}")
 
 
     def psToMat(self, phaseShifters = None):
@@ -173,10 +181,10 @@ class MZImesh(Mesh):
 
         # Forward step
         plusVectors = [param + stepVector for param, stepVector in zip(paramsList, stepVectors)]
-        plusMatrix = self.get(plusVectors)
+        plusMatrix = self.get(plusVectors, complex=False)
         # Backward step
         minusVectors = [param - stepVector for param, stepVector in zip(paramsList, stepVectors)]
-        minusMatrix = self.get(minusVectors)
+        minusMatrix = self.get(minusVectors, complex=False)
 
         derivativeMatrix = (plusMatrix-minusMatrix)/self.updateMagnitude
         # for col in range(self.size):

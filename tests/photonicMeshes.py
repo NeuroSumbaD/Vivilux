@@ -1,8 +1,8 @@
 import vivilux as vl
 import vivilux.photonics
 from vivilux import FFFB, RecurNet, Layer, GainLayer, ConductanceLayer, AbsMesh
-from vivilux.learningRules import CHL, GeneRec
-from vivilux.optimizers import Adam, Momentum
+from vivilux.learningRules import CHL, GeneRec, ByPass, Nonsense
+from vivilux.optimizers import Adam, Momentum, Simple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,73 +10,86 @@ np.random.seed(seed=0)
 
 import pandas as pd
 import seaborn as sns
+from sklearn import datasets
 
-numSamples = 320
-numEpochs = 200
+numSamples = 1
+numEpochs = 100
 
 
 #define input and output data (must be normalized and positive-valued)
-vecs = np.random.normal(size=(numSamples, 4))
-mags = np.linalg.norm(vecs, axis=-1)
-inputs = np.abs(vecs/mags[...,np.newaxis])
-vecs = np.random.normal(size=(numSamples, 4))
-mags = np.linalg.norm(vecs, axis=-1)
-targets = np.abs(vecs/mags[...,np.newaxis])
-del vecs, mags
+# vecs = np.random.normal(size=(numSamples, 4))
+# mags = np.linalg.norm(vecs, axis=-1)
+# inputs = np.abs(vecs/mags[...,np.newaxis])
+# vecs = np.random.normal(size=(numSamples, 4))
+# mags = np.linalg.norm(vecs, axis=-1)
+# targets = np.abs(vecs/mags[...,np.newaxis])
+# del vecs, mags
+
+diabetes = datasets.load_diabetes()
+inputs = diabetes.data * 2 + 0.5 # mean at 0.5, +/- 0.4
+targets = diabetes.target
+targets /= targets.max() # normalize output
+targets = targets.reshape(-1, 1) # reshape into 1D vector
+inputs = inputs[:numSamples,:4]
+targets = targets[:numSamples]
+
+optArgs = {"lr" : 0.1,
+            "beta1" : 0.9,
+            "beta2": 0.999,
+            "epsilon": 1e-08}
+
+# netGR = RecurNet([
+#     Layer(4, isInput=True),
+#     GainLayer(4, learningRule=GeneRec),
+#     GainLayer(4, learningRule=GeneRec)
+# ], AbsMesh, optimizer = Momentum, name = "NET_GR")
+
+# netMixed = RecurNet([
+#     Layer(4, isInput=True),
+#     GainLayer(4, learningRule=CHL),
+#     GainLayer(4, learningRule=GeneRec)
+# ], AbsMesh, optimizer = Momentum, name = "NET_Mixed")
 
 
-netGR = RecurNet([
-    Layer(4, isInput=True),
-    GainLayer(4, learningRule=GeneRec),
-    GainLayer(4, learningRule=GeneRec)
-], AbsMesh, optimizer = Momentum, name = "NET_GR")
-
-netMixed = RecurNet([
-    Layer(4, isInput=True),
-    GainLayer(4, learningRule=CHL),
-    GainLayer(4, learningRule=GeneRec)
-], AbsMesh, optimizer = Momentum, name = "NET_Mixed")
-
-
-netCHL = RecurNet([
-    Layer(4, isInput=True),
-    GainLayer(4, learningRule=CHL),
-    GainLayer(4, learningRule=CHL)
-], AbsMesh, optimizer = Momentum, name = "NET_CHL")
-
-# optArgs = {"lr" : 0.01,
-#             "beta1" : 0.9,
-#             "beta2": 0.999,
-#             "epsilon": 1e-08}
+# netCHL = RecurNet([
+#     Layer(4, isInput=True),
+#     GainLayer(4, learningRule=CHL),
+#     Layer(1, learningRule=CHL)
+#     ],
+#     AbsMesh,
+#     optimizer = Simple, optArgs=optArgs,
+#     name = "NET_CHL")
 
 
 
-netGR_MZI = RecurNet([
-        Layer(4, isInput=True),
-        GainLayer(4, learningRule=GeneRec),
-        GainLayer(4, learningRule=GeneRec)
-    ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-    # optimizer = Adam, optArgs = optArgs,
-    optimizer = Momentum,
-    name = "NET_GR(MZI)")
 
-netMixed_MZI = RecurNet([
-        Layer(4, isInput=True),
-        GainLayer(4, learningRule=CHL),
-        GainLayer(4, learningRule=GeneRec)
-    ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-    # optimizer = Adam, optArgs = optArgs,
-    optimizer = Momentum,
-    name = "NET_Mixed(MZI)")
+# netGR_MZI = RecurNet([
+#         Layer(4, isInput=True),
+#         GainLayer(4, learningRule=GeneRec),
+#         GainLayer(4, learningRule=GeneRec)
+#     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
+#     # optimizer = Adam, optArgs = optArgs,
+#     optimizer = Momentum,
+#     name = "NET_GR(MZI)")
+
+# netMixed_MZI = RecurNet([
+#         Layer(4, isInput=True),
+#         GainLayer(4, learningRule=CHL),
+#         GainLayer(4, learningRule=GeneRec)
+#     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
+#     # optimizer = Adam, optArgs = optArgs,
+#     optimizer = Momentum,
+#     name = "NET_Mixed(MZI)")
 
 
 netCHL_MZI = RecurNet([
         Layer(4, isInput=True),
         GainLayer(4, learningRule=CHL),
-        GainLayer(4, learningRule=CHL)
+        Layer(1, learningRule=CHL)
     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-    # optimizer = Adam, optArgs = optArgs,
-    optimizer = Momentum,
+    # optimizer = Adam,
+    optimizer = Simple,
+    optArgs = optArgs,
     name = "Net_CHL(MZI)")
 
 
@@ -99,21 +112,23 @@ netCHL_MZI = RecurNet([
 
 
 
-resultGR = netGR.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-plt.plot(resultGR, "r", label="GeneRec")
+# resultGR = netGR.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
+# plt.plot(resultGR, "r", label="GeneRec")
 
-resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-plt.plot(resultMixed, "b", label="Mixed")
+# resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
+# plt.plot(resultMixed, "b", label="Mixed")
 
-resultCHL = netCHL.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-plt.plot(resultCHL, "g", label="CHL")
+# resultCHL = netCHL.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
+# plt.plot(resultCHL, "g", label="CHL")
 
-resultGRMZI = netGR_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-plt.plot(resultGRMZI, "--r", label="MZI: GeneRec")
+# resultGRMZI = netGR_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
+# plt.plot(resultGRMZI, "--r", label="MZI: GeneRec")
 
-resultMixedMZI = netMixed_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-plt.plot(resultMixedMZI, "--b", label="MZI: Mixed")
+# resultMixedMZI = netMixed_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
+# plt.plot(resultMixedMZI, "--b", label="MZI: Mixed")
 
+resultCHLMZI1 = netCHL_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
+netCHL_MZI.layers[1].Freeze()
 resultCHLMZI = netCHL_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
 plt.plot(resultCHLMZI, "--g", label="MZI: CHL")
 

@@ -36,17 +36,18 @@ netCHL = RecurNet([
     metric=[HardmaxAccuracy, RMSE],
     learningRate = 0.01)
 
-netCHL_fffb = FFFB([
-    vl.photonics.PhotonicLayer(4, isInput=True),
-    vl.photonics.PhotonicLayer(4, learningRule=CHL),
-    vl.photonics.PhotonicLayer(4, learningRule=CHL)
-    ],
-    vl.photonics.MZImesh,
-    FeedbackMesh=vl.photonics.phfbMesh,
-    metric=[HardmaxAccuracy, RMSE],
-    learningRate = 0.01)
+# netCHL_fffb = FFFB([
+#     vl.photonics.PhotonicLayer(4, isInput=True),
+#     vl.photonics.PhotonicLayer(4, learningRule=CHL),
+#     vl.photonics.PhotonicLayer(4, learningRule=CHL)
+#     ],
+#     vl.photonics.MZImesh,
+#     FeedbackMesh=vl.photonics.phfbMesh,
+#     metric=[HardmaxAccuracy, RMSE],
+#     learningRate = 0.01)
 
-
+numSamples = 10
+numEpochs = 10
 
 iris = datasets.load_iris()
 inputs = iris.data
@@ -56,10 +57,10 @@ targets = np.zeros((len(inputs),4))
 targets[np.arange(len(inputs)), iris.target] = 1
 #shuffle both arrays in the same manner
 shuffle = np.random.permutation(len(inputs))
-inputs, targets = inputs[shuffle][:50], targets[shuffle][:50]
+inputs, targets = inputs[shuffle][:numSamples], targets[shuffle][:numSamples]
 
-resultCHL = netCHL.Learn(inputs, targets, numEpochs=300)
-resultCHL_fffb = netCHL_fffb.Learn(inputs, targets, numEpochs=300)
+resultCHL = netCHL.Learn(inputs, targets, numEpochs=numEpochs)
+# resultCHL_fffb = netCHL_fffb.Learn(inputs, targets, numEpochs=numEpochs)
 
 # Plot Accuracy
 # plt.figure()
@@ -78,8 +79,8 @@ resultCHL_fffb = netCHL_fffb.Learn(inputs, targets, numEpochs=300)
 # Plot RMSE
 plt.figure()
 plt.plot(resultCHL[1], label="CHL")
-plt.plot(resultCHL_fffb[1], label="CHL w/ FFFB")
-baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,50,4))])
+# plt.plot(resultCHL_fffb[1], label="CHL w/ FFFB")
+baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Iris Dataset")
