@@ -100,6 +100,8 @@ class HardMZI(MZImesh):
 
         self.makeBar(barMZI)
 
+        self.records = [] # for recording the convergence of deltas
+
 
     def makeBar(self, mzis):
         '''Takes a list of MZI->device mappingss and sets each MZI to the bar state.
@@ -244,8 +246,8 @@ class HardMZI(MZImesh):
         return X, V
     
     
-    def stepGradient(self, delta: np.ndarray, eta=0.5, numDirections=5, 
-                     numSteps=5, earlyStop = 1e-3, verbose=False):
+    def stepGradient(self, delta: np.ndarray, eta=1, numDirections=3, 
+                     numSteps=10, earlyStop = 1e-3, verbose=False):
         '''Calculate gradients and step towards desired delta.
         '''
         voltages = self.voltages
@@ -292,7 +294,8 @@ class HardMZI(MZImesh):
                 break
         return self.record
 
-
+    def Update(self, delta: np.ndarray):
+        self.records.append(self.stepGradient(delta))
 class InputGenerator:
     def __init__(self, size=4, detectors = [12,8,9,10], limits=[100,350], verbose=False) -> None:
         self.size = size
