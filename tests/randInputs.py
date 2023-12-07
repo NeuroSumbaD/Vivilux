@@ -1,6 +1,9 @@
 import copy
 
 from vivilux import *
+from vivilux.nets import RecurNet
+from vivilux.layers import Layer, GainLayer
+from vivilux.meshes import AbsMesh
 from vivilux.metrics import RMSE
 from vivilux.learningRules import CHL, GeneRec
 from vivilux.optimizers import Decay
