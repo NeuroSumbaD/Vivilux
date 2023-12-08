@@ -1,29 +1,9 @@
-from . import DELTA_TIME, Mesh, Layer
+from ..meshes import Mesh
+from ..layers import Layer
+from .utils import *
+
 import numpy as np
-import numpy.linalg
 from scipy.stats import ortho_group
-
-def Detect(input):
-    '''DC power detected (no cross terms)
-    '''
-    return np.square(np.abs(np.sum(input, axis=-1)))
-
-def Diagonalize(vector):
-    '''Turns a vector into a diagonal matrix to simulate independent wavelength
-       components that don't have constructive/destructive interference.
-    '''
-    diag = np.eye(len(vector))
-    for i in range(len(vector)):
-        diag[i,i] = vector[i]
-    return diag
-
-def BoundTheta(thetas):
-    '''Bounds the size of phase shifts between 1-2pi.
-    '''
-    thetas[thetas > (2*np.pi)] -= 2*np.pi
-    thetas[thetas < 0] += 2*np.pi
-    return thetas
-
 
 class Unitary(Mesh):
     def __init__(self, *args, **kwargs):
@@ -359,10 +339,48 @@ class phfbMesh(Mesh):
         data = np.pad(data[:self.size], (0, self.size - len(data)))
         return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
 
-MZImesh.feedback = phfbMesh   
-    
-class PhotonicLayer(Layer):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+MZImesh.feedback = phfbMesh
 
-    # TODO: COUNT OPERATIONS AND ENERGY CONSUMPTION
+
+
+###<------ DEVICE TABLES ------>###
+
+phaseShift_ITO = {
+    "length": 0.0035, # mm
+    "shiftDelay": 0.3, # ns
+    "shiftCost": 77.6/np.pi, # pJ/radian
+    "opticalLoss": 5.6, # dB
+    "staticPower": 0, # pJ
+}
+
+phaseShift_LN = {
+    "length": 2, # mm
+    "shiftDelay": 0.02, # ns
+    "shiftCost": 8.1/np.pi, # pJ/radian
+    "opticalLoss": 0.6, # dB
+    "staticPower": 0, # pJ
+}
+
+phaseShift_LN_theoretical = {
+    "length": 2, # mm
+    "shiftDelay": 0.0035, # ns
+    "shiftCost": 8.1/np.pi, # pJ/radian
+    "opticalLoss": 0.6, # dB
+    "staticPower": 0, # pJ
+}
+
+phaseShift_LN_plasmonic = {
+    "length": 0.015, # mm
+    "shiftDelay": 0.035, # ns
+    "shiftCost": 38.6/np.pi, # pJ/radian
+    "opticalLoss": 19.5, # dB
+    "staticPower": 0, # pJ
+}
+
+phaseShift_PCM = {
+    "length": 0.011, # mm
+    "shiftDelay": 0.035, # ns
+    "shiftCost": 1e5/np.pi, # pJ/radian
+    "opticalLoss": 0.33, # dB
+    "staticPower": 0, # pJ
+}

@@ -33,6 +33,7 @@ np.random.seed(seed=0)
 from .nets import *
 from .layers import *
 from .meshes import *
+from . import photonics
 
 __all__ = ['nets', 
            'layers',

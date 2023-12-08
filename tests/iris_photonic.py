@@ -1,10 +1,10 @@
 '''Algorithm test using iris dataset classification task.
 '''
+import vivilux as vl
 from vivilux import *
-import vivilux.photonics
+from vivilux.photonics import ph_layers, ph_meshes
 from vivilux.learningRules import CHL, GeneRec
 from vivilux.metrics import HardmaxAccuracy
-import vivilux as vl
 from vivilux import FFFB
 from vivilux.learningRules import CHL, GeneRec, ByPass
 from vivilux.metrics import HardmaxAccuracy, RMSE
@@ -20,29 +20,29 @@ np.random.seed(0)
 # InhibMesh.FBTau = 0.4
 # InhibMesh.FF0 = 0.85
 
-InhibMesh.FF = 0.1
-InhibMesh.FB = 0.5
-InhibMesh.FBTau = 0.25
-InhibMesh.FF0 = 0.8
+meshes.InhibMesh.FF = 0.1
+meshes.InhibMesh.FB = 0.5
+meshes.InhibMesh.FBTau = 0.25
+meshes.InhibMesh.FF0 = 0.8
 
 
-netCHL = RecurNet([
-    vl.photonics.PhotonicLayer(4, isInput=True),
-    vl.photonics.PhotonicLayer(4, learningRule=CHL),
-    vl.photonics.PhotonicLayer(4, learningRule=CHL)
+netCHL = nets.RecurNet([
+    ph_layers.PhotonicLayer(4, isInput=True),
+    ph_layers.PhotonicLayer(4, learningRule=CHL),
+    ph_layers.PhotonicLayer(4, learningRule=CHL)
     ],
-    vl.photonics.MZImesh,
-    FeedbackMesh=vl.photonics.phfbMesh,
+    ph_meshes.MZImesh,
+    FeedbackMesh=ph_meshes.phfbMesh,
     metric=[HardmaxAccuracy, RMSE],
     learningRate = 0.01)
 
 # netCHL_fffb = FFFB([
-#     vl.photonics.PhotonicLayer(4, isInput=True),
-#     vl.photonics.PhotonicLayer(4, learningRule=CHL),
-#     vl.photonics.PhotonicLayer(4, learningRule=CHL)
+#     ph_layers.PhotonicLayer(4, isInput=True),
+#     ph_layers.PhotonicLayer(4, learningRule=CHL),
+#     ph_layers.PhotonicLayer(4, learningRule=CHL)
 #     ],
-#     vl.photonics.MZImesh,
-#     FeedbackMesh=vl.photonics.phfbMesh,
+#     ph_meshes.MZImesh,
+#     FeedbackMesh=ph_meshes.phfbMesh,
 #     metric=[HardmaxAccuracy, RMSE],
 #     learningRate = 0.01)
 
