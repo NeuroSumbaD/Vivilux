@@ -18,10 +18,10 @@ inputSize = 3
 outputSize = 1
 
 #define input and output data (must be normalized and positive-valued)
-vecs = np.random.normal(size=(numSamples, 4))
+vecs = np.random.normal(size=(numSamples, inputSize))
 mags = np.linalg.norm(vecs, axis=-1)
 inputs = np.abs(vecs/mags[...,np.newaxis])
-vecs = np.random.normal(size=(numSamples, 4))
+vecs = np.random.normal(size=(numSamples, outputSize))
 mags = np.linalg.norm(vecs, axis=-1)
 targets = np.abs(vecs/mags[...,np.newaxis])
 del vecs, mags

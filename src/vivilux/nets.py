@@ -395,7 +395,7 @@ class Net:
             if verbosity > 0:
                 primaryMetric = [key for key in self.runConfig["metrics"]][0]
                 print(f" metric[{primaryMetric}]"
-                    f" = {self.outputs[primaryMetric]:0.2f}")
+                    f" = {self.results[primaryMetric]:0.2f}")
                 
         print(f"Finished training [{self.name}]")
         return self.results
