@@ -9,6 +9,8 @@ if TYPE_CHECKING:
     from .meshes import Mesh
     from .processes import Process, NeuralProcess, PhasicProcess
 
+from .processes import ActAvg, FFFB
+
 import numpy as np
 
 # import defaults
@@ -29,6 +31,7 @@ class Layer:
                  activation=NoisyXX1(),
                  learningRule=CHL,
                  isInput = False,
+                 isTarget = False, # Specifies the layer is an output layer
                 #  freeze = False,
                 #  batchMode=False,
                  name = None,
@@ -63,11 +66,8 @@ class Layer:
         self.inhMeshes: list[Mesh] = []
         self.neuralProcesses: list[NeuralProcess]  = []
         self.phaseProcesses: list[PhasicProcess] = []
-        # self.phaseHist = {"minus": np.zeros(length),
-        #                   "plus": np.zeros(length)
-        #                   }
+        self.phaseHist = {}
         # self.ActPAvg = np.mean(self.outAct) # initialize for Gscale
-        # self.getActivity() #initialize outgoing Activation
 
         self.name =  f"LAYER_{Layer.count}" if name == None else name
         if isInput: self.name = "INPUT_" + self.name
@@ -80,14 +80,8 @@ class Layer:
         '''
         self.net = net
 
-        if layerConfig["hasInhib"]:
-            self.processes.append()
-
-        # Attach optimizer
-        self.optimizer = layerConfig["optimizer"](**self.layerConfig["optArgs"])
-
         self.DELTA_TIME = net.runConfig["DELTA_TIME"]
-        self.DELTA_Vm = layerConfig["DELTA_VM"]
+        # self.DELTA_Vm = layerConfig["DELTA_VM"]
 
         # Attach channel params
         self.Gbar = layerConfig["Gbar"]
@@ -101,23 +95,23 @@ class Layer:
 
         # Attach FFFB Params
         self.FFFBparams = layerConfig["FFFBparams"]
-        self.FFFBparams["FBDt"] = 1/layerConfig["FFFBparams"]["FBtau"] # rate = 1 / FBTau
+        self.FFFBparams["FBDt"] = 1/layerConfig["FFFBparams"]["FBTau"] # rate = 1 / FBTau
+
+        # Attach Averaging Process
+        self.ActAvg = ActAvg(self) # TODO add to std layerConfig and pass params here
+
+        # Attach FFFB process
+        if layerConfig["hasInhib"]:
+            self.neuralProcesses.append(FFFB(self))
+
+        # Attach optimizer
+        self.optimizer = layerConfig["optimizer"](**layerConfig["optArgs"])
 
         self.isFloating = False
 
     def StepTime(self):
         self.Integrate()
         self.RunProcesses()
-
-        self.Ge[:] += (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GeRaw - self.Ge)
-                       )
-        
-        self.Gi[:] += (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GiRaw - self.Gi)
-                       )
         
         # Calculate conductance threshold
         Erev = self.Erev
@@ -149,14 +143,26 @@ class Layer:
                 )
         self.Vm[:] += self.DtParams["VmDt"] * Inet
     
+        self.ActAvg.StepTime() # Update activity averages
+
     def Integrate(self):
         self.GeRaw[:] = 0 # reset
         for mesh in self.excMeshes:
             self.GeRaw[:] += mesh.apply()[:len(self)]
 
+        self.Ge[:] += (self.DtParams["Integ"] *
+                       self.DtParams["GDt"] * 
+                       (self.GeRaw - self.Ge)
+                       )
+
         self.GiRaw[:] = 0 # reset
         for mesh in self.inhMeshes:
             self.GiRaw[:] += mesh.apply()[:len(self)]
+
+        self.Gi[:] += (self.DtParams["Integ"] *
+                       self.DtParams["GDt"] * 
+                       (self.GiRaw - self.Gi)
+                       )
 
     def RunProcesses(self):
         '''A set of additional high-level processes which result in current
@@ -182,32 +188,27 @@ class Layer:
 
 
     def Clamp(self, data, monitoring = False):
-        self.excAct[:] = data[:len(self)]
-        self.inhAct[:] = data[:len(self)]
-        self.outAct[:] = data[:len(self)]
-        if monitoring:
-            self.snapshot.update({"activity": data,
-                        "excAct": self.excAct,
-                        "inhAct": self.inhAct,
-                        })
-            self.monitor.update(self.snapshot)
+        self.Act = data
 
     def Learn(self, batchComplete=False):
         if self.isInput or self.freeze: return
         for mesh in self.excMeshes:
             if not mesh.trainable: continue
-            inLayer = mesh.inLayer # assume first mesh as input
-            delta = self.rule(inLayer, self)
-            self.snapshot["delta"] = delta
-            if self.batchMode:
-                self.deltas.append(delta)
-                if batchComplete:
-                    delta = np.mean(self.deltas, axis=0)
-                    self.deltas = []
-                else:
-                    return # exit without update for batching
-            optDelta = self.optimizer(delta)
-            mesh.Update(optDelta)
+            mesh.Update()
+
+            ### <--- OLD IMPLEMENTATION ---> ###
+            # inLayer = mesh.inLayer # assume first mesh as input
+            # delta = self.rule(inLayer, self)
+            # self.snapshot["delta"] = delta
+            # if self.batchMode:
+            #     self.deltas.append(delta)
+            #     if batchComplete:
+            #         delta = np.mean(self.deltas, axis=0)
+            #         self.deltas = []
+            #     else:
+            #         return # exit without update for batching
+            # optDelta = self.optimizer(delta)
+            # mesh.Update(optDelta)
         
     def Freeze(self):
         self.freeze = True
@@ -215,7 +216,8 @@ class Layer:
     def Unfreeze(self):
         self.freeze = False
     
-    def addMesh(self, mesh, excitatory = True):
+    def addMesh(self, mesh: Mesh, excitatory = True):
+        mesh.AttachLayer(self)
         if excitatory:
             self.excMeshes.append(mesh)
         else:
@@ -248,13 +250,13 @@ class Layer:
         return self
     
     def __len__(self):
-        return len(self.excAct)
+        return len(self.Act)
 
     def __str__(self) -> str:
         layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
         layStr += f"Rule = {self.rule}"
         layStr += f"\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
-        layStr += f"\n\tActivity: \n\t\t{self.excAct},\n\t\t{self.outAct}"
+        layStr += f"\n\tActivity: \n\t\t{self.Act}"
         return layStr
     
 # class ConductanceLayer(Layer):

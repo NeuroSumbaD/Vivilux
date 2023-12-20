@@ -8,6 +8,8 @@ if TYPE_CHECKING:
     from .nets import Net
     from .layers import Layer
 
+from .processes import XCAL
+
 import numpy as np
 
 
@@ -15,7 +17,9 @@ class Mesh:
     '''Base class for meshes of synaptic elements.
     '''
     count = 0
-    def __init__(self, size: int, inLayer: Layer,
+    def __init__(self, 
+                 size: int,
+                 inLayer: Layer,
                  **kwargs):
         self.size = size if size > len(inLayer) else len(inLayer)
         # self.matrix = np.eye(self.size)
@@ -32,6 +36,8 @@ class Mesh:
         Mesh.count += 1
 
         self.trainable = True
+        self.sndActAvg = inLayer.ActAvg
+        self.rcvActAvg = None
 
     def set(self, matrix):
         self.modified = True
@@ -44,7 +50,9 @@ class Mesh:
         self.Gscale = sc
 
     def get(self):
-        return self.matrix
+        sndActAvgP = np.mean(self.inLayer.phaseHist["plus"])
+        self.setGscale(sndActAvgP)
+        return self.Gscale * self.matrix
     
     def getInput(self):
         return self.inLayer.getActivity()
@@ -60,13 +68,24 @@ class Mesh:
             return self.get() @ data
         except ValueError as ve:
             print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
-                  f"of dimension: {self.matrix}")
+                  f"of dimension: {self.get().shape}")
+            print(ve)
 
-    def Update(self, delta: np.ndarray):
-        m, n = delta.shape
-        self.modified = True
+    def AttachLayer(self, rcvLayer: Layer):
+        self.XCAL = XCAL() #TODO pass params from layer or mesh config
+        self.XCAL.AttachLayer(self.inLayer, rcvLayer)
+        rcvLayer.phaseProcesses.append(self.XCAL) # Add XCAL as phasic process to layer
+
+    def Update(self,
+               # delta: np.ndarray ### Now delta is handled by the 
+               ):
+        # m, n = delta.shape
+        # self.modified = True
         # self.matrix[:m, :n] += self.rate*delta
-        self.matrix[:m, :n] += delta
+        # self.matrix[:m, :n] += delta
+
+        delta = self.XCAL.GetDeltas()
+        self.matrix += delta
 
     def __len__(self):
         return self.size
@@ -74,10 +93,10 @@ class Mesh:
     def __str__(self):
         return f"\n\t\t{self.name.upper()} ({self.size} <={self.inLayer.name}) = {self.get()}"
 
-class fbMesh(Mesh):
+class TransposeMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
     '''
-    def __init__(self, mesh: Mesh, inLayer: Layer, fbScale = 0.5) -> None:
+    def __init__(self, mesh: Mesh, inLayer: Layer, fbScale = 0.2) -> None:
         super().__init__(mesh.size, inLayer)
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
@@ -90,59 +109,60 @@ class fbMesh(Mesh):
         raise Exception("Feedback mesh has no 'set' method.")
 
     def get(self):
-        self.setGscale(self.inLayer.ActPAvg)
+        sndActAvgP = np.mean(self.inLayer.phaseHist["plus"])
+        self.setGscale(sndActAvgP)
         return self.fbScale * self.mesh.Gscale * self.mesh.get().T 
     
     def getInput(self):
-        return self.mesh.inLayer.outAct
+        return self.mesh.inLayer.getActivity()
 
     def Update(self, delta):
         return None
     
     
-class InhibMesh(Mesh):
-    '''A class for inhibitory feedback mashes based on fffb mechanism.
-        Calculates inhibitory input to a layer based on a mixture of its
-        existing activation and current input.
-    '''
-    FF = 1
-    FB = 1
-    FBTau = 1/1.4
-    FF0 = 0.1
-    Gi = 1.8
+# class InhibMesh(Mesh):
+#     '''A class for inhibitory feedback mashes based on fffb mechanism.
+#         Calculates inhibitory input to a layer based on a mixture of its
+#         existing activation and current input.
+#     '''
+#     FF = 1
+#     FB = 1
+#     FBTau = 1/1.4
+#     FF0 = 0.1
+#     Gi = 1.8
 
-    def __init__(self, ffmesh: Mesh, inLayer: Layer) -> None:
-        self.name = "FFFB_" + ffmesh.name
-        self.ffmesh = ffmesh
-        self.size = len(inLayer)
-        self.inLayer = inLayer
-        self.fb = 0
-        self.inhib = np.zeros(self.size)
+#     def __init__(self, ffmesh: Mesh, inLayer: Layer) -> None:
+#         self.name = "FFFB_" + ffmesh.name
+#         self.ffmesh = ffmesh
+#         self.size = len(inLayer)
+#         self.inLayer = inLayer
+#         self.fb = 0
+#         self.inhib = np.zeros(self.size)
 
-        self.trainable = False
+#         self.trainable = False
 
-    def apply(self):
-        # guarantee that data can be multiplied by the mesh
-        ffAct = self.ffmesh.apply()[:len(self)]
-        ffAct = np.pad(ffAct, (0, self.size - len(ffAct)))
-        ffAct = np.maximum(ffAct-InhibMesh.FF0,0)
+#     def apply(self):
+#         # guarantee that data can be multiplied by the mesh
+#         ffAct = self.ffmesh.apply()[:len(self)]
+#         ffAct = np.pad(ffAct, (0, self.size - len(ffAct)))
+#         ffAct = np.maximum(ffAct-InhibMesh.FF0,0)
 
-        self.fb += InhibMesh.FBTau * (np.mean(self.inLayer.outAct) - self.fb)
+#         self.fb += InhibMesh.FBTau * (np.mean(self.inLayer.outAct) - self.fb)
 
-        self.inhib[:] = InhibMesh.FF * ffAct + InhibMesh.FB * self.fb
-        return InhibMesh.Gi * self.inhib
+#         self.inhib[:] = InhibMesh.FF * ffAct + InhibMesh.FB * self.fb
+#         return InhibMesh.Gi * self.inhib
 
-    def set(self):
-        raise Exception("InhibMesh has no 'set' method.")
+#     def set(self):
+#         raise Exception("InhibMesh has no 'set' method.")
 
-    def get(self):
-        return self.apply()
+#     def get(self):
+#         return self.apply()
     
-    def getInput(self):
-        return self.mesh.inLayer.outAct
+#     def getInput(self):
+#         return self.mesh.inLayer.outAct
 
-    def Update(self, delta):
-        return None
+#     def Update(self, delta):
+#         return None
 
 class AbsMesh(Mesh):
     '''A mesh with purely positive weights to mimic biological 

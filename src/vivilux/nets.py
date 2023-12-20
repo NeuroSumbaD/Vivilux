@@ -15,7 +15,7 @@ import math
 import numpy as np
 
 # import defaults
-from .meshes import Mesh, fbMesh, InhibMesh
+from .meshes import Mesh, TransposeMesh
 from .metrics import RMSE
 from .optimizers import Simple
 from .visualize import Monitor
@@ -30,12 +30,12 @@ ffMeshConfig_std = {
 }
 
 fbMeshConfig_std = {
-    "meshType": fbMesh,
+    "meshType": TransposeMesh,
     "meshArgs": {},
 }
 
 layerConfig_std = {
-    "DELTA_Vm" : 0.1/2.81,
+    # "DELTA_Vm" : 0.1/2.81,
     "hasInhib" : True,
     "Gbar": { # Max conductances for each effective channel
         "E": 1.0, # Excitatory
@@ -56,6 +56,15 @@ layerConfig_std = {
         "AvgTau" : 200, # for integrating activation average (ActAvg), time constant in trials (roughly, how long it takes for value to change significantly) -- used mostly for visualization and tracking *hog* units
         
     },
+    "ActParams": {
+        "SSTau": 2,
+        "STau": 2,
+        "MTau": 10,
+        "Tau": 10,
+        "Gain": 2.5,
+        "Min": 0.2,
+        "LrnM": 0.1,
+    },
     "optimizer": Simple,
     "optArgs": {},
     "ffMeshConfig": ffMeshConfig_std,
@@ -73,7 +82,7 @@ layerConfig_std = {
 
 phaseConfig_std = {
     "minus": {
-        "numTimeSteps": 25,
+        "numTimeSteps": 75,
         "isOutput": True,
         "clampLayers": {"input": 0,
                     },
@@ -134,96 +143,132 @@ class Net:
         '''Pre-generate clamped and unclamped layer lists to speed up StepPhase
             execution.
         '''
+        # TODO Figure out where to call this function (after layers have been added)
+        # if len(self.layers) < len(self.phaseConfig[phaseName]["clampLayers"]):
+        #     return
         for phaseName in self.phaseConfig.keys():
             layers = list(self.layers) # copy full layer list
+            self.layerDict[phaseName] = {}
             self.layerDict[phaseName]["clamped"] = {}
 
             for dataName, layerIndex in self.phaseConfig[phaseName]["clampLayers"].items():
+                if len(layers) == 0:
+                    return
                 self.layerDict[phaseName]["clamped"][dataName] = layers.pop(layerIndex)
 
             self.layerDict[phaseName]["unclamped"]: list[Layer] = layers
 
+        self.layerDict["outputLayers"] = {}
         for dataName, index in self.runConfig["outputLayers"].items():
             self.layerDict["outputLayers"][dataName] = self.layers[index]
                 
     def AddLayer(self, layer: Layer, layerConfig: dict = None):
-        index = len(self.layers)
-        size = len(layer)
+        # index = len(self.layers)
+        # size = len(layer)
 
         self.layers.append(layer)
-        # self.layerDict[layer.name] = layer
-        layer.net = self # give layer a reference to the net
+        self.layerDict[layer.name] = layer
 
         # Use default layerConfig if None is provided
         layerConfig = self.layerConfig if layerConfig is None else layerConfig
 
-        # Add forward mesh
-        layer.addMesh(
-            layerConfig["ffMeshConfig"]['meshType'](
-                size,
-                self.layers[index-1],
-                **self.layerConfig["ffMeshConfig"]["meshArgs"])
-            )
+        layer.AttachNet(self, layerConfig) # give layer a reference to the net
+        # Initialize phase histories
+        for phase in self.phaseConfig.keys():
+            layer.phaseHist[phase] = layer.getActivity()
         
-        # Add feedback mesh
-        if index > 0:
-            self.layers[index-1].addMesh(
-                layerConfig["fbMeshConfig"]['meshType'](
-                    size,
-                    layer,
-                    **self.layerConfig["fbMeshConfig"]["meshArgs"]
-                    )
-                )
-        
+        # TODO replace monitor definition ("one function does one thing!")
         # Define monitor
-        layer.monitor = layerConfig["defMonitor"](
-            name = self.name + ": " + layer.name,
-            labels = ["time step", "activity"],
-            limits=[self.runConfig["numTimeSteps"], 2],
-            numLines=len(layer)
-        )
+        # layer.monitor = layerConfig["defMonitor"](
+        #     name = self.name + ": " + layer.name,
+        #     labels = ["time step", "activity"],
+        #     limits=[self.runConfig["numTimeSteps"], 2],
+        #     numLines=len(layer)
+        # )
 
         self.UpdateLayerLists()
 
     def AddLayers(self, layers: list[Layer], layerConfig = None):
-        index = len(self.layers) # index of first new layer
-        self.layers.append(layers)
-
         # Use default layerConfig if None is provided
         layerConfig = self.layerConfig if layerConfig is None else layerConfig
 
-        for index, layer in enumerate(layers, index):
-            size = len(layer)
-            self.layerDict[layer.name] = layer
-            layer.AttachNet(self, layerConfig) # give layer a reference to the net
+        for layer in layers:
+            self.AddLayer(layer, layerConfig)
+            # size = len(layer)
+            # self.layerDict[layer.name] = layer
+            # layer.AttachNet(self, layerConfig) # give layer a reference to the net
 
-            # Add forward mesh
-            layer.addMesh(
-                layerConfig["ffMeshConfig"]['meshType'](
-                    size,
-                    self.layers[index-1],
-                    **self.layerConfig["ffMeshConfig"]["meshArgs"])
-                )
-            
-            # Add feedback mesh
-            if index > 0:
-                self.layers[index-1].addMesh(
-                    layerConfig["fbMeshConfig"]['meshType'](
-                        size,
-                        layer,
-                        **self.layerConfig["fbMeshConfig"]["meshArgs"]
-                        )
-                    )
-
+            # TODO replace monitor definition ("one function does one thing!")
             # Define monitor
-            layer.monitor = layerConfig["defMonitor"](
-                name = self.name + ": " + layer.name,
-                labels = ["time step", "activity"],
-                limits=[self.runConfig["numTimeSteps"], 2],
-                numLines=len(layer)
-            )
+            # layer.monitor = layerConfig["defMonitor"](
+            #     name = self.name + ": " + layer.name,
+            #     labels = ["time step", "activity"],
+            #     limits=[self.runConfig["numTimeSteps"], 2],
+            #     numLines=len(layer)
+            # )
 
-        self.UpdateLayerLists()
+        # self.UpdateLayerLists()
+
+    def AddConnection(self,
+                      sending: Layer, # closer to source
+                      receiving: Layer, # further from source
+                      meshConfig = None,
+                      ):
+        '''Adds a connection from the sending layer to the receiving layer.
+        '''
+        # Use default ffMeshConfig if None is provided
+        meshConfig = self.layerConfig["ffMeshConfig"] if meshConfig is None else meshConfig
+        size = len(receiving)
+        meshArgs = meshConfig["meshArgs"]
+        mesh = meshConfig["meshType"](size, sending, **meshArgs)
+        receiving.addMesh(mesh)
+
+    def AddConnections(self,
+                       sendings: list[Layer], # closer to source
+                       receivings: list[Layer], # further from source
+                       meshConfig = None,
+                       ):
+        '''Helper function for generating multiple connections at once.
+        '''
+        for receiving, sending in zip(receivings, sendings):
+            self.AddConnection(sending, receiving, meshConfig)
+
+    def AddBidirectionalConnection(self,
+                      sending: Layer, # closer to source
+                      receiving: Layer, # further from source
+                      ffMeshConfig = None,
+                      fbMeshConfig = None,
+                      ):
+        '''Adds a set of bidirectional connections from the sending layer to
+            the receiving layer. The feedback mesh is assumed to be a transpose
+            of the feedforward mesh.
+        '''
+        # Use default ffMeshConfig if None is provided
+        ffMeshConfig = self.layerConfig["ffMeshConfig"] if ffMeshConfig is None else ffMeshConfig
+        fbMeshConfig = self.layerConfig["fbMeshConfig"] if fbMeshConfig is None else fbMeshConfig
+
+        # feedforward connection
+        size = len(sending)
+        meshArgs = ffMeshConfig["meshArgs"]
+        ffMesh = ffMeshConfig["meshType"](size, sending, **meshArgs)
+        receiving.addMesh(ffMesh)
+
+        # feedback connection
+        size = len(receiving)
+        meshArgs = fbMeshConfig["meshArgs"]
+        fbMesh = fbMeshConfig["meshType"](ffMesh, receiving, **meshArgs)
+        sending.addMesh(fbMesh)
+
+    def AddBidirectionalConnections(self,
+                       sendings: list[Layer], # closer to source
+                       receivings: list[Layer], # further from source
+                       meshConfig = None,
+                       ):
+        '''Helper function for generating multiple bidirectional connections 
+            at once.
+        '''
+        for sending, receiving in zip(sendings, receivings):
+            self.AddBidirectionalConnection(sending, receiving, meshConfig)
 
     def ValidateDataset(self, **dataset: dict[str, np.ndarray]):
         '''Ensures that the entered dataset is properly constructed.
@@ -235,7 +280,8 @@ class Net:
             if numSamples == 0:
                 numSamples = len(sampleList)
             elif numSamples != len(sampleList):
-                raise ValueError("Ragged dataset, number of rows (samples) do not match across columns.")
+                raise ValueError("Ragged dataset, number of rows (samples) do not "
+                                 "match across columns.")
         # Else return number of samples in dataset
         return numSamples
 
@@ -245,7 +291,7 @@ class Net:
             dictionary with keys representing names of each metric.
         '''
         self.results = {}
-        for metricName, metric in self.runConfig["metrics"]:
+        for metricName, metric in self.runConfig["metrics"].items():
             for dataName in self.layerDict["outputLayers"]:
                 self.results[metricName] = metric(self.outputs[dataName], dataset[dataName])
     
@@ -255,21 +301,25 @@ class Net:
             the generation of an expectation versus observation of outcome in
             Prof. O'Reilly's error-driven local learning framework.
         '''
-        for timeStep in range(self.phaseConfig[phaseName]["numTimeSteps"]):
+        numTimeSteps = self.phaseConfig[phaseName]["numTimeSteps"]
+        for timeStep in range(numTimeSteps):
             ## TODO: Parallelize execution for all layers
 
             # Clamp layers according to phaseType
             for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
-                    clampedLayer.Clamp(dataVectors[dataName]) 
+                    clampedLayer.Clamp(dataVectors[dataName])
 
             # StepTime for each unclamped layer
             for layer in self.layerDict[phaseName]["unclamped"]:
                 layer.StepTime()
 
-        # Execute layer processes
+        # Execute phasic processes (including XCAL)
         for layer in self.layers:
             for process in layer.phaseProcesses:
-                process.StepPhase()
+                if phaseName in process.phases or "all" in process.phases:
+                    process.StepPhase()
+            #record phase activity at the end of each phase
+            layer.phaseHist[phaseName] = layer.getActivity().copy()
 
     def StepTrial(self, runType: str, **dataVectors):
         for phaseName in self.runConfig[runType]:
@@ -305,10 +355,11 @@ class Net:
         # TODO: find a faster way to iterate through datasets
         for sampleIndex in sampleIndices:
             if verbosity > 0:
-                print(f"Epoch: {self.epochIndex}, sample: ({sampleIndex}/{numSamples}), ", end="\r")
+                print(f"Epoch: {self.epochIndex}, "
+                      f"sample: ({sampleIndex}/{numSamples}), ", end="\r")
 
             dataVectors = {key:value[sampleIndex] for key, value in dataset.items()}
-            self.StepTrial(runType, dataVectors)
+            self.StepTrial(runType, **dataVectors)
 
             if reset : self.resetActivity()
 
@@ -318,8 +369,8 @@ class Net:
               verbosity = 1,
               reset: bool = True,
               shuffle: bool = True,
-              batchSize = 1, # TODO: Implement batch training
-              repeat=1, # TODO: Implement repeated sample training
+              batchSize = 1, # TODO: Implement batch training (average delta weights over some number of training examples)
+              repeat=1, # TODO: Implement repeated sample training (train muliple times for a single input sample before moving on to the next one)
               **dataset: dict[str, np.ndarray]):
         '''Training loop that runs a specified number of epochs.
 
@@ -361,7 +412,7 @@ class Net:
         if verbosity > 0:
             primaryMetric = [key for key in self.runConfig["metrics"]][0]
             print(f" metric[{primaryMetric}]"
-                f" = {self.outputs[primaryMetric]:0.2f}")
+                f" = {self.results[primaryMetric]:0.2f}")
             
         print(f"Evaluatation complete.")
         return self.results
