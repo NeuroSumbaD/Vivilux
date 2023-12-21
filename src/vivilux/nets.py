@@ -135,10 +135,16 @@ class Net:
         self.layers: list[Layer] = [] # list of layer objects
         self.layerDict: dict[str, Layer] = {} # dict of named layers
 
+        self.results = {metric: [] for metric in self.runConfig["metrics"]}
+
         self.name =  f"NET_{Net.count}" if name == None else name
         self.epochIndex = 0
         Net.count += 1
 
+    def PreallocateResultDict(self):
+        '''Pre-allocate a dict to store the results
+        '''
+    
     def UpdateLayerLists(self):
         '''Pre-generate clamped and unclamped layer lists to speed up StepPhase
             execution.
@@ -290,10 +296,10 @@ class Net:
             corresponding target in the dataset. The results are stored in a
             dictionary with keys representing names of each metric.
         '''
-        self.results = {}
         for metricName, metric in self.runConfig["metrics"].items():
             for dataName in self.layerDict["outputLayers"]:
-                self.results[metricName] = metric(self.outputs[dataName], dataset[dataName])
+                result = metric(self.outputs[dataName], dataset[dataName])
+                self.results[metricName].append(result)
     
     def StepPhase(self, phaseName: str, **dataVectors):
         '''Compute a phase of execution for the neural network. A phase is a 
@@ -353,15 +359,17 @@ class Net:
         sampleIndices = np.random.permutation(numSamples) if shuffle else range(numSamples)
         
         # TODO: find a faster way to iterate through datasets
-        for sampleIndex in sampleIndices:
+        for sampleCount, sampleIndex in enumerate(sampleIndices):
             if verbosity > 0:
                 print(f"Epoch: {self.epochIndex}, "
-                      f"sample: ({sampleIndex}/{numSamples}), ", end="\r")
+                      f"sample: ({sampleCount}/{numSamples}), ", end="\r")
 
             dataVectors = {key:value[sampleIndex] for key, value in dataset.items()}
             self.StepTrial(runType, **dataVectors)
 
             if reset : self.resetActivity()
+
+        return numSamples
 
     
     def Learn(self,
@@ -388,20 +396,19 @@ class Net:
             
         # Training loop
         print(f"Begin training [{self.name}]...")
-        errors = {metric: [] for metric in self.runConfig["metrics"]}
         for epochIndex in range(numEpochs):
             self.epochIndex = 1 + epochIndex
-            self.RunEpoch("Learn", verbosity, reset, shuffle, **dataset)
+            numSamples = self.RunEpoch("Learn", verbosity, reset, shuffle, **dataset)
             self.EvaluateMetrics(**dataset)
-            for metric, error in self.results.items():
-                errors[metric].append(error)
             if verbosity > 0:
                 primaryMetric = [key for key in self.runConfig["metrics"]][0]
-                print(f" metric[{primaryMetric}]"
-                    f" = {self.results[primaryMetric]}")
+                print(f"Epoch: {self.epochIndex}, "
+                      f"sample: ({numSamples}/{numSamples}), "
+                      f" metric[{primaryMetric}]"
+                      f" = {self.results[primaryMetric][-1]}")
                 
         print(f"Finished training [{self.name}]")
-        return errors
+        return self.results
 
     def Evaluate(self,
               verbosity = 1,
@@ -415,7 +422,7 @@ class Net:
         if verbosity > 0:
             primaryMetric = [key for key in self.runConfig["metrics"]][0]
             print(f" metric[{primaryMetric}]"
-                f" = {self.results[primaryMetric]:0.2f}")
+                f" = {self.results[primaryMetric][-1]:0.4f}")
             
         print(f"Evaluation complete.")
         return self.results
