@@ -371,7 +371,7 @@ class Net:
               shuffle: bool = True,
               batchSize = 1, # TODO: Implement batch training (average delta weights over some number of training examples)
               repeat=1, # TODO: Implement repeated sample training (train muliple times for a single input sample before moving on to the next one)
-              **dataset: dict[str, np.ndarray]):
+              **dataset: dict[str, np.ndarray]) -> dict[str: list]:
         '''Training loop that runs a specified number of epochs.
 
                 - verbosity: specifies how much is printed to the console
@@ -388,17 +388,20 @@ class Net:
             
         # Training loop
         print(f"Begin training [{self.name}]...")
+        errors = {metric: [] for metric in self.runConfig["metrics"]}
         for epochIndex in range(numEpochs):
-            self.epochIndex += 1 + epochIndex
+            self.epochIndex = 1 + epochIndex
             self.RunEpoch("Learn", verbosity, reset, shuffle, **dataset)
             self.EvaluateMetrics(**dataset)
+            for metric, error in self.results.items():
+                errors[metric].append(error)
             if verbosity > 0:
                 primaryMetric = [key for key in self.runConfig["metrics"]][0]
                 print(f" metric[{primaryMetric}]"
-                    f" = {self.results[primaryMetric]:0.2f}")
+                    f" = {self.results[primaryMetric]}")
                 
         print(f"Finished training [{self.name}]")
-        return self.results
+        return errors
 
     def Evaluate(self,
               verbosity = 1,
@@ -414,7 +417,7 @@ class Net:
             print(f" metric[{primaryMetric}]"
                 f" = {self.results[primaryMetric]:0.2f}")
             
-        print(f"Evaluatation complete.")
+        print(f"Evaluation complete.")
         return self.results
     
     def Infer(self,

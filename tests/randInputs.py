@@ -21,9 +21,7 @@ outputSize = 1
 vecs = np.random.normal(size=(numSamples, inputSize))
 mags = np.linalg.norm(vecs, axis=-1)
 inputs = np.abs(vecs/mags[...,np.newaxis])
-vecs = np.random.normal(size=(numSamples, outputSize))
-mags = np.linalg.norm(vecs, axis=-1)
-targets = np.abs(vecs/mags[...,np.newaxis])
+targets = np.random.rand(numSamples, 1)
 del vecs, mags
 
 leabraNet = Net(name = "LEABRA_NET") # Default Leabra net
@@ -40,7 +38,7 @@ leabraNet.AddConnection(layerList[0], layerList[1])
 leabraNet.AddBidirectionalConnections(layerList[1:-1], layerList[2:])
 
 resultCHL = leabraNet.Learn(input=inputs, target=targets, numEpochs=numEpochs, reset=False)
-plt.plot(resultCHL, label="Leabra Net")
+plt.plot(resultCHL['RMSE'], label="Leabra Net")
 
 
 
