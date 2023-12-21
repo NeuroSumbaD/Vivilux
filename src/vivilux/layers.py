@@ -188,7 +188,7 @@ class Layer:
 
 
     def Clamp(self, data, monitoring = False):
-        self.Act = data
+        self.Act = data.copy()
 
     def Learn(self, batchComplete=False):
         if self.isInput or self.freeze: return
