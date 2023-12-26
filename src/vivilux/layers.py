@@ -43,8 +43,8 @@ class Layer:
         self.actFn = activation
         self.rule = learningRule
         
-        # self.monitor = None
-        # self.snapshot = {}
+        self.monitors: list[Monitor] = []
+        self.snapshot = {}
 
         # self.batchMode = batchMode
         # self.deltas = [] # only used during batched training
@@ -144,6 +144,8 @@ class Layer:
         self.Vm[:] += self.DtParams["VmDt"] * Inet
     
         self.ActAvg.StepTime() # Update activity averages
+        self.UpdateSnapshot()
+        self.UpdateMonitors()
 
     def Integrate(self):
         self.GeRaw[:] = 0 # reset
@@ -174,6 +176,24 @@ class Layer:
     def AddProcess(self, process: Process):
         process.AttachLayer(self)
 
+    def AddMonitor(self, monitor: Monitor):
+        self.monitors.append(monitor)
+
+    def UpdateMonitors(self):
+        self.UpdateSnapshot()
+        for monitor in self.monitors:
+            monitor.update(self.snapshot)
+
+    def UpdateSnapshot(self):
+        self.snapshot = {
+            "activity": self.Act,
+            "GeRaw": self.GeRaw,
+            "Ge": self.Ge,
+            "GiRaw": self.GiRaw,
+            "Gi": self.Gi,
+            "Vm": self.Vm
+        }
+
     def getActivity(self, modify = False):
         return self.Act
 
@@ -189,6 +209,8 @@ class Layer:
 
     def Clamp(self, data, monitoring = False):
         self.Act = data.copy()
+        self.UpdateSnapshot()
+        self.UpdateMonitors()
 
     def Learn(self, batchComplete=False):
         if self.isInput or self.freeze: return

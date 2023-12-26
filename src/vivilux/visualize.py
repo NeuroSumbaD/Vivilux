@@ -43,6 +43,8 @@ class Monitor:
         self.ax.set_ylim(0, self.ylim)
         self.ax.legend(range(numLines))
 
+        plt.ion() # Enable interactive plot for real-time updates
+
 
     def update(self, newData: dict[str, np.array]):
         self.data[self.index] = newData[self.target]
