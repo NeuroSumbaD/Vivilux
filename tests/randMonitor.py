@@ -71,7 +71,7 @@ outLayer.AddMonitor(Monitor(
 ))
 
 layerList = [inLayer,
-             Layer(4, name="Hidden1"),
+             hidden1,
              Layer(4, name="Hidden2"),
              outLayer]
 
