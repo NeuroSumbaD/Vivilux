@@ -26,7 +26,6 @@ targets = np.random.rand(numSamples, 1)
 del vecs, mags
 
 leabraNet = Net(name = "LEABRA_NET") # Default Leabra net
-
 # Add layers
 inLayer = Layer(inputSize, isInput=True, name="Input")
 inLayer.AddMonitor(Multimonitor(
@@ -60,6 +59,7 @@ hidden1.AddMonitor(Monitor(
     numLines=4,
     target="activity"
 ))
+hidden1.monitors["Hidden1--(Act)"].enable = False
 
 outLayer = Layer(outputSize, isTarget=True, name="Output")
 outLayer.AddMonitor(Monitor(

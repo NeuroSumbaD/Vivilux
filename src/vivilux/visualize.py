@@ -16,10 +16,11 @@ if TYPE_CHECKING:
 class Monitor:
     '''A base class for monitoring network activity
     '''
-    def __init__(self, name: str,
-                 labels: list[str], limits: list[float],
-                 numLines: int = 0, target = "activity") -> None:
+    def __init__(self, name: str, labels: list[str], 
+                 limits: list[float], numLines: int = 0, 
+                 enable=True, target = "activity") -> None:
         self.name = name
+        self.enable = enable
         self.target = target
 
         self.xlabel = labels[0]
@@ -43,44 +44,45 @@ class Monitor:
         self.ax.set_ylim(0, self.ylim)
         self.ax.legend(range(numLines))
 
-        plt.ion() # Enable interactive plot for real-time updates
-
-
     def update(self, newData: dict[str, np.array]):
-        self.data[self.index] = newData[self.target]
+        if self.enable:
+            self.data[self.index] = newData[self.target]
 
-        for lineIndex, line in enumerate(self.lines):
-            line.set_ydata(self.data[:, lineIndex])
+            for lineIndex, line in enumerate(self.lines):
+                line.set_ydata(self.data[:, lineIndex])
 
-        self.index = self.index + 1 if self.index < self.xlim-1 else 0
+            self.index = self.index + 1 if self.index < self.xlim-1 else 0
 
-        #update the plot
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+            #update the plot
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
 
 class Magnitude(Monitor):
     def __init__(self, name: str, labels: list[str], 
                  limits: list[float], numLines: int = 0,
-                 target = "activity") -> None:
-        super().__init__(name, labels, limits, numLines, target)
+                 enable=True, target = "activity") -> None:
+        super().__init__(name, labels, limits, numLines, enable, target)
         mag = np.sqrt(np.sum(np.square(self.data), axis=1))
         self.magnitude = self.ax.plot(mag, "--")
         self.ax.legend([*range(numLines), "magnitude"])
     
     def update(self, newData: dict[str, np.array]):
-        super().update(newData)
-        mag = np.sqrt(np.sum(np.square(self.data), axis=1))
-        self.magnitude[0].set_ydata(mag)
+        if self.enable:
+            super().update(newData)
+            mag = np.sqrt(np.sum(np.square(self.data), axis=1))
+            self.magnitude[0].set_ydata(mag)
 
-        #update the plot
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+            #update the plot
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
 
 class Multimonitor(Monitor):
     def __init__(self, name: str, labels: list[str], limits: list[float], numLines: int = 0,
-                 targets=["activity"], defMonitor = Monitor) -> None:
+                 enable=True, targets=["activity"], defMonitor = Monitor) -> None:
+        self.name = name
+        self.enable = enable
         self.targets = targets
-        self.monitors = []
+        self.monitors: list[Monitor] = []
         for target in targets:
             if target == "gain":
                 self.monitors.append(defMonitor(name+f"--({target})", labels,
@@ -96,6 +98,7 @@ class Multimonitor(Monitor):
 
     def update(self, newData: dict[str, np.array]):
         for monitor in self.monitors:
+            monitor.enable = self.enable
             monitor.update(newData)
 
 class Record(Monitor):
