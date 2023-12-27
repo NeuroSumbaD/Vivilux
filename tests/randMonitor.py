@@ -60,6 +60,7 @@ hidden1.AddMonitor(Monitor(
     numLines=4,
     target="activity"
 ))
+hidden1.EnableMonitor("Hidden1--(Act)", False) #disable
 
 outLayer = Layer(outputSize, isTarget=True, name="Output")
 outLayer.AddMonitor(Monitor(
