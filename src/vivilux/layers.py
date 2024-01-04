@@ -43,7 +43,7 @@ class Layer:
         self.actFn = activation
         self.rule = learningRule
         
-        self.monitors: list[Monitor] = []
+        self.monitors: dict[str, Monitor] = {}
         self.snapshot = {}
 
         # self.batchMode = batchMode
@@ -177,12 +177,14 @@ class Layer:
         process.AttachLayer(self)
 
     def AddMonitor(self, monitor: Monitor):
-        self.monitors.append(monitor)
+        self.monitors[monitor.name] = monitor
 
     def UpdateMonitors(self):
-        self.UpdateSnapshot()
-        for monitor in self.monitors:
+        for monitor in self.monitors.values():
             monitor.update(self.snapshot)
+    
+    def EnableMonitor(self, monitorName: str, enable: bool = True):
+        self.monitors[monitorName].enable = enable
 
     def UpdateSnapshot(self):
         self.snapshot = {
