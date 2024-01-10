@@ -86,6 +86,7 @@ class Layer:
         # Attach channel params
         self.Gbar = layerConfig["Gbar"]
         self.Erev = layerConfig["Erev"]
+        self.Vm[:] = self.Erev["L"] # initialize to resting (leak) potential
 
         # Attach DtParams
         self.DtParams = layerConfig["DtParams"]
@@ -117,8 +118,8 @@ class Layer:
         Erev = self.Erev
         Gbar = self.Gbar
         Thr = self.actFn.Thr
-        geThr = (self.Gi * (Erev["I"] - Thr) +
-                 Gbar["L"] * (Erev["I"] - Thr)
+        geThr = (self.Gi * Gbar["I"] * (Erev["I"] - Thr) +
+                 Gbar["L"] * (Erev["L"] - Thr)
                 )
         geThr /= (Thr - Erev["E"])
 
@@ -137,9 +138,9 @@ class Layer:
 
         # Update layer potentials
         Vm = self.Vm
-        Inet = (self.Ge * (Erev["E"] - Vm) +
+        Inet = (self.Ge * Gbar["E"] * (Erev["E"] - Vm) +
                 Gbar["L"] * (Erev["L"] - Vm) +
-                Gbar["I"] * (Erev["I"] - Vm)
+                self.Gi * Gbar["I"] * (Erev["I"] - Vm)
                 )
         self.Vm[:] += self.DtParams["VmDt"] * Inet
     

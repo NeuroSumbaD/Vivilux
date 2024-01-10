@@ -15,7 +15,7 @@ import math
 import numpy as np
 
 # import defaults
-from .meshes import Mesh, TransposeMesh
+from .meshes import AbsMesh, TransposeMesh
 from .metrics import RMSE
 from .optimizers import Simple
 from .visualize import Monitor
@@ -25,7 +25,7 @@ from .visualize import Monitor
 ###<------ DEFAULT CONFIGURATIONS ------>###
 
 ffMeshConfig_std = {
-    "meshType": Mesh,
+    "meshType": AbsMesh,
     "meshArgs": {},
 }
 

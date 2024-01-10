@@ -18,7 +18,7 @@ numEpochs = 100
 inputSize = 3
 outputSize = 1
 
-#define input and output data (must be normalized and positive-valued)
+# Define input and output data (must be normalized and positive-valued)
 vecs = np.random.normal(size=(numSamples, inputSize))
 mags = np.linalg.norm(vecs, axis=-1)
 inputs = np.abs(vecs/mags[...,np.newaxis])
@@ -27,14 +27,20 @@ del vecs, mags
 
 leabraNet = Net(name = "LEABRA_NET") # Default Leabra net
 
-# Add layers
+# Define layers
 inLayer = Layer(inputSize, isInput=True, name="Input")
+hidden1 = Layer(25, name="Hidden1")
+hidden2 = Layer(25, name="Hidden2")
+outLayer = Layer(outputSize, isTarget=True, name="Output")
+
+# Define Monitors
 inLayer.AddMonitor(Multimonitor(
     "Input", 
     labels=["time step", "activity"], 
     limits=[25, 2], 
     numLines=inputSize, 
-    targets=["activity", "Ge"])
+    targets=["activity", "Ge"]
+    )
 )
 
 # inLayer.AddMonitor(Monitor(
@@ -52,30 +58,40 @@ inLayer.AddMonitor(Multimonitor(
 #     numLines=inputSize, 
 #     target="Ge")
 # )
-hidden1 = Layer(4, name="Hidden1")
-hidden1.AddMonitor(Monitor(
-    "Hidden1--(Act)",
+
+hidden1.AddMonitor(Multimonitor(
+    "Hidden1",
     labels = ["time step", "activity"],
     limits=[25, 2],
-    numLines=4,
-    target="activity"
-))
-hidden1.EnableMonitor("Hidden1--(Act)", False) #disable
+    numLines=len(hidden1),
+    targets=["activity", "Ge"]
+    )
+)
+# hidden1.EnableMonitor("Hidden1", False) #disable
 
-outLayer = Layer(outputSize, isTarget=True, name="Output")
-outLayer.AddMonitor(Monitor(
-    "Output--(Act)",
+hidden2.AddMonitor(Multimonitor(
+    "Hidden2",
+    labels = ["time step", "activity"],
+    limits=[25, 2],
+    numLines=len(hidden1),
+    targets=["activity", "Ge"]
+    )
+)
+
+outLayer.AddMonitor(Multimonitor(
+    "Output",
     labels =["time step", "activity"],
     limits=[25, 2],
     numLines=outputSize,
-    target="activity"
-))
+    targets=["activity", "Ge"]
+    )
+)
 
+# Add layers to net
 layerList = [inLayer,
              hidden1,
-             Layer(4, name="Hidden2"),
+             hidden2,
              outLayer]
-
 leabraNet.AddLayers(layerList)
 
 # Add bidirectional connections
@@ -85,24 +101,7 @@ leabraNet.AddBidirectionalConnections(layerList[1:-1], layerList[2:])
 resultCHL = leabraNet.Learn(input=inputs, target=targets, numEpochs=numEpochs, reset=False)
 plt.plot(resultCHL['RMSE'], label="Leabra Net")
 
-
-
-# sig = lambda x: tf.math.sigmoid(10*(x-0.5))
-# refModel = tf.keras.models.Sequential([
-#     tf.keras.layers.InputLayer(input_shape=(4,)),
-#     tf.keras.layers.Dense(4, use_bias=False, activation=sig),
-#     tf.keras.layers.Dense(4, use_bias=False, activation=sig),
-# ])
-# refModel.compile(optimizer=tf.keras.optimizers.SGD(0.001084),
-#                  loss = "mae",
-#                  metrics = "mse"
-# )
-
-# refResult = np.sqrt(refModel.fit(inputs, targets, epochs=numEpochs, batch_size=1).history["mse"])
-# plt.plot(refResult, label="SGD")
-
-
-
+# Compare to average RMSE of completely random guessing (uniform distribution)
 baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
