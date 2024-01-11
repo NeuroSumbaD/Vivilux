@@ -184,20 +184,25 @@ class XCAL(PhasicProcess):
                  DRev = 0.1,
                  DThr = 0.0001,
                  hasNorm = True,
+                 Norm_LrComp = 0.15,
+                 normMin = 0.001,
                  DecayTau = 1000,
                  hasMomentum = True, #TODO allow this to be set by layer or mesh config
                  MTau = 10, #TODO allow this to be set by layer or mesh config
-                 LrComp = 0.1, #TODO allow this to be set by layer or mesh config
+                 Momentum_LrComp = 0.1, #TODO allow this to be set by layer or mesh config
                  LrnThr = 00, #TODO find correct default and implement behavior: if sn.AvgS < pj.Learn.XCal.LrnThr && sn.AvgM < pj.Learn.XCal.LrnThr {continue}
                  Lrate = 0.04,
                  ):
         self.DRev = DRev
         self.DThr = DThr
         self.hasNorm = hasNorm
+        self.norm = 1 # TODO: Check for correct initilization
+        self.Norm_LrComp = Norm_LrComp
+        self.normMin = normMin
         self.DecayTau = DecayTau
         self.hasMomentum = hasMomentum
         self.MTau = MTau
-        self.LrComp = LrComp
+        self.Momentum_LrComp = Momentum_LrComp
         self.Lrate = Lrate
 
         self.MDt = 1/MTau
@@ -266,10 +271,10 @@ class XCAL(PhasicProcess):
         # Implement momentum optimiziation
         if self.hasMomentum:
             self.moment = self.MDt * self.moment + dwt
-            dwt = self.LrComp * self.moment
+            dwt = self.Momentum_LrComp * self.moment
             # TODO allow other optimizers (momentum, adam, etc.) from optimizers.py
 
-        dwt *= norm
+        dwt *= self.Norm_LrComp / np.maximum(norm, self.normMin)
 
         Dwt = self.Lrate * dwt # TODO implment Leabra and generalized learning rate schedules
 
@@ -300,8 +305,8 @@ class XCAL(PhasicProcess):
 
         # (x < DThr) ? 0 : (x > th * DRev) ? (x - th) : (-x * ((1-DRev)/DRev))
         out[mask1] = 0
-        out[mask2] = x - th
-        out[mask3] = -x * ((1-self.DRev)/self.DRev)
+        out[mask2] = x[mask2] - th[mask2]
+        out[mask3] = -x[mask3] * ((1-self.DRev)/self.DRev)
 
         return out
 
@@ -321,7 +326,8 @@ class XCAL(PhasicProcess):
         send = self.send.ActAvg
         recv = self.recv.ActAvg
         srs = recv.AvgSLrn[:,np.newaxis] @ send.AvgSLrn[np.newaxis,:]
-        dwt = self.xcal(srs, recv.AvgL)
+        AvgL = np.repeat(recv.AvgL[:,np.newaxis], len(self.send), axis=1)
+        dwt = self.xcal(srs, AvgL)
 
         return dwt
 
@@ -330,6 +336,12 @@ class XCAL(PhasicProcess):
         recv = self.recv.ActAvg
         srs = recv.AvgSLrn[:,np.newaxis] @ send.AvgSLrn[np.newaxis,:]
         srm = recv.AvgM[:,np.newaxis] @ send.AvgM[np.newaxis,:]
+        AvgL = np.repeat(recv.AvgL[:,np.newaxis], len(self.send), axis=1)
+        # AvgLLrn = np.repeat(self.AvgLLrn[:,np.newaxis], len(self.send), axis=1)
 
-        dwt = self.xcal(srs, srm) + self.AvgLLrn * self.xcal(srs, recv.AvgL)
+        errorDriven = self.xcal(srs, srm)
+        hebbLike = self.xcal(srs, AvgL)
+        hebbLike = (hebbLike.T @ self.AvgLLrn).T # mult each recv by AvgLLrn
+        dwt = errorDriven + hebbLike
+        
         return dwt  

@@ -71,6 +71,9 @@ class Layer:
 
         self.name =  f"LAYER_{Layer.count}" if name == None else name
         if isInput: self.name = "INPUT_" + self.name
+        self.isInput = isInput
+        self.isTarget = isTarget
+        self.freeze = False
 
         Layer.count += 1
 
@@ -86,7 +89,8 @@ class Layer:
         # Attach channel params
         self.Gbar = layerConfig["Gbar"]
         self.Erev = layerConfig["Erev"]
-        self.Vm[:] = self.Erev["L"] # initialize to resting (leak) potential
+        self.Vm[:] = layerConfig["VmInit"] # initialize Vm
+        self.VmInit = layerConfig["VmInit"]
 
         # Attach DtParams
         self.DtParams = layerConfig["DtParams"]
@@ -147,6 +151,7 @@ class Layer:
         self.ActAvg.StepTime() # Update activity averages
         self.UpdateSnapshot()
         self.UpdateMonitors()
+        self.Inet = Inet # TODO: remove unnecessary variable
 
     def Integrate(self):
         self.GeRaw[:] = 0 # reset
@@ -205,9 +210,9 @@ class Layer:
     
     def resetActivity(self):
         '''Resets all activation traces to zero vectors.'''
-        length = len(self)
-        self.Act = np.zeros(length)
-        self.Vm = np.zeros(length)
+        # length = len(self)
+        self.Act[:] = 0
+        self.Vm[:] = self.VmInit
 
 
     def Clamp(self, data, monitoring = False):

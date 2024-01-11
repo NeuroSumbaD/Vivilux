@@ -36,6 +36,7 @@ fbMeshConfig_std = {
 
 layerConfig_std = {
     # "DELTA_Vm" : 0.1/2.81,
+    "VmInit": 0.4,
     "hasInhib" : True,
     "Gbar": { # Max conductances for each effective channel
         "E": 1.0, # Excitatory
@@ -84,12 +85,14 @@ phaseConfig_std = {
     "minus": {
         "numTimeSteps": 75,
         "isOutput": True,
+        "isLearn": False,
         "clampLayers": {"input": 0,
                     },
     },
     "plus": {
         "numTimeSteps": 25,
         "isOutput": False,
+        "isLearn": True,
         "clampLayers": {"input": 0,
                     "target": -1,
                     },
@@ -336,6 +339,10 @@ class Net:
                 for dataName, layer in self.layerDict["outputLayers"].items():
                     # TODO use pre-allocated numpy array to speed up execution
                     self.outputs[dataName].append(layer.getActivity())
+
+            if self.phaseConfig[phaseName]["isLearn"]:
+                for layer in self.layers:
+                    layer.Learn()
 
     def RunEpoch(self,
                  runType: str,

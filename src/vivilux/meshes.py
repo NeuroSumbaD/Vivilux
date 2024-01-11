@@ -65,7 +65,7 @@ class Mesh:
             
     def applyTo(self, data):
         try:
-            return self.get() @ data
+            return np.array(self.get() @ data).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
         except ValueError as ve:
             print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
                   f"of dimension: {self.get().shape}")
@@ -79,13 +79,13 @@ class Mesh:
     def Update(self,
                # delta: np.ndarray ### Now delta is handled by the 
                ):
-        # m, n = delta.shape
         # self.modified = True
         # self.matrix[:m, :n] += self.rate*delta
-        # self.matrix[:m, :n] += delta
 
         delta = self.XCAL.GetDeltas()
-        self.matrix += delta
+        m, n = delta.shape
+        self.matrix[:m, :n] += delta
+        # self.matrix += delta
 
     def __len__(self):
         return self.size
@@ -179,8 +179,8 @@ class AbsMesh(Mesh):
         self.matrix = np.abs(self.matrix)
 
 
-    def Update(self, delta: np.ndarray):
-        super().Update(delta)
+    def Update(self):
+        super().Update()
         self.matrix = np.abs(self.matrix)
 
 
@@ -219,6 +219,7 @@ class SoftMesh(Mesh):
     #     return 1/(1+np.exp(-3*mat))
 
     def Update(self, delta: np.ndarray):
+        # TODO: update this code
         mat = self.get()
         # mm, mn = mat.shape
         m, n = delta.shape
