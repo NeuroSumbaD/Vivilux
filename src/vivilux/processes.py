@@ -94,12 +94,13 @@ class ActAvg(PhasicProcess):
     '''
     def __init__(self,
                  layer: Layer,
+                 Init = 0.15,
                  SSTau = 2,
                  STau = 2,
                  MTau = 10,
-                 Tau = 10,
                 #  ActAvgTau = 10,
-                 Init = 0.4,
+                 Tau = 10,
+                 AvgL_Init = 0.4,
                  Gain = 2.5,
                  Min = 0.2,
                  LrnM = 0.1,
@@ -107,12 +108,13 @@ class ActAvg(PhasicProcess):
                  LrnMax = 0.5,
                  LrnMin = 0.0001,
                  ):
+        self.Init = Init
         self.SSTau = SSTau
         self.STau = STau
         self.MTau = MTau
         self.Tau = Tau
         # self.ActAvgTau = ActAvgTau
-        self.Init = Init
+        self.AvgL_Init = AvgL_Init
         self.Gain = Gain
         self.Min = Min
         self.LrnM = LrnM
@@ -144,13 +146,13 @@ class ActAvg(PhasicProcess):
 
         self.AvgSLrn = np.zeros(len(self.pool))
 
-        self.InitAct
+        self.InitAct()
 
     def InitAct(self):
         self.AvgSS[:] = self.Init
         self.AvgS[:] = self.Init
         self.AvgM[:] = self.Init
-        self.AvgL[:] = self.Init
+        self.AvgL[:] = self.AvgL_Init
 
     def StepTime(self):
         '''Updates running averages at every timestep to smooth the activity

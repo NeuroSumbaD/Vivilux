@@ -18,14 +18,14 @@ class ReLu:
         return np.maximum(self.m*(x-self.b), 0)
 
 # TODO: Check how thr is passed around
-def XX1_Scalar(x, thr=0.5):
+def XX1_Scalar(x, thr=0):
     x -= thr
     if x > 0:
-        return x/x+1
+        return x/(x+1)
     else:
         return 0    
 
-def XX1(x: np.ndarray, thr=0.5):
+def XX1(x: np.ndarray, thr=0):
     '''Computes X/(X+1) for X > 0 and returns 0 elsewhere.
     '''
     inp = x.copy()
@@ -89,7 +89,9 @@ class NoisyXX1:
         self.SigGainNVar = SigGain / NVar # ig_gain / nvar
         self.SigMultEff = SigMult * np.power(Gain*NVar, SigMultPow) # overall multiplier on sigmoidal component for values below threshold = sig_mult * pow(gain * nvar, sig_mult_pow)
         self.SigValAt0 = 0.5 * self.SigMultEff # 0.5 * sig_mult_eff -- used for interpolation portion
-        self.InterpVal = XX1GainCor_Scalar(InterpRange) - self.SigValAt0 # function value at interp_range - sig_val_at_0 -- for interpolation
+        # function value at interp_range - sig_val_at_0 -- for interpolation
+        self.InterpVal = XX1GainCor_Scalar(InterpRange, Gain, NVar, GainCor,
+                                           GainCorRange) - self.SigValAt0 
 
     def __call__(self, x: np.ndarray):
         out = x.copy()
