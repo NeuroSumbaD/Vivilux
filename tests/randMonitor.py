@@ -37,7 +37,7 @@ outLayer = Layer(outputSize, isTarget=True, name="Output")
 inLayer.AddMonitor(Multimonitor(
     "Input", 
     labels=["time step", "activity"], 
-    limits=[25, 2], 
+    limits=[100, 2], 
     numLines=inputSize, 
     targets=["activity", "Ge"]
     )
@@ -62,7 +62,7 @@ inLayer.AddMonitor(Multimonitor(
 hidden1.AddMonitor(Multimonitor(
     "Hidden1",
     labels = ["time step", "activity"],
-    limits=[25, 2],
+    limits=[100, 2],
     numLines=len(hidden1),
     targets=["activity", "Ge"]
     )
@@ -72,7 +72,7 @@ hidden1.AddMonitor(Multimonitor(
 hidden2.AddMonitor(Multimonitor(
     "Hidden2",
     labels = ["time step", "activity"],
-    limits=[25, 2],
+    limits=[100, 2],
     numLines=len(hidden1),
     targets=["activity", "Ge"]
     )
@@ -81,7 +81,7 @@ hidden2.AddMonitor(Multimonitor(
 outLayer.AddMonitor(Multimonitor(
     "Output",
     labels =["time step", "activity"],
-    limits=[25, 2],
+    limits=[100, 2],
     numLines=outputSize,
     targets=["activity", "Ge"]
     )

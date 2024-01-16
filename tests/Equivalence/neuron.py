@@ -18,6 +18,10 @@ import matplotlib.pyplot as plt
 from os import path
 import pathlib
 
+# Read in CSV
+directory = pathlib.Path(__file__).parent.resolve()
+df = pd.read_csv(path.join(directory, "neuron.csv"))
+
 numTimeSteps = 200
 timeAx = np.arange(numTimeSteps)
 Ge = np.zeros(numTimeSteps)
@@ -35,9 +39,9 @@ class CustomLayer(Layer):
         self.step += 1
 
 # Define units
-act = NoisyXX1(Gain=30, NVar=0.01, VmActThr=0.01)
+act = NoisyXX1(Thr=0.5, Gain=30, NVar=0.01, VmActThr=0.01)
 # stim = Layer(1, isInput=True, name="Input")
-neuron = CustomLayer(1, name="Neuron")
+neuron = CustomLayer(1, name="Neuron", activation=act)
 
 
 
@@ -67,7 +71,7 @@ for step in timeAx:
     Inet[step] = neuron.Inet
     Act[step] = neuron.getActivity()
 
-fig, ax = plt.subplots(1,2)
+fig, ax = plt.subplots(2,1)
 ax[0].plot(timeAx, Ge, label="Ge")
 ax[0].plot(timeAx, Vm, label="Vm")
 ax[0].plot(timeAx, Inet, label="Inet")
@@ -77,9 +81,6 @@ ax[0].set_xlabel("time step")
 ax[0].set_ylim(-0.2,1.0)
 ax[0].legend()
 
-# Read in CSV
-directory = pathlib.Path(__file__).parent.resolve()
-df = pd.read_csv(pd.read_csv(path.join(directory, "neuron.csv")))
                  
 # Plotting
 ax[1].plot(df["|Cycle"].to_numpy(), df["#Ge"].to_numpy(), label="Ge")
