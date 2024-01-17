@@ -82,15 +82,26 @@ $$f_{xcal}(xy, \theta_p) = xy-\theta_p, \, xy > \theta_p \theta_d \\ -xy(1- \the
 - $\theta_d$ marks where the slope of $\Delta w$ switches from negative to positive (typically, $\theta_d = 0.1$)
 - $xy$ is the neural activity (product of sending neuron's activity and receiving neuron's activity)
 
-### Error-Driven Learning
+### Error-Driven and Self-Organizing Learning
 
 To achieve error-driven learning, the XCAL dWt function is used in combination with a dynamic time-averaged threshold for $\theta_p$. $\theta_p$ is defined as the medium-time scale average synaptic activity, obtained from the neural states during the minus phase. The most recent activity averages during the plus phase are used for the $xy$ term in the XCAL function.
 
-Here is the updated learning function: $$\Delta w = f_{xcal}(x_sy_s, x_my_m)$$
+Here is the error-driven learning function: $$\Delta w = f_{xcal}(x_sy_s, x_my_m)$$
 
 - $x_sy_s$ is the short-term neural activity (reflecting actual outcome during the plus phase)
 - $x_my_m$ is the medium-time scale average synaptic activity (reflecting expectation during the minus phase)
 
+This can be combined with another term that takes into account the *long-term average activity of the postsynaptic neuron*, $y_l$. $y_l$ The computation to determine $y_l$ can be outlined in pseudocode ($y$ is the receiving neuron's activity):
+
+- if $y > 0.2$, then $y_l = y_l + \frac{1}{\tau_1}(max-y_l)$
+- else, $y_l = y_l + \frac{1}{\tau_1}(min-y_l)$
+- $\tau_1$ is 10 by default (integrating over 10 trials)
+
+Using $y_l$ as the dynamic threshold in the XCAL function ($\Delta w = f_{xcal}(xy, y_l)$) results in *self-organizing learning*. By combining the error-driven learning equation with the self-organizing model based on a long-term time average, we obtain a versatile learning function: $$\Delta w = \lambda_l f_{xcal}(x_sy_s, y_l) + \lambda_m f_{xcal}(x_sy_s, x_my_m)$$
+
+- $\lambda_l$ is the learning rate for self-organizing learning
+- $\lambda_m$ is the learning rate for error-driven learning
+- $y_l$ is the long-term average activity of the postsynaptic neuron
 
 
 ## Optimizers
