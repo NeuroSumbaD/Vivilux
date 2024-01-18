@@ -5,7 +5,7 @@ from vivilux.meshes import AbsMesh
 from vivilux.metrics import RMSE
 from vivilux.learningRules import CHL, GeneRec
 from vivilux.optimizers import Decay
-from vivilux.visualize import Monitor, Multimonitor
+from vivilux.visualize import Monitor, Multimonitor, StackedMonitor
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -34,10 +34,11 @@ hidden2 = Layer(25, name="Hidden2")
 outLayer = Layer(outputSize, isTarget=True, name="Output")
 
 # Define Monitors
-inLayer.AddMonitor(Multimonitor(
+inLayer.AddMonitor(StackedMonitor(
     "Input", 
     labels=["time step", "activity"], 
     limits=[100, 2], 
+    layout=[1, 2],
     numLines=inputSize, 
     targets=["activity", "Ge"]
     )
@@ -52,36 +53,43 @@ inLayer.AddMonitor(Multimonitor(
 # )
 
 # inLayer.AddMonitor(Monitor(
-#     "Input", 
+#     "Input2", 
 #     labels=["time step", "activity"], 
 #     limits=[25, 2], 
 #     numLines=inputSize, 
 #     target="Ge")
 # )
+# inLayer.EnableMonitor("Input2", False)
 
-hidden1.AddMonitor(Multimonitor(
+hidden1.AddMonitor(StackedMonitor(
     "Hidden1",
     labels = ["time step", "activity"],
     limits=[100, 2],
+    layout=[2, 1],
     numLines=len(hidden1),
-    targets=["activity", "Ge"]
+    targets=["activity", "Ge"],
+    legendVisibility=False
     )
 )
+
 # hidden1.EnableMonitor("Hidden1", False) #disable
 
-hidden2.AddMonitor(Multimonitor(
+hidden2.AddMonitor(StackedMonitor(
     "Hidden2",
     labels = ["time step", "activity"],
     limits=[100, 2],
-    numLines=len(hidden1),
-    targets=["activity", "Ge"]
+    layout=[2, 1],
+    numLines=len(hidden2),
+    targets=["activity", "Ge"],
+    legendVisibility=False
     )
 )
 
-outLayer.AddMonitor(Multimonitor(
+outLayer.AddMonitor(StackedMonitor(
     "Output",
     labels =["time step", "activity"],
     limits=[100, 2],
+    layout=[1, 2],
     numLines=outputSize,
     targets=["activity", "Ge"]
     )
