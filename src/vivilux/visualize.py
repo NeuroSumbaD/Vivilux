@@ -101,6 +101,64 @@ class Multimonitor(Monitor):
             monitor.enable = self.enable
             monitor.update(newData)
 
+class StackedMonitor(Monitor):
+    '''A multimonitor that displays multiple monitors in one figure.
+    '''
+    def __init__(self, name: str, labels: list[str], limits: list[float], 
+                 layout: list[int], numLines: int = 0, enable=True, 
+                 targets=["activity"], legendVisibility=True) -> None:
+        self.name = name
+        self.targets = targets
+        self.enable = enable
+        self.layout = layout
+
+        self.xlabel = labels[0]
+        self.ylabel = labels[1]
+        self.xlim = limits[0]
+        self.ylim = limits[1]
+        
+        # Generate figure and axes based on layout
+        self.sharex = layout[1] == 1
+        self.sharey = layout[0] == 1
+        self.fig, self.axs = plt.subplots(*self.layout, sharex=self.sharex, sharey=self.sharey)
+
+        # Initialize data for each target
+        self.numTarget = len(self.targets)
+        self.data = np.zeros((self.numTarget, self.xlim, numLines))
+        self.lines = [self.axs[i].plot(self.data[i]) for i in range(self.numTarget)]
+        self.index = 0
+
+        # Configure figure and axes labels
+        self.fig.suptitle(self.name)
+        if self.sharex:
+            self.fig.supxlabel(self.xlabel)
+        if self.sharey:
+            self.fig.supylabel(self.ylabel)
+
+        for i in range(self.numTarget):
+            ax = self.axs[i]
+            ax.set_title(targets[i])
+            if not self.sharex:
+                ax.set_xlabel(self.xlabel)
+            if not self.sharey:
+                ax.set_ylabel(self.ylabel)
+            ax.set_ylim(0, self.ylim)
+            if legendVisibility:
+                ax.legend(range(numLines))
+
+    def update(self, newData: dict[str, np.array]):
+        if self.enable:
+            for i in range(self.numTarget):
+                self.data[i][self.index] = newData[self.targets[i]]
+
+                for lineIndex, line in enumerate(self.lines[i]):
+                    line.set_ydata(self.data[i][:, lineIndex])
+
+            self.index = self.index + 1 if self.index < self.xlim-1 else 0
+
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
+
 class Record(Monitor):
     '''A monitor for recording data without plotting.
     '''
