@@ -82,7 +82,7 @@ class FFFB(NeuralProcess):
         self.fbi += FFFBparams["FBDt"] * FFFBparams["FB"] * (avgAct - self.fbi)
 
         # Add inhibition to the inhibition
-        self.pool.GiRaw[:] += FFFBparams["Gi"] * (ffi + self.fbi)
+        self.pool.Gi_FFFB = FFFBparams["Gi"] * (ffi + self.fbi)
 
     def Reset(self):
         self.ffi = 0
@@ -107,6 +107,10 @@ class ActAvg(PhasicProcess):
                  ModMin = 0.01,
                  LrnMax = 0.5,
                  LrnMin = 0.0001,
+                 #ActPAvg plus phase averaging params
+                 ActPAvg_Init = 0.15,
+                 ActPAvg_Tau = 100,
+                 ActPAvg_Adjust = 1,
                  ):
         self.Init = Init
         self.SSTau = SSTau
@@ -128,6 +132,12 @@ class ActAvg(PhasicProcess):
         self.Dt = 1/Tau
         # self.ActAvgDt = 1/ActAvgTau
 
+        self.ActPAvg = ActPAvg_Init #TODO: compare with Leabra
+        self.ActPAvgEff = ActPAvg_Init
+        self.ActPAvg_Tau = ActPAvg_Tau
+        self.ActPAvg_Dt = 1/ActPAvg_Tau
+        self.ActPAvg_Adjust = ActPAvg_Adjust
+
         self.AttachLayer(layer)
 
         self.phases = ["plus"]
@@ -135,8 +145,8 @@ class ActAvg(PhasicProcess):
     def AttachLayer(self, layer: Layer):
         self.pool = layer
 
-        layer.neuralProcesses.append(self)
-        layer.phaseProcesses.append(self)
+        # layer.neuralProcesses.append(self) # Layer calls this process directly
+        # layer.phaseProcesses.append(self) # Layer calls this directly at trial start
 
         # Pre-allocate Numpy
         self.AvgSS = np.zeros(len(self.pool))
@@ -170,12 +180,18 @@ class ActAvg(PhasicProcess):
         self.AvgL += self.Dt * (self.Gain * self.AvgM - self.AvgL)
         self.AvgL = np.maximum(self.AvgL, self.Min)
 
+        # Update plus phase average
+        Act = np.mean(self.pool.getActivity())
+        self.ActPAvg += self.ActPAvg_Dt * (Act-self.ActPAvg)
+        self.ActPAvgEff = self.ActPAvg_Adjust * self.ActPAvg
+
         
 
     def Reset(self):
-        self.AvgSS[:] = 0
-        self.AvgS[:] = 0
-        self.AvgM[:] = 0
+        self.InitAct()
+        # self.AvgSS[:] = 0
+        # self.AvgS[:] = 0
+        # self.AvgM[:] = 0
         # self.AvgL[:] = 0  
         # self.AvgLLrn[:] = 0
         # self.AvgSLrn[:] = 0

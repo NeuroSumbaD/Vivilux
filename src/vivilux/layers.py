@@ -32,6 +32,8 @@ class Layer:
                  learningRule=CHL,
                  isInput = False,
                  isTarget = False, # Specifies the layer is an output layer
+                 clampMax = 0.95,
+                 clampMin = 0,
                 #  freeze = False,
                 #  batchMode=False,
                  name = None,
@@ -45,6 +47,9 @@ class Layer:
         
         self.monitors: dict[str, Monitor] = {}
         self.snapshot = {}
+
+        self.clampMax = clampMax
+        self.clampMin = clampMin
 
         # self.batchMode = batchMode
         # self.deltas = [] # only used during batched training
@@ -70,7 +75,7 @@ class Layer:
         # self.ActPAvg = np.mean(self.outAct) # initialize for Gscale
 
         self.name =  f"LAYER_{Layer.count}" if name == None else name
-        if isInput: self.name = "INPUT_" + self.name
+        if isInput and name == None: self.name = "INPUT_" + self.name
         self.isInput = isInput
         self.isTarget = isTarget
         self.freeze = False
@@ -83,7 +88,7 @@ class Layer:
         '''
         self.net = net
 
-        self.DELTA_TIME = net.runConfig["DELTA_TIME"]
+        # self.DELTA_TIME = net.runConfig["DELTA_TIME"]
         # self.DELTA_Vm = layerConfig["DELTA_VM"]
 
         # Attach channel params
@@ -106,22 +111,52 @@ class Layer:
         self.ActAvg = ActAvg(self) # TODO add to std layerConfig and pass params here
 
         # Attach FFFB process
+        ##NOTE: special process, executed after Ge update, before Gi update
         if layerConfig["hasInhib"]:
-            self.neuralProcesses.append(FFFB(self))
+            self.FFFB = FFFB(self)
+            self.Gi_FFFB = 0
 
         # Attach optimizer
         self.optimizer = layerConfig["optimizer"](**layerConfig["optArgs"])
 
         self.isFloating = False
 
-    def StepTime(self):
+    def UpdateConductance(self):
         self.Integrate()
         self.RunProcesses()
+
+        # Update conductances from raw inputs
+        self.Ge[:] += (self.DtParams["Integ"] *
+                       self.DtParams["GDt"] * 
+                       (self.GeRaw - self.Ge)
+                       )
         
-        # Calculate conductance threshold
+        # Call FFFB to update GiRaw
+        self.FFFB.StepTime()
+
+        self.Gi[:] += (self.DtParams["Integ"] *
+                       self.DtParams["GDt"] * 
+                       (self.GiRaw - self.Gi)
+                       )
+        self.Gi[:] += self.Gi_FFFB # Add FFFB contribution
+    
+    def StepTime(self, time: float, debugData=None):
+        self.UpdateConductance()
+
+        # Aliases for readability
         Erev = self.Erev
         Gbar = self.Gbar
         Thr = self.actFn.Thr
+        
+        # Update layer potentials
+        Vm = self.Vm
+        Inet = (self.Ge * Gbar["E"] * (Erev["E"] - Vm) +
+                Gbar["L"] * (Erev["L"] - Vm) +
+                self.Gi * Gbar["I"] * (Erev["I"] - Vm)
+                )
+        self.Vm[:] += self.DtParams["VmDt"] * Inet
+
+        # Calculate conductance threshold
         geThr = (self.Gi * Gbar["I"] * (Erev["I"] - Thr) +
                  Gbar["L"] * (Erev["L"] - Thr)
                 )
@@ -133,45 +168,62 @@ class Layer:
         # Activity below threshold is nearly zero
         mask = np.logical_and(
             self.Act < self.actFn.VmActThr,
-            self.Vm < self.actFn.Thr
+            self.Vm <= self.actFn.Thr
             )
         newAct[mask] = self.actFn(self.Vm[mask] - Thr)
 
         # Update layer activities
         self.Act[:] += self.DtParams["VmDt"] * (newAct - self.Act)
-
-        # Update layer potentials
-        Vm = self.Vm
-        Inet = (self.Ge * Gbar["E"] * (Erev["E"] - Vm) +
-                Gbar["L"] * (Erev["L"] - Vm) +
-                self.Gi * Gbar["I"] * (Erev["I"] - Vm)
-                )
-        self.Vm[:] += self.DtParams["VmDt"] * Inet
     
         self.ActAvg.StepTime() # Update activity averages
         self.UpdateSnapshot()
         self.UpdateMonitors()
         self.Inet = Inet # TODO: remove unnecessary variable
 
+        # TODO: find a way to make this more readable
+        # TODO: check how this affects execution time
+        if debugData is not None:
+            self.Debug(time=time,
+                       Act = self.Act,
+                       AvgS = self.ActAvg.AvgS,
+                       AvgSS = self.ActAvg.AvgSS,
+                       AvgM = self.ActAvg.AvgM,
+                       AvgL = self.ActAvg.AvgL,
+                    #    AvgLLrn = self.ActAvg.AvgLLrn,
+                       AvgSLrn = self.ActAvg.AvgSLrn,
+                       Ge=self.Ge,
+                       GeRaw=self.GeRaw,
+                       Gi=self.Gi,
+                       GiRaw=self.GiRaw,
+                       Erev=Erev,
+                       Gbar=Gbar,
+                       geThr=geThr,
+                       Vm=Vm,
+                       Inet=Inet,
+                       **debugData
+                       )
+
     def Integrate(self):
-        self.GeRaw[:] = 0 # reset
+        '''Integrates raw conductances from incoming synaptic connections.
+            These raw values are then used to update the overall conductance
+            in a time integrated manner.
+        '''
         for mesh in self.excMeshes:
             self.GeRaw[:] += mesh.apply()[:len(self)]
 
-        self.Ge[:] += (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GeRaw - self.Ge)
-                       )
-
-        self.GiRaw[:] = 0 # reset
         for mesh in self.inhMeshes:
             self.GiRaw[:] += mesh.apply()[:len(self)]
 
-        self.Gi[:] += (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GiRaw - self.Gi)
-                       )
+    def InitTrial(self):
+        for mesh in self.excMeshes:
+            mesh.setGscale()
 
+        # Update AvgL
+        self.ActAvg.StepPhase()
+
+        self.GeRaw[:] = 0 # reset
+        self.GiRaw[:] = 0 # reset
+    
     def RunProcesses(self):
         '''A set of additional high-level processes which result in current
             stimulus to the neurons in the layer.
@@ -216,7 +268,13 @@ class Layer:
 
 
     def Clamp(self, data, monitoring = False):
-        self.Act = data.copy()
+        clampData = data.copy()
+        # truncate extrema
+        clampData[clampData > self.clampMax] = self.clampMax
+        clampData[clampData < self.clampMin] = self.clampMin
+        self.Act = clampData
+        # TODO: Change to a method (self.finishCycle?) to standardize
+        self.ActAvg.StepTime()
         self.UpdateSnapshot()
         self.UpdateMonitors()
 
@@ -240,6 +298,28 @@ class Layer:
             # optDelta = self.optimizer(delta)
             # mesh.Update(optDelta)
         
+    def Debug(self, **kwargs):
+        if "activityLog" in kwargs:
+            actLog = kwargs["activityLog"]
+
+            allEqual = {}
+            
+            # isolate activity on current time step and layer
+            currentLog = actLog[actLog["time"]==kwargs["time"]]
+            currentLog = currentLog[currentLog["name"]==self.name]
+            currentLog = currentLog.drop(["time", "name", "nIndex"], axis=1)
+
+            # compare each internal variable
+            for colName in currentLog:
+                viviluxData = kwargs[colName]
+                leabraData = currentLog[colName].to_numpy()
+                isEqual = np.allclose(viviluxData, leabraData,
+                                                    atol=1e-5, rtol=1e-3)
+                
+                allEqual[colName] = isEqual
+
+            print(allEqual)
+
     def Freeze(self):
         self.freeze = True
 

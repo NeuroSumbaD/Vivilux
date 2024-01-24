@@ -20,13 +20,15 @@ class Mesh:
     def __init__(self, 
                  size: int,
                  inLayer: Layer,
+                 AbsScale: float = 1,
+                 RelScale: float = 1,
                  **kwargs):
         self.size = size if size > len(inLayer) else len(inLayer)
         # self.matrix = np.eye(self.size)
         # Glorot uniform initialization
         glorotUniform = np.sqrt(6)/np.sqrt(2*size)
         self.matrix = 2*glorotUniform*np.random.rand(self.size, self.size)-glorotUniform
-        self.Gscale = 1/len(inLayer)
+        self.Gscale = 1#/len(inLayer)
         self.inLayer = inLayer
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
@@ -39,19 +41,29 @@ class Mesh:
         self.sndActAvg = inLayer.ActAvg
         self.rcvActAvg = None
 
+        self.AbsScale = AbsScale
+        self.RelScale = RelScale
+
     def set(self, matrix):
         self.modified = True
         self.matrix = matrix
 
-    def setGscale(self, avgActP):
+    def setGscale(self):
+        # TODO: handle case for inhibitory mesh
+        totalRel = np.sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes])
+        self.Gscale = self.AbsScale * self.RelScale 
+        self.Gscale /= totalRel if totalRel > 0 else 1
+
+        # calculate average from input layer on last trial
+        # TODO: temporally integrate this avg activity to match Leabra
+        self.avgActP = self.inLayer.ActAvg.ActPAvg
+
         #calculate average number of active neurons in sending layer
-        sendLayActN = np.maximum(np.round(avgActP*len(self.inLayer)), 1)
+        sendLayActN = np.maximum(np.round(self.avgActP*len(self.inLayer)), 1)
         sc = 1/sendLayActN # TODO: implement relative importance
-        self.Gscale = sc
+        self.Gscale *= sc
 
     def get(self):
-        sndActAvgP = np.mean(self.inLayer.phaseHist["plus"])
-        self.setGscale(sndActAvgP)
         return self.Gscale * self.matrix
     
     def getInput(self):
@@ -75,6 +87,7 @@ class Mesh:
         self.XCAL = XCAL() #TODO pass params from layer or mesh config
         self.XCAL.AttachLayer(self.inLayer, rcvLayer)
         rcvLayer.phaseProcesses.append(self.XCAL) # Add XCAL as phasic process to layer
+        self.rcvLayer = rcvLayer
 
     def Update(self,
                # delta: np.ndarray ### Now delta is handled by the 

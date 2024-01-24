@@ -100,7 +100,7 @@ phaseConfig_std = {
 }
 
 runConfig_std = { # Dict of phase names
-    "DELTA_TIME": 0.1,
+    "DELTA_TIME": 0.001,
     "metrics": {
         "RMSE": RMSE,
     },
@@ -135,10 +135,15 @@ class Net:
         self.layerConfig = layerConfig # Stereotyped layer definition
         self.monitoring = monitoring
 
+        # For time keeping
+        self.DELTA_TIME = runConfig["DELTA_TIME"]
+        self.time = 0
+
         self.layers: list[Layer] = [] # list of layer objects
         self.layerDict: dict[str, Layer] = {} # dict of named layers
 
         self.results = {metric: [] for metric in self.runConfig["metrics"]}
+        self.outputs = {key: [] for key in self.runConfig["outputLayers"]}
 
         self.name =  f"NET_{Net.count}" if name == None else name
         self.epochIndex = 0
@@ -222,7 +227,7 @@ class Net:
                       sending: Layer, # closer to source
                       receiving: Layer, # further from source
                       meshConfig = None,
-                      ):
+                      ) -> Mesh:
         '''Adds a connection from the sending layer to the receiving layer.
         '''
         # Use default ffMeshConfig if None is provided
@@ -231,23 +236,27 @@ class Net:
         meshArgs = meshConfig["meshArgs"]
         mesh = meshConfig["meshType"](size, sending, **meshArgs)
         receiving.addMesh(mesh)
+        return mesh
 
     def AddConnections(self,
                        sendings: list[Layer], # closer to source
                        receivings: list[Layer], # further from source
                        meshConfig = None,
-                       ):
+                       ) -> list[Mesh]:
         '''Helper function for generating multiple connections at once.
         '''
+        meshes = []
         for receiving, sending in zip(receivings, sendings):
-            self.AddConnection(sending, receiving, meshConfig)
+            mesh = self.AddConnection(sending, receiving, meshConfig)
+            meshes.append(mesh)
+        return meshes
 
     def AddBidirectionalConnection(self,
                       sending: Layer, # closer to source
                       receiving: Layer, # further from source
                       ffMeshConfig = None,
                       fbMeshConfig = None,
-                      ):
+                      ) -> Mesh:
         '''Adds a set of bidirectional connections from the sending layer to
             the receiving layer. The feedback mesh is assumed to be a transpose
             of the feedforward mesh.
@@ -268,16 +277,21 @@ class Net:
         fbMesh = fbMeshConfig["meshType"](ffMesh, receiving, **meshArgs)
         sending.addMesh(fbMesh)
 
+        return ffMesh, fbMesh
+
     def AddBidirectionalConnections(self,
                        sendings: list[Layer], # closer to source
                        receivings: list[Layer], # further from source
                        meshConfig = None,
-                       ):
+                       ) -> list[Mesh]:
         '''Helper function for generating multiple bidirectional connections 
             at once.
         '''
+        meshes = []
         for sending, receiving in zip(sendings, receivings):
-            self.AddBidirectionalConnection(sending, receiving, meshConfig)
+            mesh = self.AddBidirectionalConnection(sending, receiving, meshConfig)
+            meshes.append(mesh)
+        return meshes
 
     def ValidateDataset(self, **dataset: dict[str, np.ndarray]):
         '''Ensures that the entered dataset is properly constructed.
@@ -320,7 +334,10 @@ class Net:
 
             # StepTime for each unclamped layer
             for layer in self.layerDict[phaseName]["unclamped"]:
-                layer.StepTime()
+                debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
+                layer.StepTime(self.time, debugData)
+
+            self.time += self.DELTA_TIME
 
         # Execute phasic processes (including XCAL)
         for layer in self.layers:
@@ -331,6 +348,9 @@ class Net:
             layer.phaseHist[phaseName] = layer.getActivity().copy()
 
     def StepTrial(self, runType: str, **dataVectors):
+        for layer in self.layers:
+            layer.InitTrial()
+            
         for phaseName in self.runConfig[runType]:
             self.StepPhase(phaseName, **dataVectors)
 

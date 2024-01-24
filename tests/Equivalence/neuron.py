@@ -34,8 +34,8 @@ class CustomLayer(Layer):
         super().__init__(*args, **kwargs)
         self.step = 0
     
-    def Integrate(self):
-        self.Ge = 1 if self.step >= 10 and self.step < 160 else 0
+    def UpdateConductance(self):
+        self.Ge[:] = 1 if self.step >= 10 and self.step < 160 else 0
         self.step += 1
 
 # Define units
@@ -65,7 +65,7 @@ for step in timeAx:
     #     stim.Clamp([1])
     # elif step >= 160:
     #     stim.Clamp([0])
-    neuron.StepTime()
+    neuron.StepTime(step)
     Ge[step] = neuron.Ge * neuron.Gbar["E"]
     Vm[step] = neuron.Vm
     Inet[step] = neuron.Inet
@@ -101,4 +101,4 @@ print("Inet equivalence: ", np.all(np.isclose(emerInet, Inet, rtol=1e-3, atol=1e
 emerVm = df["#Vm"].to_numpy()
 print("Vm equivalence: ", np.all(np.isclose(emerVm, Vm, rtol=1e-3, atol=1e-3)))
 emerAct = df["#Act"].to_numpy()
-print("Act equivalence: ", np.all(np.isclose(emerAct, Act, rtol=1e-3, atol=1e-3)))
+print("Act equivalence: ", np.all(np.isclose(emerAct, Act, rtol=1e-3, atol=0)))
