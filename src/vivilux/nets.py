@@ -163,7 +163,7 @@ class Net:
         for phaseName in self.phaseConfig.keys():
             layers = list(self.layers) # copy full layer list
             self.layerDict[phaseName] = {}
-            self.layerDict[phaseName]["clamped"] = {}
+            self.layerDict[phaseName]["clamped"]: dict[str, Layer]  = {}
 
             for dataName, layerIndex in self.phaseConfig[phaseName]["clampLayers"].items():
                 if len(layers) == 0:
@@ -317,6 +317,28 @@ class Net:
             for dataName in self.layerDict["outputLayers"]:
                 result = metric(self.outputs[dataName], dataset[dataName])
                 self.results[metricName].append(result)
+
+    def UpdateConductances(self):
+        for layer in self.layers:
+            layer.UpdateConductance()
+
+    def ClampLayers(self, phaseName: str, **dataVectors):
+        debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
+
+        # Clamp layers according to phaseType
+        ## TODO: Change clamp to execute outside time loop, unclamp after, & update important internal variables
+        for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
+                clampedLayer.Clamp(dataVectors[dataName], self.time, debugData=debugData)
+    
+    
+    def UpdateActivity(self, phaseName: str, **dataVectors):
+        ## TODO: Parallelize execution for all layers
+        debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
+
+        # StepTime for each unclamped layer
+        for layer in self.layerDict[phaseName]["unclamped"]:
+            # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
+            layer.StepTime(self.time, debugData)
     
     def StepPhase(self, phaseName: str, **dataVectors):
         '''Compute a phase of execution for the neural network. A phase is a 
@@ -325,17 +347,12 @@ class Net:
             Prof. O'Reilly's error-driven local learning framework.
         '''
         numTimeSteps = self.phaseConfig[phaseName]["numTimeSteps"]
+        
+        self.ClampLayers(phaseName, **dataVectors)
+
         for timeStep in range(numTimeSteps):
-            ## TODO: Parallelize execution for all layers
-
-            # Clamp layers according to phaseType
-            for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
-                    clampedLayer.Clamp(dataVectors[dataName])
-
-            # StepTime for each unclamped layer
-            for layer in self.layerDict[phaseName]["unclamped"]:
-                debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
-                layer.StepTime(self.time, debugData)
+            self.UpdateConductances()
+            self.UpdateActivity(phaseName, **dataVectors)
 
             self.time += self.DELTA_TIME
 

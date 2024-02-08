@@ -61,6 +61,7 @@ class Layer:
         self.Ge = np.zeros(length)
 
         self.GiRaw = np.zeros(length)
+        self.GiSyn = np.zeros(length)
         self.Gi = np.zeros(length)
 
         self.Act = np.zeros(length)
@@ -134,14 +135,14 @@ class Layer:
         # Call FFFB to update GiRaw
         self.FFFB.StepTime()
 
-        self.Gi[:] += (self.DtParams["Integ"] *
+        self.GiSyn[:] += (self.DtParams["Integ"] *
                        self.DtParams["GDt"] * 
-                       (self.GiRaw - self.Gi)
+                       (self.GiRaw - self.GiSyn)
                        )
-        self.Gi[:] += self.Gi_FFFB # Add FFFB contribution
+        self.Gi[:] = self.GiSyn + self.Gi_FFFB # Add synaptic Gi to FFFB contribution
     
     def StepTime(self, time: float, debugData=None):
-        self.UpdateConductance()
+        # self.UpdateConductance() ## Moved to nets StepPhase
 
         # Aliases for readability
         Erev = self.Erev
@@ -202,6 +203,11 @@ class Layer:
                        Inet=Inet,
                        **debugData
                        )
+
+        # TODO: Improve readability of this line (end of trial code?)
+        ## these lines may need to change when Delta-Sender mechanism is included
+        self.GeRaw[:] = 0
+        self.GiRaw[:] = 0
 
     def Integrate(self):
         '''Integrates raw conductances from incoming synaptic connections.
@@ -267,16 +273,48 @@ class Layer:
         self.Vm[:] = self.VmInit
 
 
-    def Clamp(self, data, monitoring = False):
+    def Clamp(self, data, time: float, monitoring = False, debugData=None):
         clampData = data.copy()
+
+        # Update conductances before clamping
+        # self.UpdateConductance() ## Moved to nets StepPhase
+
         # truncate extrema
         clampData[clampData > self.clampMax] = self.clampMax
         clampData[clampData < self.clampMin] = self.clampMin
+        #Update activity
         self.Act = clampData
-        # TODO: Change to a method (self.finishCycle?) to standardize
+        
+        # Update other internal variables according to activity
+        self.Vm = self.actFn.Thr + self.Act/self.actFn.Gain
+
+        # TODO: Change to a method (self.finishCycle?) to standardize between Clamp and StepTIme
         self.ActAvg.StepTime()
         self.UpdateSnapshot()
         self.UpdateMonitors()
+        
+        # TODO: find a way to make this more readable
+        # TODO: check how this affects execution time
+        if debugData is not None:
+            self.Debug(time=time,
+                       Act = self.Act,
+                       AvgS = self.ActAvg.AvgS,
+                       AvgSS = self.ActAvg.AvgSS,
+                       AvgM = self.ActAvg.AvgM,
+                       AvgL = self.ActAvg.AvgL,
+                    #    AvgLLrn = self.ActAvg.AvgLLrn,
+                       AvgSLrn = self.ActAvg.AvgSLrn,
+                       Ge=self.Ge,
+                       GeRaw=self.GeRaw,
+                       Gi=self.Gi,
+                       GiRaw=self.GiRaw,
+                    #    Erev=Erev,
+                    #    Gbar=Gbar,
+                    #    geThr=geThr,
+                    #    Vm=Vm,
+                    #    Inet=Inet,
+                       **debugData
+                       )
 
     def Learn(self, batchComplete=False):
         if self.isInput or self.freeze: return
@@ -305,20 +343,23 @@ class Layer:
             allEqual = {}
             
             # isolate activity on current time step and layer
-            currentLog = actLog[actLog["time"]==kwargs["time"]]
+            timeSeries = actLog["time"].round(3)
+            time = round(kwargs["time"], 3)
+            currentLog = actLog[timeSeries==time]
             currentLog = currentLog[currentLog["name"]==self.name]
             currentLog = currentLog.drop(["time", "name", "nIndex"], axis=1)
 
             # compare each internal variable
             for colName in currentLog:
+                if colName not in kwargs: continue
                 viviluxData = kwargs[colName]
                 leabraData = currentLog[colName].to_numpy()
                 isEqual = np.allclose(viviluxData, leabraData,
-                                                    atol=1e-5, rtol=1e-3)
+                                                    atol=0, rtol=1e-3)
                 
                 allEqual[colName] = isEqual
 
-            print(allEqual)
+            print(f"{self.name}[{time}]:", allEqual)
 
     def Freeze(self):
         self.freeze = True

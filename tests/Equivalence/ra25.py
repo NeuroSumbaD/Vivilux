@@ -23,6 +23,10 @@ import pathlib
 from os import path
 import json
 
+#TODO: REMOVE THIS LINE, USED FOR SUPPRESSING UNWANTED WARNINGS IN DEBUGGING
+import warnings
+warnings.filterwarnings("ignore")
+
 
 # numSamples = 80
 numEpochs = 100
