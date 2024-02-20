@@ -30,6 +30,9 @@ class Mesh:
         self.matrix = 2*glorotUniform*np.random.rand(self.size, self.size)-glorotUniform
         self.Gscale = 1#/len(inLayer)
         self.inLayer = inLayer
+        self.OptThreshParams = inLayer.OptThreshParams
+        self.lastAct = np.zeros(self.size)
+        self.inAct = np.zeros(self.size)
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
         self.modified = False
@@ -73,7 +76,26 @@ class Mesh:
         data = self.getInput()
         # guarantee that data can be multiplied by the mesh
         data = np.pad(data[:self.size], (0, self.size - len(data)))
-        return self.applyTo(data)
+
+        # Implement delta-sender behavior (thresholds changes in conductance)
+        ## NOTE: this does not reduce matrix multiplications like it does in Leabra
+        delta = data - self.lastAct
+
+        cond1 = data <= self.OptThreshParams["Send"]
+        cond2 = np.abs(delta) <= self.OptThreshParams["Delta"]
+        mask1 = np.logical_or(cond1, cond2)
+        notMask1 = np.logical_not(mask1)
+        delta[mask1] = 0 # only signal delta above both thresholds
+        self.lastAct[notMask1] = data[notMask1]
+
+        cond3 = self.lastAct > self.OptThreshParams["Send"]
+        mask2 = np.logical_and(cond3, cond1)
+        delta[mask2] = -self.lastAct[mask2]
+        self.lastAct[mask2] = 0
+
+        self.inAct[:] += delta
+        
+        return self.applyTo(self.inAct)
             
     def applyTo(self, data):
         try:
@@ -109,12 +131,16 @@ class Mesh:
 class TransposeMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
     '''
-    def __init__(self, mesh: Mesh, inLayer: Layer, fbScale = 0.2) -> None:
-        super().__init__(mesh.size, inLayer)
+    def __init__(self, mesh: Mesh,
+                 inLayer: Layer,
+                 AbsScale: float = 1,
+                 RelScale: float = 0.2,
+                 **kwargs) -> None:
+        super().__init__(mesh.size, inLayer, AbsScale, RelScale, **kwargs)
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
 
-        self.fbScale = fbScale
+        # self.fbScale = fbScale
 
         self.trainable = False
 
@@ -122,9 +148,9 @@ class TransposeMesh(Mesh):
         raise Exception("Feedback mesh has no 'set' method.")
 
     def get(self):
-        sndActAvgP = np.mean(self.inLayer.phaseHist["plus"])
-        self.setGscale(sndActAvgP)
-        return self.fbScale * self.mesh.Gscale * self.mesh.get().T 
+        # sndActAvgP = np.mean(self.inLayer.phaseHist["plus"])
+        # self.setGscale()
+        return self.mesh.Gscale * self.mesh.get().T 
     
     def getInput(self):
         return self.mesh.inLayer.getActivity()

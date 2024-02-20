@@ -60,6 +60,7 @@ class FFFB(NeuralProcess):
 
     def AttachLayer(self, layer: Layer):
         self.pool = layer
+        self.poolAct = np.zeros(len(layer))
         self.FFFBparams = layer.FFFBparams
 
         self.ffi = 0
@@ -72,7 +73,7 @@ class FFFB(NeuralProcess):
         poolGe = self.pool.Ge
         avgGe = np.mean(poolGe)
         maxGe = np.max(poolGe)
-        avgAct = np.mean(self.pool.getActivity())
+        avgAct = np.mean(self.poolAct)
 
         # Scalar feedforward inhibition proportional to max and avg Ge
         ffNetin = avgGe + FFFBparams["MaxVsAvg"] * (maxGe - avgGe)
@@ -83,6 +84,9 @@ class FFFB(NeuralProcess):
 
         # Add inhibition to the inhibition
         self.pool.Gi_FFFB = FFFBparams["Gi"] * (ffi + self.fbi)
+
+    def UpdateAct(self):
+        self.poolAct = self.pool.getActivity()
 
     def Reset(self):
         self.ffi = 0

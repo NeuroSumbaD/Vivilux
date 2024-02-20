@@ -108,6 +108,9 @@ class Layer:
         self.FFFBparams = layerConfig["FFFBparams"]
         self.FFFBparams["FBDt"] = 1/layerConfig["FFFBparams"]["FBTau"] # rate = 1 / FBTau
 
+        # Attach OptThreshParams
+        self.OptThreshParams = layerConfig["OptThreshParams"]
+
         # Attach Averaging Process
         self.ActAvg = ActAvg(self) # TODO add to std layerConfig and pass params here
 
@@ -141,7 +144,7 @@ class Layer:
                        )
         self.Gi[:] = self.GiSyn + self.Gi_FFFB # Add synaptic Gi to FFFB contribution
     
-    def StepTime(self, time: float, debugData=None):
+    def StepTime(self, time: float, **debugData):
         # self.UpdateConductance() ## Moved to nets StepPhase
 
         # Aliases for readability
@@ -151,11 +154,11 @@ class Layer:
         
         # Update layer potentials
         Vm = self.Vm
-        Inet = (self.Ge * Gbar["E"] * (Erev["E"] - Vm) +
+        self.Inet = (self.Ge * Gbar["E"] * (Erev["E"] - Vm) +
                 Gbar["L"] * (Erev["L"] - Vm) +
                 self.Gi * Gbar["I"] * (Erev["I"] - Vm)
                 )
-        self.Vm[:] += self.DtParams["VmDt"] * Inet
+        self.Vm[:] += self.DtParams["VmDt"] * self.Inet
 
         # Calculate conductance threshold
         geThr = (self.Gi * Gbar["I"] * (Erev["I"] - Thr) +
@@ -175,39 +178,8 @@ class Layer:
 
         # Update layer activities
         self.Act[:] += self.DtParams["VmDt"] * (newAct - self.Act)
-    
-        self.ActAvg.StepTime() # Update activity averages
-        self.UpdateSnapshot()
-        self.UpdateMonitors()
-        self.Inet = Inet # TODO: remove unnecessary variable
 
-        # TODO: find a way to make this more readable
-        # TODO: check how this affects execution time
-        if debugData is not None:
-            self.Debug(time=time,
-                       Act = self.Act,
-                       AvgS = self.ActAvg.AvgS,
-                       AvgSS = self.ActAvg.AvgSS,
-                       AvgM = self.ActAvg.AvgM,
-                       AvgL = self.ActAvg.AvgL,
-                    #    AvgLLrn = self.ActAvg.AvgLLrn,
-                       AvgSLrn = self.ActAvg.AvgSLrn,
-                       Ge=self.Ge,
-                       GeRaw=self.GeRaw,
-                       Gi=self.Gi,
-                       GiRaw=self.GiRaw,
-                       Erev=Erev,
-                       Gbar=Gbar,
-                       geThr=geThr,
-                       Vm=Vm,
-                       Inet=Inet,
-                       **debugData
-                       )
-
-        # TODO: Improve readability of this line (end of trial code?)
-        ## these lines may need to change when Delta-Sender mechanism is included
-        self.GeRaw[:] = 0
-        self.GiRaw[:] = 0
+        self.EndStep(time, **debugData)
 
     def Integrate(self):
         '''Integrates raw conductances from incoming synaptic connections.
@@ -260,6 +232,35 @@ class Layer:
             "Vm": self.Vm
         }
 
+    def EndStep(self, time, **debugData):
+        self.ActAvg.StepTime()
+        self.FFFB.UpdateAct()
+        self.UpdateSnapshot()
+        self.UpdateMonitors()
+
+        # TODO: find a way to make this more readable
+        # TODO: check how this affects execution time
+        if bool(debugData): #check if debugData is empty
+            self.Debug(time=time,
+                       Act = self.Act,
+                       AvgS = self.ActAvg.AvgS,
+                       AvgSS = self.ActAvg.AvgSS,
+                       AvgM = self.ActAvg.AvgM,
+                       AvgL = self.ActAvg.AvgL,
+                    #    AvgLLrn = self.ActAvg.AvgLLrn,
+                       AvgSLrn = self.ActAvg.AvgSLrn,
+                       Ge=self.Ge,
+                       GeRaw=self.GeRaw,
+                       Gi=self.Gi,
+                       GiRaw=self.GiRaw,
+                       **debugData
+                       )
+
+        # TODO: Improve readability of this line (end of trial code?)
+        ## these lines may need to change when Delta-Sender mechanism is included
+        self.GeRaw[:] = 0
+        self.GiRaw[:] = 0
+
     def getActivity(self, modify = False):
         return self.Act
 
@@ -288,33 +289,7 @@ class Layer:
         # Update other internal variables according to activity
         self.Vm = self.actFn.Thr + self.Act/self.actFn.Gain
 
-        # TODO: Change to a method (self.finishCycle?) to standardize between Clamp and StepTIme
-        self.ActAvg.StepTime()
-        self.UpdateSnapshot()
-        self.UpdateMonitors()
-        
-        # TODO: find a way to make this more readable
-        # TODO: check how this affects execution time
-        if debugData is not None:
-            self.Debug(time=time,
-                       Act = self.Act,
-                       AvgS = self.ActAvg.AvgS,
-                       AvgSS = self.ActAvg.AvgSS,
-                       AvgM = self.ActAvg.AvgM,
-                       AvgL = self.ActAvg.AvgL,
-                    #    AvgLLrn = self.ActAvg.AvgLLrn,
-                       AvgSLrn = self.ActAvg.AvgSLrn,
-                       Ge=self.Ge,
-                       GeRaw=self.GeRaw,
-                       Gi=self.Gi,
-                       GiRaw=self.GiRaw,
-                    #    Erev=Erev,
-                    #    Gbar=Gbar,
-                    #    geThr=geThr,
-                    #    Vm=Vm,
-                    #    Inet=Inet,
-                       **debugData
-                       )
+        # self.EndStep() # Updates averages, snapshots, monitors
 
     def Learn(self, batchComplete=False):
         if self.isInput or self.freeze: return
@@ -354,8 +329,13 @@ class Layer:
                 if colName not in kwargs: continue
                 viviluxData = kwargs[colName]
                 leabraData = currentLog[colName].to_numpy()
-                isEqual = np.allclose(viviluxData, leabraData,
-                                                    atol=0, rtol=1e-3)
+                # isEqual = np.allclose(viviluxData, leabraData,
+                #                                     atol=0, rtol=1e-3)
+                percentError = 100 * (viviluxData - leabraData) / leabraData
+                mask = leabraData == 0
+                mask = np.logical_and(mask, leabraData==0)
+                percentError[mask] = 0
+                isEqual = np.all(np.abs(percentError) < 1)
                 
                 allEqual[colName] = isEqual
 
@@ -374,31 +354,31 @@ class Layer:
         else:
             self.inhMeshes.append(mesh)
 
-    def __add__(self, other):
-        self.modified = True
-        return self.excAct + other
+    # def __add__(self, other):
+    #     self.modified = True
+    #     return self.excAct + other
     
-    def __radd__(self, other):
-        self.modified = True
-        return self.excAct + other
+    # def __radd__(self, other):
+    #     self.modified = True
+    #     return self.excAct + other
     
-    def __iadd__(self, other):
-        self.modified = True
-        self.excAct += other
-        return self
+    # def __iadd__(self, other):
+    #     self.modified = True
+    #     self.excAct += other
+    #     return self
     
-    def __sub__(self, other):
-        self.modified = True
-        return self.inhAct + other
+    # def __sub__(self, other):
+    #     self.modified = True
+    #     return self.inhAct + other
     
-    def __rsub__(self, other):
-        self.modified = True
-        return self.inhAct + other
+    # def __rsub__(self, other):
+    #     self.modified = True
+    #     return self.inhAct + other
     
-    def __isub__(self, other):
-        self.modified = True
-        self.inhAct += other
-        return self
+    # def __isub__(self, other):
+    #     self.modified = True
+    #     self.inhAct += other
+    #     return self
     
     def __len__(self):
         return len(self.Act)

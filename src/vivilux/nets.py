@@ -31,7 +31,8 @@ ffMeshConfig_std = {
 
 fbMeshConfig_std = {
     "meshType": TransposeMesh,
-    "meshArgs": {},
+    "meshArgs": {"RelScale": 0.2,
+                 },
 }
 
 layerConfig_std = {
@@ -65,6 +66,10 @@ layerConfig_std = {
         "Gain": 2.5,
         "Min": 0.2,
         "LrnM": 0.1,
+    },
+    "OptThreshParams":{
+        "Send": 0.1,
+        "Delta": 0.005,
     },
     "optimizer": Simple,
     "optArgs": {},
@@ -333,12 +338,18 @@ class Net:
     
     def UpdateActivity(self, phaseName: str, **dataVectors):
         ## TODO: Parallelize execution for all layers
-        debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
+        debugData = dataVectors["debugData"] if "debugData" in dataVectors else {}
 
         # StepTime for each unclamped layer
         for layer in self.layerDict[phaseName]["unclamped"]:
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
-            layer.StepTime(self.time, debugData)
+            layer.StepTime(self.time, **debugData)
+
+        # Update internal variables of clamped layers
+        for layer in self.layerDict[phaseName]["clamped"].values():
+            # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
+            # layer.UpdateConductance()
+            layer.EndStep(self.time, **debugData)
     
     def StepPhase(self, phaseName: str, **dataVectors):
         '''Compute a phase of execution for the neural network. A phase is a 

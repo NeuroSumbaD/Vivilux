@@ -45,6 +45,7 @@ targets = patterns[:,inputSize:]
 input_perm = pd.read_csv(path.join(directory, "ra25_input_permutation.csv"))
 input_perm = input_perm.columns.to_numpy(dtype="int")
 inputs = inputs[input_perm]
+targets = targets[input_perm]
 
 activityLog = pd.read_csv(path.join(directory, "ra25_activityLog.csv"))
 
