@@ -83,6 +83,9 @@ class Layer:
 
         Layer.count += 1
 
+        ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
+        self.EXTERNAL = None
+
     def AttachNet(self, net: Net, layerConfig):
         '''Attaches a reference to the net containing the layer and initializes
             additional parameters from the layerConfig.
@@ -147,6 +150,10 @@ class Layer:
     def StepTime(self, time: float, **debugData):
         # self.UpdateConductance() ## Moved to nets StepPhase
 
+        if self.EXTERNAL is not None: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
+            return self.Clamp(self.EXTERNAL, time, debugData=debugData)
+            
+
         # Aliases for readability
         Erev = self.Erev
         Gbar = self.Gbar
@@ -201,6 +208,8 @@ class Layer:
 
         self.GeRaw[:] = 0 # reset
         self.GiRaw[:] = 0 # reset
+
+        self.EXTERNAL = None
     
     def RunProcesses(self):
         '''A set of additional high-level processes which result in current

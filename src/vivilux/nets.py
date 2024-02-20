@@ -168,14 +168,14 @@ class Net:
         for phaseName in self.phaseConfig.keys():
             layers = list(self.layers) # copy full layer list
             self.layerDict[phaseName] = {}
-            self.layerDict[phaseName]["clamped"]: dict[str, Layer]  = {}
+            self.layerDict[phaseName]["clamped"] = {}
 
             for dataName, layerIndex in self.phaseConfig[phaseName]["clampLayers"].items():
                 if len(layers) == 0:
                     return
                 self.layerDict[phaseName]["clamped"][dataName] = layers.pop(layerIndex)
 
-            self.layerDict[phaseName]["unclamped"]: list[Layer] = layers
+            self.layerDict[phaseName]["unclamped"] = layers
 
         self.layerDict["outputLayers"] = {}
         for dataName, index in self.runConfig["outputLayers"].items():
@@ -332,8 +332,13 @@ class Net:
 
         # Clamp layers according to phaseType
         ## TODO: Change clamp to execute outside time loop, unclamp after, & update important internal variables
+        first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
         for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
-                clampedLayer.Clamp(dataVectors[dataName], self.time, debugData=debugData)
+                if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
+                    clampedLayer.Clamp(dataVectors[dataName], self.time, debugData=debugData)
+                    first = False
+                else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
+                    clampedLayer.EXTERNAL = dataVectors[dataName]
     
     
     def UpdateActivity(self, phaseName: str, **dataVectors):
@@ -346,10 +351,15 @@ class Net:
             layer.StepTime(self.time, **debugData)
 
         # Update internal variables of clamped layers
+        first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
         for layer in self.layerDict[phaseName]["clamped"].values():
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
             # layer.UpdateConductance()
-            layer.EndStep(self.time, **debugData)
+            if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
+                layer.EndStep(self.time, **debugData)
+                first = False
+            else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
+                layer.StepTime(self.time, **debugData)
     
     def StepPhase(self, phaseName: str, **dataVectors):
         '''Compute a phase of execution for the neural network. A phase is a 
