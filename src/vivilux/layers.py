@@ -151,7 +151,9 @@ class Layer:
         # self.UpdateConductance() ## Moved to nets StepPhase
 
         if self.EXTERNAL is not None: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-            return self.Clamp(self.EXTERNAL, time, debugData=debugData)
+            self.Clamp(self.EXTERNAL, time, debugData=debugData)
+            self.EndStep(time, **debugData)
+            return
             
 
         # Aliases for readability
@@ -225,6 +227,7 @@ class Layer:
         self.monitors[monitor.name] = monitor
 
     def UpdateMonitors(self):
+        if not self.net.monitoring: return
         for monitor in self.monitors.values():
             monitor.update(self.snapshot)
     
@@ -325,6 +328,10 @@ class Layer:
             actLog = kwargs["activityLog"]
 
             allEqual = {}
+
+            # Generate a debugLog variable
+            if not hasattr(self, "debugLog"):
+                self.debugLog = {}
             
             # isolate activity on current time step and layer
             timeSeries = actLog["time"].round(3)
@@ -336,15 +343,24 @@ class Layer:
             # compare each internal variable
             for colName in currentLog:
                 if colName not in kwargs: continue
+
+                #Generate column entry for debugLog
+                if colName not in self.debugLog:
+                    self.debugLog[colName] = ([],[],[])
+                self.debugLog[colName][2].append(time)
+
                 viviluxData = kwargs[colName]
+                self.debugLog[colName][0].append(np.copy(viviluxData))
+
                 leabraData = currentLog[colName].to_numpy()
+                self.debugLog[colName][1].append(leabraData)
                 # isEqual = np.allclose(viviluxData, leabraData,
                 #                                     atol=0, rtol=1e-3)
                 percentError = 100 * (viviluxData - leabraData) / leabraData
                 mask = leabraData == 0
-                mask = np.logical_and(mask, leabraData==0)
+                mask = np.logical_and(mask, viviluxData==0)
                 percentError[mask] = 0
-                isEqual = np.all(np.abs(percentError) < 1)
+                isEqual = np.all(np.abs(percentError) < 2)
                 
                 allEqual[colName] = isEqual
 

@@ -22,12 +22,20 @@ class Mesh:
                  inLayer: Layer,
                  AbsScale: float = 1,
                  RelScale: float = 1,
+                 Off: float = 1,
+                 Gain: float = 6,
                  **kwargs):
         self.size = size if size > len(inLayer) else len(inLayer)
-        # self.matrix = np.eye(self.size)
+        self.Off = Off
+        self.Gain = Gain
+
         # Glorot uniform initialization
         glorotUniform = np.sqrt(6)/np.sqrt(2*size)
         self.matrix = 2*glorotUniform*np.random.rand(self.size, self.size)-glorotUniform
+        self.linMatrix = np.copy(self.matrix)
+        self.InvSigMatrix()
+
+        # Other initializations
         self.Gscale = 1#/len(inLayer)
         self.inLayer = inLayer
         self.OptThreshParams = inLayer.OptThreshParams
@@ -50,6 +58,7 @@ class Mesh:
     def set(self, matrix):
         self.modified = True
         self.matrix = matrix
+        self.InvSigMatrix()
 
     def setGscale(self):
         # TODO: handle case for inhibitory mesh
@@ -119,8 +128,45 @@ class Mesh:
 
         delta = self.XCAL.GetDeltas()
         m, n = delta.shape
-        self.matrix[:m, :n] += delta
-        # self.matrix += delta
+        self.linMatrix[:m, :n] += delta
+        self.SigMatrix()
+
+    def SigMatrix(self):
+        '''After an update to the linear weights, the sigmoidal weights must be
+            must be calculated with a call to this function. 
+            
+            Sigmoidal weights represent the synaptic strength which cannot grow
+            purely linearly since the maximum and minimum possible weight is
+            bounded by physical constraints.
+        '''
+        mask1 = self.linMatrix <= 0
+        self.matrix[mask1] = 0
+
+        mask2 = self.linMatrix >= 1
+        self.matrix[mask2] = 1
+
+        mask3 = np.logical_not(np.logical_or(mask1, mask2))
+        self.matrix[mask3] = self.sigmoid(self.linMatrix[mask3])
+
+    def sigmoid(self, data):
+        return 1 / (1 + np.power(self.Off*(1-data)/data, self.Gain))
+    
+    def InvSigMatrix(self):
+        '''This function is only called when the weights are set manually to
+            ensure that the linear weights (linMatrix) are accurately tracked.
+        '''
+        mask1 = self.matrix <= 0
+        self.matrix[mask1] = 0
+
+        mask2 = self.matrix >= 1
+        self.matrix[mask2] = 1
+
+        mask3 = np.logical_not(np.logical_or(mask1, mask2))
+        self.linMatrix[mask3] = self.invSigmoid(self.matrix[mask3])
+    
+    def invSigmoid(self, data):
+        return 1 / (1 + np.power((1/self.Off)*(1-data)/data, (1/self.Gain)))
+
 
     def __len__(self):
         return self.size

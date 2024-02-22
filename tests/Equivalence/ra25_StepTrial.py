@@ -11,7 +11,6 @@ from vivilux.meshes import AbsMesh
 from vivilux.metrics import RMSE
 from vivilux.learningRules import CHL, GeneRec
 from vivilux.optimizers import Decay
-from vivilux.visualize import StackedMonitor
 
 import pandas as pd
 import numpy as np
@@ -53,10 +52,7 @@ activityLog = pd.read_csv(path.join(directory, "ra25_activityLog.csv"))
 with open(path.join(directory, "ra25_weights.json")) as weightsFile:
     weights = json.load(weightsFile)
 
-# Default Leabra net
-leabraNet = Net(name = "LEABRA_NET",
-                monitoring= True,
-                )
+leabraNet = Net(name = "LEABRA_NET") # Default Leabra net
 
 # Add layers
 layerList = [Layer(inputSize, isInput=True, name="Input"),
@@ -67,20 +63,6 @@ leabraNet.AddLayers(layerList[:-1])
 outputConfig = deepcopy(layerConfig_std)
 outputConfig["FFFBparams"]["Gi"] = 1.4
 leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
-
-plt.ion()
-# Add monitors
-for layer in layerList:
-    layer.AddMonitor(StackedMonitor(
-        layer.name,
-        labels = ["time step", "activity"],
-        limits=[100, 2],
-        layout=[2, 1],
-        numLines=len(layer),
-        targets=["activity", "Ge"],
-        legendVisibility=False
-        )
-    )
 
 # Add bidirectional connections from leabra example
 for layer in weights["Layers"]:
@@ -103,18 +85,40 @@ for layer in weights["Layers"]:
             sndIndices = rs["Si"]
             mesh.matrix[recvIndex, sndIndices] = rs["Wt"]
 
-result = leabraNet.Learn(input=inputs, target=targets,
-                            numEpochs=numEpochs, reset=False)
-plt.plot(result['RMSE'], label="Leabra Net")
+debugData = {"activityLog": activityLog.drop(["AvgLLrn", "GiRaw"], axis=1)}
+leabraNet.StepTrial("Learn",
+                    input=inputs[0], target=targets[0],
+                    debugData=debugData)
 
-baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry
-                    in np.random.uniform(size=(2000,len(targets),outputSize))])
-plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
-plt.title("Random Input/Output Matching")
-plt.ylabel("RMSE")
-plt.xlabel("Epoch")
-plt.legend()
+
+outLayer = leabraNet.layers[-1]
+vlData = np.array(outLayer.debugLog["Act"][0])
+lbData = np.array(outLayer.debugLog["Act"][1])
+time = np.array(outLayer.debugLog["Act"][2])
+
+fig, ax = plt.subplots(2,1)
+plt.title("Output Layer Activity Comparison")
+ax[0].plot(time, vlData)
+ax[0].set_title("Vivilux")
+
+ax[1].plot(time, lbData)
+ax[1].set_title("Leabra")
+ax[1].set_xlabel("time")
+
 plt.show()
 
-print("Done")
+vlData = np.array(outLayer.debugLog["Ge"][0])
+lbData = np.array(outLayer.debugLog["Ge"][1])
+time = np.array(outLayer.debugLog["Ge"][2])
+
+fig, ax = plt.subplots(2,1)
+plt.title("Output Layer Ge Comparison")
+ax[0].plot(time, vlData)
+ax[0].set_title("Vivilux")
+
+ax[1].plot(time, lbData)
+ax[1].set_title("Leabra")
+ax[1].set_xlabel("time")
+
+plt.show()

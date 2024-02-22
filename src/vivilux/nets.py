@@ -195,15 +195,6 @@ class Net:
         # Initialize phase histories
         for phase in self.phaseConfig.keys():
             layer.phaseHist[phase] = layer.getActivity()
-        
-        # TODO replace monitor definition ("one function does one thing!")
-        # Define monitor
-        # layer.monitor = layerConfig["defMonitor"](
-        #     name = self.name + ": " + layer.name,
-        #     labels = ["time step", "activity"],
-        #     limits=[self.runConfig["numTimeSteps"], 2],
-        #     numLines=len(layer)
-        # )
 
         self.UpdateLayerLists()
 
@@ -213,20 +204,6 @@ class Net:
 
         for layer in layers:
             self.AddLayer(layer, layerConfig)
-            # size = len(layer)
-            # self.layerDict[layer.name] = layer
-            # layer.AttachNet(self, layerConfig) # give layer a reference to the net
-
-            # TODO replace monitor definition ("one function does one thing!")
-            # Define monitor
-            # layer.monitor = layerConfig["defMonitor"](
-            #     name = self.name + ": " + layer.name,
-            #     labels = ["time step", "activity"],
-            #     limits=[self.runConfig["numTimeSteps"], 2],
-            #     numLines=len(layer)
-            # )
-
-        # self.UpdateLayerLists()
 
     def AddConnection(self,
                       sending: Layer, # closer to source
@@ -379,11 +356,13 @@ class Net:
 
         # Execute phasic processes (including XCAL)
         for layer in self.layers:
+            #record phase activity at the end of each phase
+            layer.phaseHist[phaseName] = layer.getActivity().copy()
+
+            #Execute phasic processes (including XCAL)
             for process in layer.phaseProcesses:
                 if phaseName in process.phases or "all" in process.phases:
                     process.StepPhase()
-            #record phase activity at the end of each phase
-            layer.phaseHist[phaseName] = layer.getActivity().copy()
 
     def StepTrial(self, runType: str, **dataVectors):
         for layer in self.layers:
@@ -456,8 +435,11 @@ class Net:
         '''
 
         # Evaluate without training
+        monitoring = self.monitoring
+        self.monitoring = False # Temporarily pause monitoring
         if self.epochIndex == 0: # only if net has never been trained
             self.Evaluate(verbosity, reset, shuffle, **dataset)
+        self.monitoring = monitoring # Resume normal monitoring
             
         # Training loop
         print(f"Begin training [{self.name}]...")
