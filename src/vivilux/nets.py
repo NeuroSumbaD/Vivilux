@@ -15,7 +15,7 @@ import math
 import numpy as np
 
 # import defaults
-from .meshes import AbsMesh, TransposeMesh
+from .meshes import Mesh, TransposeMesh
 from .metrics import RMSE
 from .optimizers import Simple
 from .visualize import Monitor
@@ -25,7 +25,7 @@ from .visualize import Monitor
 ###<------ DEFAULT CONFIGURATIONS ------>###
 
 ffMeshConfig_std = {
-    "meshType": AbsMesh,
+    "meshType": Mesh,
     "meshArgs": {},
 }
 
@@ -304,9 +304,7 @@ class Net:
         for layer in self.layers:
             layer.UpdateConductance()
 
-    def ClampLayers(self, phaseName: str, **dataVectors):
-        debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
-
+    def ClampLayers(self, phaseName: str, debugData = None, **dataVectors):
         # Clamp layers according to phaseType
         ## TODO: Change clamp to execute outside time loop, unclamp after, & update important internal variables
         first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
@@ -318,10 +316,8 @@ class Net:
                     clampedLayer.EXTERNAL = dataVectors[dataName]
     
     
-    def UpdateActivity(self, phaseName: str, **dataVectors):
+    def UpdateActivity(self, phaseName: str, debugData={}, **dataVectors):
         ## TODO: Parallelize execution for all layers
-        debugData = dataVectors["debugData"] if "debugData" in dataVectors else {}
-
         # StepTime for each unclamped layer
         for layer in self.layerDict[phaseName]["unclamped"]:
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
@@ -338,7 +334,7 @@ class Net:
             else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
                 layer.StepTime(self.time, **debugData)
     
-    def StepPhase(self, phaseName: str, **dataVectors):
+    def StepPhase(self, phaseName: str, debugData = {}, **dataVectors):
         '''Compute a phase of execution for the neural network. A phase is a 
             set of timesteps related to some process in the network such as 
             the generation of an expectation versus observation of outcome in
@@ -364,12 +360,12 @@ class Net:
                 if phaseName in process.phases or "all" in process.phases:
                     process.StepPhase()
 
-    def StepTrial(self, runType: str, **dataVectors):
+    def StepTrial(self, runType: str, debugData = {}, **dataVectors):
         for layer in self.layers:
             layer.InitTrial()
             
         for phaseName in self.runConfig[runType]:
-            self.StepPhase(phaseName, **dataVectors)
+            self.StepPhase(phaseName, debugData=debugData, **dataVectors)
 
             # Store layer activity for each output layer during output phases
             if self.phaseConfig[phaseName]["isOutput"]:
@@ -377,15 +373,16 @@ class Net:
                     # TODO use pre-allocated numpy array to speed up execution
                     self.outputs[dataName].append(layer.getActivity())
 
-            if self.phaseConfig[phaseName]["isLearn"]:
+            if self.phaseConfig[phaseName]["isLearn"] and runType=="Learn":
                 for layer in self.layers:
-                    layer.Learn()
+                    layer.Learn(debugDwt=debugData)
 
     def RunEpoch(self,
                  runType: str,
                  verbosity = 1,
                  reset: bool = False,
                  shuffle: bool = False,
+                 debugData = None,
                  **dataset: dict[str, np.ndarray]):
         '''Runs an epoch (iteration through all samples of a dataset) using a
             specified run type mathing a key from self.runConfig.
@@ -405,11 +402,12 @@ class Net:
         # TODO: find a faster way to iterate through datasets
         for sampleCount, sampleIndex in enumerate(sampleIndices):
             if verbosity > 0:
-                print(f"Epoch: {self.epochIndex}, "
-                      f"sample: ({sampleCount}/{numSamples}), ", end="\r")
+                print(f"\rEpoch: {self.epochIndex}, "
+                      f"sample: ({sampleCount+1}/{numSamples}), ", end=""#"\r"
+                      )
 
             dataVectors = {key:value[sampleIndex] for key, value in dataset.items()}
-            self.StepTrial(runType, **dataVectors)
+            self.StepTrial(runType, debugData=debugData, **dataVectors)
 
             if reset : self.resetActivity()
 
@@ -423,6 +421,7 @@ class Net:
               shuffle: bool = True,
               batchSize = 1, # TODO: Implement batch training (average delta weights over some number of training examples)
               repeat=1, # TODO: Implement repeated sample training (train muliple times for a single input sample before moving on to the next one)
+              debugData = None,
               **dataset: dict[str, np.ndarray]) -> dict[str: list]:
         '''Training loop that runs a specified number of epochs.
 
@@ -438,14 +437,18 @@ class Net:
         monitoring = self.monitoring
         self.monitoring = False # Temporarily pause monitoring
         if self.epochIndex == 0: # only if net has never been trained
-            self.Evaluate(verbosity, reset, shuffle, **dataset)
+            self.Evaluate(verbosity, reset=True, shuffle=False, **dataset)
+            self.resetActivity()
         self.monitoring = monitoring # Resume normal monitoring
+
+        self.time = 0 #TODO: allow choice to reset the timer?
             
         # Training loop
         print(f"Begin training [{self.name}]...")
         for epochIndex in range(numEpochs):
             self.epochIndex = 1 + epochIndex
-            numSamples = self.RunEpoch("Learn", verbosity, reset, shuffle, **dataset)
+            numSamples = self.RunEpoch("Learn", verbosity, reset, shuffle,
+                                       debugData=debugData, **dataset)
             self.EvaluateMetrics(**dataset)
             if verbosity > 0:
                 primaryMetric = [key for key in self.runConfig["metrics"]][0]
@@ -454,7 +457,7 @@ class Net:
                       f" metric[{primaryMetric}]"
                       f" = {self.results[primaryMetric][-1]}")
                 
-        print(f"Finished training [{self.name}]")
+        print(f"\nFinished training [{self.name}]")
         return self.results
 
     def Evaluate(self,
@@ -471,7 +474,7 @@ class Net:
             print(f" metric[{primaryMetric}]"
                 f" = {self.results[primaryMetric][-1]:0.4f}")
             
-        print(f"Evaluation complete.")
+        print(f"\nEvaluation complete.")
         return self.results
     
     def Infer(self,

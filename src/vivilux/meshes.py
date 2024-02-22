@@ -121,15 +121,76 @@ class Mesh:
         self.rcvLayer = rcvLayer
 
     def Update(self,
+               debugDwt = {},
                # delta: np.ndarray ### Now delta is handled by the 
                ):
         # self.modified = True
         # self.matrix[:m, :n] += self.rate*delta
 
-        delta = self.XCAL.GetDeltas()
+        delta = self.XCAL.GetDeltas(**debugDwt)
         m, n = delta.shape
         self.linMatrix[:m, :n] += delta
         self.SigMatrix()
+
+        if bool(debugDwt):
+            self.Debug(lwt = self.linMatrix,
+                       wt = self.matrix,
+                       debugDwt = debugDwt)
+
+    def Debug(self,
+              **kwargs):
+        '''Checks the XCAL and weights against leabra data'''
+        #TODO: This function is very messy, truncate if possible
+        if "debugDwt" not in kwargs: return
+        if bool(kwargs["debugDwt"]) == False: return #empty data
+        net = self.inLayer.net
+        time = net.time
+
+        # isolate frame of important data from log
+        dwtLog = kwargs["debugDwt"]["dwtLog"]
+        frame = dwtLog[dwtLog["name"] == self.rcvLayer.name]
+        frame = frame[frame["time"].round(3) == np.round(time, 3)]
+        frame = frame.drop(["time", "name", "isLrn"], axis=1)
+        
+        leabraData = {}
+        sendLen = frame["sendIndex"].max() + 1
+        recvLen = frame["recvIndex"].max() + 1
+        leabraData["norm"] = np.zeros((recvLen, sendLen))
+        leabraData["dwt"] = np.zeros((recvLen, sendLen))
+        leabraData["norm"] = np.zeros((recvLen, sendLen))
+        leabraData["lwt"] = np.zeros((recvLen, sendLen))
+        leabraData["wt"] = np.zeros((recvLen, sendLen))
+        for row in frame.index:
+            ri = frame["recvIndex"][row]
+            si = frame["sendIndex"][row]
+            leabraData["norm"][ri][si] = frame["norm"][row]
+            leabraData["dwt"][ri][si] = frame["dwt"][row]
+            leabraData["norm"][ri][si] = frame["norm"][row]
+            leabraData["lwt"][ri][si] = frame["lwt"][row]
+            leabraData["wt"][ri][si] = frame["wt"][row]
+            
+
+
+        viviluxData = {}
+        viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]
+        viviluxData["dwt"] = self.XCAL.vlDwtLog["dwt"]
+        viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]
+        viviluxData["lwt"] = kwargs["lwt"]
+        viviluxData["wt"] = kwargs["wt"]
+
+
+        allEqual = {}
+        for key in leabraData:
+            if key not in viviluxData: continue #skip missing columns
+            percentError = 100 * (viviluxData[key] - leabraData[key]) / leabraData[key]
+            mask = leabraData[key] == 0
+            mask = np.logical_and(mask, viviluxData[key]==0)
+            percentError[mask] = 0
+            isEqual = np.all(np.abs(percentError) < 2)
+            
+            allEqual[key] = isEqual
+
+        print(f"{self.name}[{time}]:", allEqual)
 
     def SigMatrix(self):
         '''After an update to the linear weights, the sigmoidal weights must be
@@ -201,7 +262,9 @@ class TransposeMesh(Mesh):
     def getInput(self):
         return self.mesh.inLayer.getActivity()
 
-    def Update(self, delta):
+    def Update(self,
+               debugDwt = None,
+               ):
         return None
     
     
@@ -264,8 +327,10 @@ class AbsMesh(Mesh):
         self.matrix = np.abs(self.matrix)
 
 
-    def Update(self):
-        super().Update()
+    def Update(self,
+               debugDwt = None,
+               ):
+        super().Update(debugDwt=debugDwt)
         self.matrix = np.abs(self.matrix)
 
 

@@ -218,7 +218,7 @@ class XCAL(PhasicProcess):
         self.DRev = DRev
         self.DThr = DThr
         self.hasNorm = hasNorm
-        self.norm = 1 # TODO: Check for correct initilization
+        self.Norm = 1 # TODO: Check for correct initilization
         self.Norm_LrComp = Norm_LrComp
         self.normMin = normMin
         self.DecayTau = DecayTau
@@ -269,12 +269,22 @@ class XCAL(PhasicProcess):
         rcvLayerLen = len(rcvLayer)
 
         # Initialize variables
-        self.AvgLLrn = np.zeros(len(rcvLayer))
-        self.Norm = np.zeros((rcvLayerLen, sndLayerLen))
+        self.Init()
+
+    def Init(self):
+        sndLayerLen = len(self.send)
+        rcvLayerLen = len(self.recv)
+
+        self.AvgLLrn = np.zeros(rcvLayerLen)
+        self.Norm = np.ones((rcvLayerLen, sndLayerLen))
         self.moment = np.zeros((rcvLayerLen, sndLayerLen))
 
+    def Reset(self):
+        self.Init()
 
-    def GetDeltas(self) -> np.ndarray:
+    def GetDeltas(self,
+                  **debugDwt
+                  ) -> np.ndarray:
         if self.recv.isTarget:
             dwt = self.ErrorDriven()
         else:
@@ -285,8 +295,8 @@ class XCAL(PhasicProcess):
         if self.hasNorm:
             # it seems like norm must be calculated first, but applied after 
             ## momentum (if applicable).
-            self.norm = np.maximum(self.DecayDt * self.norm, np.abs(dwt))
-            norm = self.norm
+            self.Norm = np.maximum(self.DecayDt * self.Norm, np.abs(dwt))
+            norm = self.Norm
             # TODO understand what prjn.go:607-620 is doing...
             # TODO enable custom norm procedure (L1, L2, etc.)
 
@@ -304,7 +314,28 @@ class XCAL(PhasicProcess):
         # TODO figure out a way to use contrast enhancement without requiring the current weight...
         ## Is there a way to use taylor's expansion to calculate an adjusted delta??
 
+        if bool(debugDwt):
+            self.Debug(norm = norm,
+                    dwt = dwt,
+                    Dwt = Dwt,
+                    **debugDwt)
+
         return Dwt
+
+    def Debug(self,
+              **kwargs):
+        '''Creates a member variable storing the local XCAL internal variables
+            if the simulator has debug logs available. This data is accessed in
+            the Mesh.Debug function.
+        '''
+        if "dwtLog" in kwargs:
+            # Generate a debugFrame member variable
+            if not hasattr(self, "vlDwtLog"):
+                self.vlDwtLog = {}
+            # populate
+            for key in kwargs:
+                if key == "dwtLog": continue
+                self.vlDwtLog[key] = kwargs[key]
 
     def xcal(self, x: np.ndarray, th) -> np.ndarray:
         '''"Check mark" linearized BCM-style learning rule which calculates

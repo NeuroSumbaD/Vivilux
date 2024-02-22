@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore")
 
 
 # numSamples = 80
-numEpochs = 100
+numEpochs = 22
 inputSize = 5*5
 hiddenSize = 7*7
 outputSize = 5*5
@@ -49,6 +49,7 @@ inputs = inputs[input_perm]
 targets = targets[input_perm]
 
 activityLog = pd.read_csv(path.join(directory, "ra25_activityLog.csv"))
+dwtLog = pd.read_csv(path.join(directory, "ra25_dwtLog.csv"))
 
 with open(path.join(directory, "ra25_weights.json")) as weightsFile:
     weights = json.load(weightsFile)
@@ -68,19 +69,19 @@ outputConfig = deepcopy(layerConfig_std)
 outputConfig["FFFBparams"]["Gi"] = 1.4
 leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
 
-plt.ion()
-# Add monitors
-for layer in layerList:
-    layer.AddMonitor(StackedMonitor(
-        layer.name,
-        labels = ["time step", "activity"],
-        limits=[100, 2],
-        layout=[2, 1],
-        numLines=len(layer),
-        targets=["activity", "Ge"],
-        legendVisibility=False
-        )
-    )
+# plt.ion()
+# # Add monitors
+# for layer in layerList:
+#     layer.AddMonitor(StackedMonitor(
+#         layer.name,
+#         labels = ["time step", "activity"],
+#         limits=[100, 2],
+#         layout=[2, 1],
+#         numLines=len(layer),
+#         targets=["activity", "Ge"],
+#         legendVisibility=False
+#         )
+#     )
 
 # Add bidirectional connections from leabra example
 for layer in weights["Layers"]:
@@ -103,8 +104,12 @@ for layer in weights["Layers"]:
             sndIndices = rs["Si"]
             mesh.matrix[recvIndex, sndIndices] = rs["Wt"]
 
+debugData = {"activityLog": activityLog.drop(["AvgLLrn", "GiRaw"], axis=1),
+             "dwtLog": dwtLog,}
 result = leabraNet.Learn(input=inputs, target=targets,
-                            numEpochs=numEpochs, reset=False)
+                            numEpochs=numEpochs, reset=False,
+                            shuffle = False,
+                            debugData=debugData)
 plt.plot(result['RMSE'], label="Leabra Net")
 
 baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry

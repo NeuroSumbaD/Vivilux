@@ -285,6 +285,17 @@ class Layer:
         self.Act[:] = 0
         self.Vm[:] = self.VmInit
 
+        self.GeRaw[:] = 0
+        self.Ge[:] = 0
+        self.GiRaw[:] = 0
+        self.GiSyn[:] = 0
+        self.Gi[:] = 0
+
+        self.ActAvg.Reset()
+        
+        for mesh in self.excMeshes:
+            mesh.XCAL.Reset()
+
 
     def Clamp(self, data, time: float, monitoring = False, debugData=None):
         clampData = data.copy()
@@ -303,11 +314,11 @@ class Layer:
 
         # self.EndStep() # Updates averages, snapshots, monitors
 
-    def Learn(self, batchComplete=False):
+    def Learn(self, batchComplete=False, debugDwt = {}):
         if self.isInput or self.freeze: return
         for mesh in self.excMeshes:
             if not mesh.trainable: continue
-            mesh.Update()
+            mesh.Update(debugDwt=debugDwt)
 
             ### <--- OLD IMPLEMENTATION ---> ###
             # inLayer = mesh.inLayer # assume first mesh as input
