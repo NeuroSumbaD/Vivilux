@@ -24,10 +24,12 @@ class Mesh:
                  RelScale: float = 1,
                  Off: float = 1,
                  Gain: float = 6,
+                 dtype = np.float64,
                  **kwargs):
         self.size = size if size > len(inLayer) else len(inLayer)
         self.Off = Off
         self.Gain = Gain
+        self.dtype = dtype
 
         # Glorot uniform initialization
         glorotUniform = np.sqrt(6)/np.sqrt(2*size)
@@ -39,8 +41,8 @@ class Mesh:
         self.Gscale = 1#/len(inLayer)
         self.inLayer = inLayer
         self.OptThreshParams = inLayer.OptThreshParams
-        self.lastAct = np.zeros(self.size)
-        self.inAct = np.zeros(self.size)
+        self.lastAct = np.zeros(self.size, dtype=self.dtype)
+        self.inAct = np.zeros(self.size, dtype=self.dtype)
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
         self.modified = False
@@ -62,7 +64,7 @@ class Mesh:
 
     def setGscale(self):
         # TODO: handle case for inhibitory mesh
-        totalRel = np.sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes])
+        totalRel = np.sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes], dtype=self.dtype)
         self.Gscale = self.AbsScale * self.RelScale 
         self.Gscale /= totalRel if totalRel > 0 else 1
 
@@ -71,7 +73,7 @@ class Mesh:
         self.avgActP = self.inLayer.ActAvg.ActPAvg
 
         #calculate average number of active neurons in sending layer
-        sendLayActN = np.maximum(np.round(self.avgActP*len(self.inLayer)), 1)
+        sendLayActN = np.maximum(np.round(self.avgActP*len(self.inLayer)), 1, dtype=self.dtype)
         sc = 1/sendLayActN # TODO: implement relative importance
         self.Gscale *= sc
 

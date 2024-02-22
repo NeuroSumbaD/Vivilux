@@ -130,6 +130,7 @@ class Net:
                  runConfig = runConfig_std,
                  phaseConfig = phaseConfig_std,
                  layerConfig = layerConfig_std,
+                 dtype = np.float64,
                  **kwargs):
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
@@ -139,6 +140,7 @@ class Net:
         self.phaseConfig = phaseConfig # Dictionary of phase definitions
         self.layerConfig = layerConfig # Stereotyped layer definition
         self.monitoring = monitoring
+        self.dtype = dtype
 
         # For time keeping
         self.DELTA_TIME = runConfig["DELTA_TIME"]
@@ -185,6 +187,9 @@ class Net:
         # index = len(self.layers)
         # size = len(layer)
 
+        if layer.dtype != self.dtype:
+            layer.SetDtype(self.dtype)
+
         self.layers.append(layer)
         self.layerDict[layer.name] = layer
 
@@ -216,7 +221,7 @@ class Net:
         meshConfig = self.layerConfig["ffMeshConfig"] if meshConfig is None else meshConfig
         size = len(receiving)
         meshArgs = meshConfig["meshArgs"]
-        mesh = meshConfig["meshType"](size, sending, **meshArgs)
+        mesh = meshConfig["meshType"](size, sending, dtype=self.dtype, **meshArgs)
         receiving.addMesh(mesh)
         return mesh
 

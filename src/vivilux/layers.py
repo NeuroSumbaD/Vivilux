@@ -36,6 +36,7 @@ class Layer:
                  clampMin = 0,
                 #  freeze = False,
                 #  batchMode=False,
+                 dtype = np.float64,
                  name = None,
                  ):
         
@@ -44,6 +45,7 @@ class Layer:
         self.modified = False 
         self.actFn = activation
         self.rule = learningRule
+        self.dtype = dtype
         
         self.monitors: dict[str, Monitor] = {}
         self.snapshot = {}
@@ -57,15 +59,15 @@ class Layer:
         # Initialize layer variables
         self.net = None
 
-        self.GeRaw = np.zeros(length)
-        self.Ge = np.zeros(length)
+        self.GeRaw = np.zeros(length, dtype=self.dtype)
+        self.Ge = np.zeros(length, dtype=self.dtype)
 
-        self.GiRaw = np.zeros(length)
-        self.GiSyn = np.zeros(length)
-        self.Gi = np.zeros(length)
+        self.GiRaw = np.zeros(length, dtype=self.dtype)
+        self.GiSyn = np.zeros(length, dtype=self.dtype)
+        self.Gi = np.zeros(length, dtype=self.dtype)
 
-        self.Act = np.zeros(length)
-        self.Vm = np.zeros(length)
+        self.Act = np.zeros(length, dtype=self.dtype)
+        self.Vm = np.zeros(length, dtype=self.dtype)
 
         # Empty initial excitatory and inhibitory meshes
         self.excMeshes: list[Mesh] = []
@@ -365,6 +367,19 @@ class Layer:
                 allEqual[colName] = isEqual
 
             print(f"{self.name}[{time}]:", allEqual)
+            #print(totalError / len(currentLog))
+    
+    def SetDtype(self, dtype: np.dtype):
+        self.dtype = dtype
+        self.GeRaw = self.GeRaw.astype(dtype)
+        self.Ge = self.Ge.astype(dtype)
+
+        self.GiRaw = self.GiRaw.astype(dtype)
+        self.GiSyn = self.GiSyn.astype(dtype)
+        self.Gi = self.Gi.astype(dtype)
+
+        self.Act = self.Act.astype(dtype)
+        self.Vm = self.Act.astype(dtype)
 
     def Freeze(self):
         self.freeze = True

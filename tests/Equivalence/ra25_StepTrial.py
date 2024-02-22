@@ -52,7 +52,7 @@ activityLog = pd.read_csv(path.join(directory, "ra25_activityLog.csv"))
 with open(path.join(directory, "ra25_weights.json")) as weightsFile:
     weights = json.load(weightsFile)
 
-leabraNet = Net(name = "LEABRA_NET") # Default Leabra net
+leabraNet = Net(name = "LEABRA_NET", dtype=np.float64) # Default Leabra net
 
 # Add layers
 layerList = [Layer(inputSize, isInput=True, name="Input"),

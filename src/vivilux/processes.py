@@ -153,12 +153,12 @@ class ActAvg(PhasicProcess):
         # layer.phaseProcesses.append(self) # Layer calls this directly at trial start
 
         # Pre-allocate Numpy
-        self.AvgSS = np.zeros(len(self.pool))
-        self.AvgS = np.zeros(len(self.pool))
-        self.AvgM = np.zeros(len(self.pool))
-        self.AvgL = np.zeros(len(self.pool))
+        self.AvgSS = np.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgS = np.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgM = np.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgL = np.zeros(len(self.pool), dtype=layer.dtype)
 
-        self.AvgSLrn = np.zeros(len(self.pool))
+        self.AvgSLrn = np.zeros(len(self.pool), dtype=layer.dtype)
 
         self.InitAct()
 
