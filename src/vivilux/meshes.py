@@ -150,7 +150,7 @@ class Mesh:
         dwtLog = kwargs["debugDwt"]["dwtLog"]
         frame = dwtLog[dwtLog["name"] == self.rcvLayer.name]
         frame = frame[frame["time"].round(3) == np.round(time, 3)]
-        frame = frame.drop(["time", "name", "isLrn"], axis=1)
+        frame = frame.drop(["time", "name"], axis=1)
         
         leabraData = {}
         sendLen = frame["sendIndex"].max() + 1
@@ -182,9 +182,12 @@ class Mesh:
         allEqual = {}
         for key in leabraData:
             if key not in viviluxData: continue #skip missing columns
-            percentError = 100 * (viviluxData[key] - leabraData[key]) / leabraData[key]
-            mask = leabraData[key] == 0
-            mask = np.logical_and(mask, viviluxData[key]==0)
+            vlDatum = viviluxData[key]
+            shape = vlDatum.shape
+            lbDatum = leabraData[key][:shape[1]][:shape[0]]
+            percentError = 100 * (vlDatum - lbDatum) / lbDatum
+            mask = lbDatum == 0
+            mask = np.logical_and(mask, vlDatum==0)
             percentError[mask] = 0
             isEqual = np.all(np.abs(percentError) < 2)
             
