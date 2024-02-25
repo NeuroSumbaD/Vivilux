@@ -346,7 +346,7 @@ class Net:
 
         for timeStep in range(numTimeSteps):
             self.UpdateConductances()
-            self.UpdateActivity(phaseName, **dataVectors)
+            self.UpdateActivity(phaseName, debugData=debugData, **dataVectors)
 
             self.time += self.DELTA_TIME
 

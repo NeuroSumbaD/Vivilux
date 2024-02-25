@@ -212,7 +212,7 @@ class XCAL(PhasicProcess):
                  hasMomentum = True, #TODO allow this to be set by layer or mesh config
                  MTau = 10, #TODO allow this to be set by layer or mesh config
                  Momentum_LrComp = 0.1, #TODO allow this to be set by layer or mesh config
-                 LrnThr = 00, #TODO find correct default and implement behavior: if sn.AvgS < pj.Learn.XCal.LrnThr && sn.AvgM < pj.Learn.XCal.LrnThr {continue}
+                 LrnThr = 0.01,
                  Lrate = 0.04,
                  ):
         self.DRev = DRev
@@ -225,6 +225,7 @@ class XCAL(PhasicProcess):
         self.hasMomentum = hasMomentum
         self.MTau = MTau
         self.Momentum_LrComp = Momentum_LrComp
+        self.LrnThr = LrnThr
         self.Lrate = Lrate
 
         self.MDt = 1/MTau
@@ -313,6 +314,7 @@ class XCAL(PhasicProcess):
         # Implment contrast enhancement mechanism
         # TODO figure out a way to use contrast enhancement without requiring the current weight...
         ## Is there a way to use taylor's expansion to calculate an adjusted delta??
+        ### THIS CODE MOVED TO THE MESH UPDATE
 
         if bool(debugDwt):
             self.Debug(norm = norm,
@@ -396,5 +398,11 @@ class XCAL(PhasicProcess):
         hebbLike = self.xcal(srs, AvgL)
         hebbLike = (hebbLike.T @ self.AvgLLrn).T # mult each recv by AvgLLrn
         dwt = errorDriven + hebbLike
+
+        # Threshold learning for synapses above threshold
+        mask1 = send.AvgS < self.LrnThr
+        mask2 = send.AvgM < self.LrnThr
+        cond = np.logical_and(mask1, mask2)
+        dwt[cond] = 0
         
         return dwt  
