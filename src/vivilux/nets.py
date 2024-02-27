@@ -361,8 +361,9 @@ class Net:
                     process.StepPhase()
 
     def StepTrial(self, runType: str, debugData = {}, **dataVectors):
+        Train = runType=="Learn"
         for layer in self.layers:
-            layer.InitTrial()
+            layer.InitTrial(Train)
             
         for phaseName in self.runConfig[runType]:
             self.StepPhase(phaseName, debugData=debugData, **dataVectors)
@@ -373,16 +374,17 @@ class Net:
                     # TODO use pre-allocated numpy array to speed up execution
                     self.outputs[dataName].append(layer.getActivity())
 
-            if self.phaseConfig[phaseName]["isLearn"] and runType=="Learn":
+            if self.phaseConfig[phaseName]["isLearn"] and Train:
                 for layer in self.layers:
-                    layer.Learn(debugDwt=debugData)
+                    dwtLog = debugData["dwtLog"] if "dwtLog" in debugData else None
+                    layer.Learn(dwtLog=dwtLog)
 
     def RunEpoch(self,
                  runType: str,
                  verbosity = 1,
                  reset: bool = False,
                  shuffle: bool = False,
-                 debugData = None,
+                 debugData = {},
                  **dataset: dict[str, np.ndarray]):
         '''Runs an epoch (iteration through all samples of a dataset) using a
             specified run type mathing a key from self.runConfig.

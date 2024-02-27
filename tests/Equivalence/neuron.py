@@ -59,12 +59,14 @@ net.AddLayer(neuron, layerConfig=layerConfig)
 # neuron.addMesh(connect)
 # stim.Clamp([0])
 
+emerGe = df["#Ge"].to_numpy()
+emerInet = df["#Inet"].to_numpy()
+emerVm = df["#Vm"].to_numpy()
+emerAct = df["#Act"].to_numpy()
+
 
 for step in timeAx:
-    # if step > 10 and step < 160:
-    #     stim.Clamp([1])
-    # elif step >= 160:
-    #     stim.Clamp([0])
+    neuron.UpdateConductance()
     neuron.StepTime(step)
     Ge[step] = neuron.Ge * neuron.Gbar["E"]
     Vm[step] = neuron.Vm
@@ -94,11 +96,7 @@ ax[1].legend()
 
 plt.show()
 
-emerGe = df["#Ge"].to_numpy()
 print("Ge equivalence: ", np.all(np.isclose(emerGe, Ge, rtol=1e-3, atol=1e-3)))
-emerInet = df["#Inet"].to_numpy()
 print("Inet equivalence: ", np.all(np.isclose(emerInet, Inet, rtol=1e-3, atol=1e-3)))
-emerVm = df["#Vm"].to_numpy()
 print("Vm equivalence: ", np.all(np.isclose(emerVm, Vm, rtol=1e-3, atol=1e-3)))
-emerAct = df["#Act"].to_numpy()
 print("Act equivalence: ", np.all(np.isclose(emerAct, Act, rtol=1e-3, atol=0)))

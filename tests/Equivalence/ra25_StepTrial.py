@@ -7,7 +7,7 @@
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
-from vivilux.meshes import AbsMesh
+from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE
 from vivilux.learningRules import CHL, GeneRec
 from vivilux.optimizers import Decay
@@ -75,7 +75,7 @@ for layer in weights["Layers"]:
         rcvIndex = leabraNet.layers.index(netLayer)
         isFeedback = sndIndex > rcvIndex
         meshConfig = {
-            "meshType": AbsMesh,
+            "meshType": Mesh,
             "meshArgs": {"AbsScale": gscale,
                          "RelScale": 0.2 if isFeedback else 1},
         }

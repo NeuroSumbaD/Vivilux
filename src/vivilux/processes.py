@@ -63,7 +63,6 @@ class FFFB(NeuralProcess):
         self.poolAct = np.zeros(len(layer))
         self.FFFBparams = layer.FFFBparams
 
-        self.ffi = 0
         self.fbi = 0
 
         self.isFloating = False
@@ -89,8 +88,8 @@ class FFFB(NeuralProcess):
         self.poolAct = self.pool.getActivity()
 
     def Reset(self):
-        self.ffi = 0
         self.fbi = 0
+        self.poolAct[:] = 0
 
 class ActAvg(PhasicProcess):
     '''A process for calculating average neuron activities for learning.
@@ -112,6 +111,7 @@ class ActAvg(PhasicProcess):
                  LrnMax = 0.5,
                  LrnMin = 0.0001,
                  #ActPAvg plus phase averaging params
+                 UseFirst = True,
                  ActPAvg_Init = 0.15,
                  ActPAvg_Tau = 100,
                  ActPAvg_Adjust = 1,
@@ -129,18 +129,20 @@ class ActAvg(PhasicProcess):
         self.ModMin = ModMin
         self.LrnMax = LrnMax
         self.LrnMin = LrnMin
+        self.UseFirst = UseFirst
+        self.ActPAvg_Init = ActPAvg_Init
+        self.ActPAvg_Tau = ActPAvg_Tau
+        self.ActPAvg_Adjust = ActPAvg_Adjust
 
         self.SSdt = 1/SSTau
         self.Sdt = 1/STau
         self.Mdt = 1/MTau
         self.Dt = 1/Tau
-        # self.ActAvgDt = 1/ActAvgTau
+        self.ActPAvg_Dt = 1/self.ActPAvg_Tau
+        self.LrnFact = (LrnMax - LrnMin) / (Gain - Min)
 
-        self.ActPAvg = ActPAvg_Init #TODO: compare with Leabra
-        self.ActPAvgEff = ActPAvg_Init
-        self.ActPAvg_Tau = ActPAvg_Tau
-        self.ActPAvg_Dt = 1/ActPAvg_Tau
-        self.ActPAvg_Adjust = ActPAvg_Adjust
+        self.ActPAvg = self.ActPAvg_Init #TODO: compare with Leabra
+        self.ActPAvgEff = self.ActPAvg_Init
 
         self.AttachLayer(layer)
 
@@ -159,6 +161,8 @@ class ActAvg(PhasicProcess):
         self.AvgL = np.zeros(len(self.pool))
 
         self.AvgSLrn = np.zeros(len(self.pool))
+        self.ModAvgLLrn = np.zeros(len(self.pool))
+        self.AvgLLrn = np.zeros(len(self.pool))
 
         self.InitAct()
 
@@ -181,23 +185,54 @@ class ActAvg(PhasicProcess):
     def StepPhase(self):
         '''Updates longer term running averages for the sake of the learning rule
         '''
+        ####----CosDiffFmActs (end of Plus phase)----####
+        if self.pool.isTarget:
+            self.ModAvgLLrn = 0
+            return
+
+        plus = self.pool.phaseHist["plus"]
+        plus -= np.mean(plus)
+        magPlus = np.sum(np.square(plus))
+
+        minus = self.pool.phaseHist["minus"]
+        minus -= np.mean(minus)
+        magMinus = np.sum(np.square(minus))
+
+        layCosDiffAvg = np.dot(plus, minus)/np.sqrt(magPlus*magMinus)
+
+        self.ModAvgLLrn = np.maximum(1 - layCosDiffAvg, self.ModMin)
+
+
+    def InitTrial(self):
+        ## AvgLFmAvgM
+        self.UpdateAvgL()
+        self.AvgLLrn[:] *= self.ModAvgLLrn # modifies avgLLrn in ActAvg process
+
+        ## ActAvgFmAct
+        self.UpdateActPAvg()
+
+    def UpdateAvgL(self):
+        '''Updates AvgL, and initializes AvgLLrn'''
         self.AvgL += self.Dt * (self.Gain * self.AvgM - self.AvgL)
         self.AvgL = np.maximum(self.AvgL, self.Min)
+        self.AvgLLrn = self.LrnFact * (self.AvgL - self.Min)
 
-        # Update plus phase average
+    def UpdateActPAvg(self):
+        '''Update plus phase ActPAvg and ActPAvgEff'''
         Act = np.mean(self.pool.getActivity())
-        self.ActPAvg += self.ActPAvg_Dt * (Act-self.ActPAvg)
+        if Act >= 0.0001:
+            self.ActPAvg += 0.5 * (Act-self.ActPAvg) if self.UseFirst else self.ActPAvg_Dt * (Act-self.ActPAvg)
         self.ActPAvgEff = self.ActPAvg_Adjust * self.ActPAvg
-
-        
 
     def Reset(self):
         self.InitAct()
+        self.ActPAvg = self.ActPAvg_Init
+        self.ActPAvgEff = self.ActPAvg_Init
+        self.AvgLLrn[:] = 0
         # self.AvgSS[:] = 0
         # self.AvgS[:] = 0
         # self.AvgM[:] = 0
         # self.AvgL[:] = 0  
-        # self.AvgLLrn[:] = 0
         # self.AvgSLrn[:] = 0
 
 
@@ -217,6 +252,7 @@ class XCAL(PhasicProcess):
                  ):
         self.DRev = DRev
         self.DThr = DThr
+        self.DRevRatio = -((1-self.DRev)/self.DRev)
         self.hasNorm = hasNorm
         self.Norm = 1 # TODO: Check for correct initilization
         self.Norm_LrComp = Norm_LrComp
@@ -231,38 +267,11 @@ class XCAL(PhasicProcess):
         self.MDt = 1/MTau
         self.DecayDt = 1/DecayTau
 
-
         self.phases = ["plus"]
-
-    def StepPhase(self):
-        AvgL = self.recv.ActAvg.AvgL
-        Gain = self.recv.ActAvg.Gain
-        ModMin = self.recv.ActAvg.ModMin
-        LrnMax = self.recv.ActAvg.LrnMax
-        LrnMin = self.recv.ActAvg.LrnMin
-
-        #TODO check if AvgLLrn is updated at the end of each phase or trial (just plus phase)
-        self.AvgLLrn = (((LrnMax - LrnMin) / (Gain - LrnMin)) * 
-                        (AvgL - LrnMin)
-                        )
         
-        # Might need to move to XCAL process
-        ## layCosDiffAvg just appears to be cosine similarity dot(A,B)/|A|*|B|
-        ## where A and B are mean averaged plus and minus activity of the 
-        ## receiving(??) layer. Not sure if this activity is time averaged or
-        ## not.
-        plus = self.recv.phaseHist["plus"]
-        plus -= np.mean(plus)
-        magPlus = np.sum(np.square(plus))
-
-        minus = self.recv.phaseHist["minus"]
-        minus -= np.mean(minus)
-        magMinus = np.sum(np.square(minus))
-
-        layCosDiffAvg = np.dot(plus, minus)/np.sqrt(magPlus*magMinus)
-
-        self.AvgLLrn *= np.maximum(1 - layCosDiffAvg, ModMin)
-
+    def StepPhase(self):
+        pass
+        
     def AttachLayer(self, sndLayer: Layer, rcvLayer: Layer):
         self.send = sndLayer
         sndLayerLen = len(sndLayer)
@@ -276,15 +285,14 @@ class XCAL(PhasicProcess):
         sndLayerLen = len(self.send)
         rcvLayerLen = len(self.recv)
 
-        self.AvgLLrn = np.zeros(rcvLayerLen)
-        self.Norm = np.ones((rcvLayerLen, sndLayerLen))
+        self.Norm = np.zeros((rcvLayerLen, sndLayerLen))
         self.moment = np.zeros((rcvLayerLen, sndLayerLen))
 
     def Reset(self):
         self.Init()
 
     def GetDeltas(self,
-                  **debugDwt
+                  dwtLog = None,
                   ) -> np.ndarray:
         if self.recv.isTarget:
             dwt = self.ErrorDriven()
@@ -297,17 +305,18 @@ class XCAL(PhasicProcess):
             # it seems like norm must be calculated first, but applied after 
             ## momentum (if applicable).
             self.Norm = np.maximum(self.DecayDt * self.Norm, np.abs(dwt))
-            norm = self.Norm
+            norm = self.Norm_LrComp / np.maximum(self.Norm, self.normMin)
+            norm[self.Norm==0] = 1
             # TODO understand what prjn.go:607-620 is doing...
             # TODO enable custom norm procedure (L1, L2, etc.)
 
         # Implement momentum optimiziation
         if self.hasMomentum:
             self.moment = self.MDt * self.moment + dwt
-            dwt = self.Momentum_LrComp * self.moment
+            dwt = norm * self.Momentum_LrComp * self.moment
             # TODO allow other optimizers (momentum, adam, etc.) from optimizers.py
-
-        dwt *= self.Norm_LrComp / np.maximum(norm, self.normMin)
+        else:
+            dwt *= norm
 
         Dwt = self.Lrate * dwt # TODO implment Leabra and generalized learning rate schedules
 
@@ -316,11 +325,11 @@ class XCAL(PhasicProcess):
         ## Is there a way to use taylor's expansion to calculate an adjusted delta??
         ### THIS CODE MOVED TO THE MESH UPDATE
 
-        if bool(debugDwt):
+        if dwtLog is not None:
             self.Debug(norm = norm,
                     dwt = dwt,
                     Dwt = Dwt,
-                    **debugDwt)
+                    dwtLog = dwtLog)
 
         return Dwt
 
@@ -348,7 +357,7 @@ class XCAL(PhasicProcess):
         '''
         out = np.zeros(x.shape)
         
-        cond1 = x < th
+        cond1 = x < self.DThr
         not1 = np.logical_not(cond1)
         mask1 = cond1
 
@@ -361,7 +370,7 @@ class XCAL(PhasicProcess):
         # (x < DThr) ? 0 : (x > th * DRev) ? (x - th) : (-x * ((1-DRev)/DRev))
         out[mask1] = 0
         out[mask2] = x[mask2] - th[mask2]
-        out[mask3] = -x[mask3] * ((1-self.DRev)/self.DRev)
+        out[mask3] = x[mask3] * self.DRevRatio
 
         return out
 
@@ -389,20 +398,20 @@ class XCAL(PhasicProcess):
     def MixedLearn(self) -> np.ndarray:
         send = self.send.ActAvg
         recv = self.recv.ActAvg
+        AvgLLrn = recv.AvgLLrn
         srs = recv.AvgSLrn[:,np.newaxis] @ send.AvgSLrn[np.newaxis,:]
         srm = recv.AvgM[:,np.newaxis] @ send.AvgM[np.newaxis,:]
         AvgL = np.repeat(recv.AvgL[:,np.newaxis], len(self.send), axis=1)
-        # AvgLLrn = np.repeat(self.AvgLLrn[:,np.newaxis], len(self.send), axis=1)
 
         errorDriven = self.xcal(srs, srm)
         hebbLike = self.xcal(srs, AvgL)
-        hebbLike = (hebbLike.T @ self.AvgLLrn).T # mult each recv by AvgLLrn
+        hebbLike = hebbLike * AvgLLrn[:,np.newaxis] # mult each recv by AvgLLrn
         dwt = errorDriven + hebbLike
 
         # Threshold learning for synapses above threshold
         mask1 = send.AvgS < self.LrnThr
         mask2 = send.AvgM < self.LrnThr
         cond = np.logical_and(mask1, mask2)
-        dwt[cond] = 0
+        dwt[:,cond] = 0
         
         return dwt  

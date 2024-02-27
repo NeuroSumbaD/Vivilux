@@ -139,14 +139,14 @@ class Mesh:
             print(ve)
 
     def AttachLayer(self, rcvLayer: Layer):
+        self.rcvLayer = rcvLayer
         self.XCAL = XCAL() #TODO pass params from layer or mesh config
         self.XCAL.AttachLayer(self.inLayer, rcvLayer)
-        rcvLayer.phaseProcesses.append(self.XCAL) # Add XCAL as phasic process to layer
-        self.rcvLayer = rcvLayer
+        # rcvLayer.phaseProcesses.append(self.XCAL) # Add XCAL as phasic process to layer
 
     def WtBalance(self):
         if not self.WtBalance: return
-        if not self.WtBalCtr % 10:
+        if self.WtBalCtr % 10:
             self.WtBalCtr += 1
             return
 
@@ -169,66 +169,41 @@ class Mesh:
     def SoftBound(self, delta):
         if self.softBound:
             mask1 = delta > 0
-            delta[mask1] *= self.wbInc[mask1] * (1 - self.linMatrix[mask1])
+            m, n = delta.shape
+            delta[mask1] *= self.wbInc * (1 - self.linMatrix[:m,:n][mask1])
 
             mask2 = np.logical_not(mask1)
-            delta[mask2] *= self.wbDec[mask2] * self.linMatrix[mask2]
-
-        else:
-            return delta
+            delta[mask2] *= self.wbDec * self.linMatrix[:m,:n][mask2]
+                    
+        return delta
 
     def Update(self,
-               debugDwt = {},
+               dwtLog = None,
                # delta: np.ndarray ### Now delta is handled by the 
                ):
         # self.modified = True
         # self.matrix[:m, :n] += self.rate*delta
 
-        delta = self.XCAL.GetDeltas(**debugDwt)
+        delta = self.XCAL.GetDeltas(dwtLog=dwtLog)
         self.WtBalance()
         delta = self.SoftBound(delta)
         m, n = delta.shape
         self.linMatrix[:m, :n] += delta
         self.SigMatrix()
 
-        if bool(debugDwt):
+        if dwtLog is not None:
             self.Debug(lwt = self.linMatrix,
                        wt = self.matrix,
-                       debugDwt = debugDwt)
+                       dwtLog = dwtLog)
 
     def Debug(self,
               **kwargs):
         '''Checks the XCAL and weights against leabra data'''
         #TODO: This function is very messy, truncate if possible
-        if "debugDwt" not in kwargs: return
-        if bool(kwargs["debugDwt"]) == False: return #empty data
+        if "dwtLog" not in kwargs: return
+        if kwargs["dwtLog"] is None: return #empty data
         net = self.inLayer.net
         time = net.time
-
-        # isolate frame of important data from log
-        dwtLog = kwargs["debugDwt"]["dwtLog"]
-        frame = dwtLog[dwtLog["name"] == self.rcvLayer.name]
-        frame = frame[frame["time"].round(3) == np.round(time, 3)]
-        frame = frame.drop(["time", "name"], axis=1)
-        
-        leabraData = {}
-        sendLen = frame["sendIndex"].max() + 1
-        recvLen = frame["recvIndex"].max() + 1
-        leabraData["norm"] = np.zeros((recvLen, sendLen))
-        leabraData["dwt"] = np.zeros((recvLen, sendLen))
-        leabraData["norm"] = np.zeros((recvLen, sendLen))
-        leabraData["lwt"] = np.zeros((recvLen, sendLen))
-        leabraData["wt"] = np.zeros((recvLen, sendLen))
-        for row in frame.index:
-            ri = frame["recvIndex"][row]
-            si = frame["sendIndex"][row]
-            leabraData["norm"][ri][si] = frame["norm"][row]
-            leabraData["dwt"][ri][si] = frame["dwt"][row]
-            leabraData["norm"][ri][si] = frame["norm"][row]
-            leabraData["lwt"][ri][si] = frame["lwt"][row]
-            leabraData["wt"][ri][si] = frame["wt"][row]
-            
-
 
         viviluxData = {}
         viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]
@@ -237,7 +212,31 @@ class Mesh:
         viviluxData["lwt"] = kwargs["lwt"]
         viviluxData["wt"] = kwargs["wt"]
 
+        # isolate frame of important data from log
+        dwtLog = kwargs["dwtLog"]
+        frame = dwtLog[dwtLog["sName"] == self.inLayer.name]
+        frame = frame[frame["time"].round(3) == np.round(time, 3)]
+        frame = frame.drop(["time", "rName", "sName"], axis=1)
+        if len(frame) == 0: return
+        
+        leabraData = {}
+        sendLen = frame["sendIndex"].max() + 1
+        recvLen = frame["recvIndex"].max() + 1
+        leabraData["norm"] = np.zeros((recvLen, sendLen))
+        leabraData["dwt"] = np.zeros((recvLen, sendLen))
+        leabraData["Dwt"] = np.zeros((recvLen, sendLen))
+        leabraData["lwt"] = np.zeros((recvLen, sendLen))
+        leabraData["wt"] = np.zeros((recvLen, sendLen))
+        for row in frame.index:
+            ri = frame["recvIndex"][row]
+            si = frame["sendIndex"][row]
+            leabraData["norm"][ri][si] = frame["norm"][row]
+            leabraData["dwt"][ri][si] = frame["dwt"][row]
+            leabraData["Dwt"][ri][si] = frame["DWt"][row]
+            leabraData["lwt"][ri][si] = frame["lwt"][row]
+            leabraData["wt"][ri][si] = frame["wt"][row]
 
+        return #TODO: LINE UP THE DATA CORRECTLY
         allEqual = {}
         for key in leabraData:
             if key not in viviluxData: continue #skip missing columns
@@ -252,18 +251,18 @@ class Mesh:
             
             allEqual[key] = isEqual
 
-            with np.printoptions(threshold=np.inf):
-                with open("ViviluxDebuggingLogs.txt", "a") as f:
-                    f.write(f"Vivilux [{key}]:\n")
-                    f.write(str(viviluxData[key]))
-                    f.write("\n\n")
+        #     with np.printoptions(threshold=np.inf):
+        #         with open("ViviluxDebuggingLogs.txt", "a") as f:
+        #             f.write(f"Vivilux [{key}]:\n")
+        #             f.write(str(viviluxData[key]))
+        #             f.write("\n\n")
 
-                with open("LeabraDbuggingLogs.txt", "a") as f:
-                    f.write(f"Leabra [{key}]:\n")
-                    f.write(str(leabraData[key]))
-                    f.write("\n\n")
+        #         with open("LeabraDbuggingLogs.txt", "a") as f:
+        #             f.write(f"Leabra [{key}]:\n")
+        #             f.write(str(leabraData[key]))
+        #             f.write("\n\n")
 
-        print(f"{self.name}[{time}]:", allEqual)
+        # print(f"{self.name}[{time}]:", allEqual)
 
     def SigMatrix(self):
         '''After an update to the linear weights, the sigmoidal weights must be

@@ -116,6 +116,7 @@ class Layer:
 
         # Attach Averaging Process
         self.ActAvg = ActAvg(self) # TODO add to std layerConfig and pass params here
+        self.phaseProcesses.append(self.ActAvg)
 
         # Attach FFFB process
         ##NOTE: special process, executed after Ge update, before Gi update
@@ -201,13 +202,18 @@ class Layer:
         for mesh in self.inhMeshes:
             self.GiRaw[:] += mesh.apply()[:len(self)]
 
-    def InitTrial(self):
+    def InitTrial(self, Train: bool):
+        if Train:
+            # Update AvgL, AvgLLrn, ActPAvg, ActPAvgEff
+            self.ActAvg.InitTrial()
+            
+            # self.ActAvg.StepPhase() ##TODO: Move to end of plus phase
+
+        ## GScaleFmAvgAct
         for mesh in self.excMeshes:
             mesh.setGscale()
 
-        # Update AvgL
-        self.ActAvg.StepPhase()
-
+        ## InitGInc
         self.GeRaw[:] = 0 # reset
         self.GiRaw[:] = 0 # reset
 
@@ -291,6 +297,7 @@ class Layer:
         self.GiSyn[:] = 0
         self.Gi[:] = 0
 
+        self.FFFB.Reset()
         self.ActAvg.Reset()
         
         for mesh in self.excMeshes:
@@ -314,11 +321,11 @@ class Layer:
 
         # self.EndStep() # Updates averages, snapshots, monitors
 
-    def Learn(self, batchComplete=False, debugDwt = {}):
+    def Learn(self, batchComplete=False, dwtLog = {}):
         if self.isInput or self.freeze: return
         for mesh in self.excMeshes:
             if not mesh.trainable: continue
-            mesh.Update(debugDwt=debugDwt)
+            mesh.Update(dwtLog=dwtLog)
 
             ### <--- OLD IMPLEMENTATION ---> ###
             # inLayer = mesh.inLayer # assume first mesh as input
@@ -350,6 +357,7 @@ class Layer:
             currentLog = actLog[timeSeries==time]
             currentLog = currentLog[currentLog["name"]==self.name]
             currentLog = currentLog.drop(["time", "name", "nIndex"], axis=1)
+            if len(currentLog) == 0: return
 
             # compare each internal variable
             for colName in currentLog:
@@ -375,7 +383,7 @@ class Layer:
                 
                 allEqual[colName] = isEqual
 
-            print(f"{self.name}[{time}]:", allEqual)
+            # print(f"{self.name}[{time}]:", allEqual)
 
     def Freeze(self):
         self.freeze = True
