@@ -100,7 +100,10 @@ class NoisyXX1:
         mask3 = x >= self.InterpRange
 
         # if x < 0 // sigmoidal for < 0
-        out[mask1] = self.SigMultEff / (1 + np.exp(-(x[mask1] * self.SigGainNVar)))
+        exp = -(x * self.SigGainNVar)
+        submask = exp > 50
+        out[mask1] = self.SigMultEff / (1 + np.exp(exp[mask1]))
+        out[submask] = 0 # zero for small values
 
         # else if x < self.InterpRange
         interp = 1 - ((self.InterpRange - x[mask2]) / self.InterpRange)

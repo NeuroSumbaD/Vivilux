@@ -118,6 +118,7 @@ class Layer:
 
         # Attach Averaging Process
         self.ActAvg = ActAvg(self) # TODO add to std layerConfig and pass params here
+        self.phaseProcesses.append(self.ActAvg)
 
         # Attach FFFB process
         ##NOTE: special process, executed after Ge update, before Gi update
@@ -149,12 +150,12 @@ class Layer:
                        )
         self.Gi[:] = self.GiSyn + self.Gi_FFFB # Add synaptic Gi to FFFB contribution
     
-    def StepTime(self, time: float, **debugData):
+    def StepTime(self, time: float, debugData = None):
         # self.UpdateConductance() ## Moved to nets StepPhase
 
         if self.EXTERNAL is not None: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
             self.Clamp(self.EXTERNAL, time, debugData=debugData)
-            self.EndStep(time, **debugData)
+            self.EndStep(time, debugData=debugData)
             return
             
 
@@ -190,7 +191,7 @@ class Layer:
         # Update layer activities
         self.Act[:] += self.DtParams["VmDt"] * (newAct - self.Act)
 
-        self.EndStep(time, **debugData)
+        self.EndStep(time, debugData=debugData)
 
     def Integrate(self):
         '''Integrates raw conductances from incoming synaptic connections.
@@ -203,13 +204,18 @@ class Layer:
         for mesh in self.inhMeshes:
             self.GiRaw[:] += mesh.apply()[:len(self)]
 
-    def InitTrial(self):
+    def InitTrial(self, Train: bool):
+        if Train:
+            # Update AvgL, AvgLLrn, ActPAvg, ActPAvgEff
+            self.ActAvg.InitTrial()
+            
+            # self.ActAvg.StepPhase() ##TODO: Move to end of plus phase
+
+        ## GScaleFmAvgAct
         for mesh in self.excMeshes:
             mesh.setGscale()
 
-        # Update AvgL
-        self.ActAvg.StepPhase()
-
+        ## InitGInc
         self.GeRaw[:] = 0 # reset
         self.GiRaw[:] = 0 # reset
 
@@ -246,7 +252,7 @@ class Layer:
             "Vm": self.Vm
         }
 
-    def EndStep(self, time, **debugData):
+    def EndStep(self, time, debugData = None):
         self.ActAvg.StepTime()
         self.FFFB.UpdateAct()
         self.UpdateSnapshot()
@@ -267,7 +273,7 @@ class Layer:
                        GeRaw=self.GeRaw,
                        Gi=self.Gi,
                        GiRaw=self.GiRaw,
-                       **debugData
+                       debugData = debugData,
                        )
 
         # TODO: Improve readability of this line (end of trial code?)
@@ -287,6 +293,18 @@ class Layer:
         self.Act[:] = 0
         self.Vm[:] = self.VmInit
 
+        self.GeRaw[:] = 0
+        self.Ge[:] = 0
+        self.GiRaw[:] = 0
+        self.GiSyn[:] = 0
+        self.Gi[:] = 0
+
+        self.FFFB.Reset()
+        self.ActAvg.Reset()
+        
+        for mesh in self.excMeshes:
+            mesh.XCAL.Reset()
+
 
     def Clamp(self, data, time: float, monitoring = False, debugData=None):
         clampData = data.copy()
@@ -305,11 +323,11 @@ class Layer:
 
         # self.EndStep() # Updates averages, snapshots, monitors
 
-    def Learn(self, batchComplete=False):
+    def Learn(self, batchComplete=False, dwtLog = {}):
         if self.isInput or self.freeze: return
         for mesh in self.excMeshes:
             if not mesh.trainable: continue
-            mesh.Update()
+            mesh.Update(dwtLog=dwtLog)
 
             ### <--- OLD IMPLEMENTATION ---> ###
             # inLayer = mesh.inLayer # assume first mesh as input
@@ -341,6 +359,7 @@ class Layer:
             currentLog = actLog[timeSeries==time]
             currentLog = currentLog[currentLog["name"]==self.name]
             currentLog = currentLog.drop(["time", "name", "nIndex"], axis=1)
+            if len(currentLog) == 0: return
 
             # compare each internal variable
             for colName in currentLog:
@@ -366,9 +385,6 @@ class Layer:
                 
                 allEqual[colName] = isEqual
 
-            print(f"{self.name}[{time}]:", allEqual)
-            #print(totalError / len(currentLog))
-    
     def SetDtype(self, dtype: np.dtype):
         self.dtype = dtype
         self.GeRaw = self.GeRaw.astype(dtype)

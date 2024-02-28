@@ -25,11 +25,37 @@ class Mesh:
                  Off: float = 1,
                  Gain: float = 6,
                  dtype = np.float64,
+                 wbOn = True,
+                 wbAvgThr = 0.25,
+                 wbHiThr = 0.4,
+                 wbHiGain = 4,
+                 wbLoThr = 0.4,
+                 wbLoGain = 6,
+                 wbInc = 1,
+                 wbDec = 1,
+                 WtBalInterval = 10,
+                 softBound = True,
                  **kwargs):
         self.size = size if size > len(inLayer) else len(inLayer)
         self.Off = Off
         self.Gain = Gain
         self.dtype = dtype
+
+        # Weight Balance Parameters
+        self.wbOn = wbOn
+        self.wbAvgThr = wbAvgThr
+        self.wbHiThr = wbHiThr
+        self.wbHiGain = wbHiGain
+        self.wbLoThr = wbLoThr
+        self.wbLoGain = wbLoGain
+        self.wbInc = wbInc
+        self.wbDec = wbDec
+        self.WtBalInterval = 0
+        self.softBound = softBound
+
+        # Weight Balance variables
+        self.WtBalCtr = 0
+        self.wbFact = 0
 
         # Glorot uniform initialization
         glorotUniform = np.sqrt(6)/np.sqrt(2*size)
@@ -117,21 +143,146 @@ class Mesh:
             print(ve)
 
     def AttachLayer(self, rcvLayer: Layer):
+        self.rcvLayer = rcvLayer
         self.XCAL = XCAL() #TODO pass params from layer or mesh config
         self.XCAL.AttachLayer(self.inLayer, rcvLayer)
-        rcvLayer.phaseProcesses.append(self.XCAL) # Add XCAL as phasic process to layer
-        self.rcvLayer = rcvLayer
+        # rcvLayer.phaseProcesses.append(self.XCAL) # Add XCAL as phasic process to layer
+
+    def WtBalance(self):
+        self.WtBalCtr += 1
+        if self.WtBalCtr >= self.WtBalInterval:
+            self.WtBalCtr = 0
+
+            ####----WtBalFmWt----####
+            if not self.WtBalance: return
+            wbAvg = np.mean(self.matrix)
+
+            if wbAvg < self.wbLoThr:
+                if wbAvg < self.wbAvgThr:
+                    wbAvg = self.wbAvgThr
+                self.wbFact = self.wbLoGain * (self.wbLoThr - wbAvg)
+                self.wbDec = 1/ (1 + self.wbFact)
+                self.wbInc = 2 - self.wbDec
+            elif wbAvg > self.wbHiThr:
+                self.wbFact = self.wbHiGain * (wbAvg - self.wbHiThr)
+                self.wbInc = 1/ (1 + self.wbFact)
+                self.wbDec = 2 - self.wbInc
+
+
+
+    def SoftBound(self, delta):
+        if self.softBound:
+            mask1 = delta > 0
+            m, n = delta.shape
+            delta[mask1] *= self.wbInc * (1 - self.linMatrix[:m,:n][mask1])
+
+            mask2 = np.logical_not(mask1)
+            delta[mask2] *= self.wbDec * self.linMatrix[:m,:n][mask2]
+        else:
+            mask1 = delta > 0
+            m, n = delta.shape
+            delta[mask1] *= self.wbInc
+
+            mask2 = np.logical_not(mask1)
+            delta[mask2] *= self.wbDec
+                    
+        return delta
+    
+    def ClipLinMatrix(self):
+        '''Bounds linear weights on range [0-1]'''
+        mask1 = self.linMatrix < 0
+        self.linMatrix[mask1] = 0
+        
+        mask2 = self.linMatrix > 1
+        self.linMatrix[mask2] = 1
 
     def Update(self,
+               dwtLog = None,
                # delta: np.ndarray ### Now delta is handled by the 
                ):
         # self.modified = True
         # self.matrix[:m, :n] += self.rate*delta
 
-        delta = self.XCAL.GetDeltas()
+        delta = self.XCAL.GetDeltas(dwtLog=dwtLog)
+        delta = self.SoftBound(delta)
         m, n = delta.shape
         self.linMatrix[:m, :n] += delta
+        self.ClipLinMatrix()
         self.SigMatrix()
+        self.WtBalance()
+
+        if dwtLog is not None:
+            self.Debug(lwt = self.linMatrix,
+                       wt = self.matrix,
+                       dwtLog = dwtLog)
+
+    def Debug(self,
+              **kwargs):
+        '''Checks the XCAL and weights against leabra data'''
+        #TODO: This function is very messy, truncate if possible
+        if "dwtLog" not in kwargs: return
+        if kwargs["dwtLog"] is None: return #empty data
+        net = self.inLayer.net
+        time = net.time
+
+        viviluxData = {}
+        viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]
+        viviluxData["dwt"] = self.XCAL.vlDwtLog["dwt"]
+        viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]
+        viviluxData["lwt"] = kwargs["lwt"]
+        viviluxData["wt"] = kwargs["wt"]
+
+        # isolate frame of important data from log
+        dwtLog = kwargs["dwtLog"]
+        frame = dwtLog[dwtLog["sName"] == self.inLayer.name]
+        frame = frame[frame["time"].round(3) == np.round(time, 3)]
+        frame = frame.drop(["time", "rName", "sName"], axis=1)
+        if len(frame) == 0: return
+        
+        leabraData = {}
+        sendLen = frame["sendIndex"].max() + 1
+        recvLen = frame["recvIndex"].max() + 1
+        leabraData["norm"] = np.zeros((recvLen, sendLen))
+        leabraData["dwt"] = np.zeros((recvLen, sendLen))
+        leabraData["Dwt"] = np.zeros((recvLen, sendLen))
+        leabraData["lwt"] = np.zeros((recvLen, sendLen))
+        leabraData["wt"] = np.zeros((recvLen, sendLen))
+        for row in frame.index:
+            ri = frame["recvIndex"][row]
+            si = frame["sendIndex"][row]
+            leabraData["norm"][ri][si] = frame["norm"][row]
+            leabraData["dwt"][ri][si] = frame["dwt"][row]
+            leabraData["Dwt"][ri][si] = frame["DWt"][row]
+            leabraData["lwt"][ri][si] = frame["lwt"][row]
+            leabraData["wt"][ri][si] = frame["wt"][row]
+
+        return #TODO: LINE UP THE DATA CORRECTLY
+        allEqual = {}
+        for key in leabraData:
+            if key not in viviluxData: continue #skip missing columns
+            vlDatum = viviluxData[key]
+            shape = vlDatum.shape
+            lbDatum = leabraData[key][:shape[0],:shape[1]]
+            percentError = 100 * (vlDatum - lbDatum) / lbDatum
+            mask = lbDatum == 0
+            mask = np.logical_and(mask, vlDatum==0)
+            percentError[mask] = 0
+            isEqual = np.all(np.abs(percentError) < 2)
+            
+            allEqual[key] = isEqual
+
+        #     with np.printoptions(threshold=np.inf):
+        #         with open("ViviluxDebuggingLogs.txt", "a") as f:
+        #             f.write(f"Vivilux [{key}]:\n")
+        #             f.write(str(viviluxData[key]))
+        #             f.write("\n\n")
+
+        #         with open("LeabraDbuggingLogs.txt", "a") as f:
+        #             f.write(f"Leabra [{key}]:\n")
+        #             f.write(str(leabraData[key]))
+        #             f.write("\n\n")
+
+        # print(f"{self.name}[{time}]:", allEqual)
 
     def SigMatrix(self):
         '''After an update to the linear weights, the sigmoidal weights must be
@@ -203,7 +354,9 @@ class TransposeMesh(Mesh):
     def getInput(self):
         return self.mesh.inLayer.getActivity()
 
-    def Update(self, delta):
+    def Update(self,
+               debugDwt = None,
+               ):
         return None
     
     
@@ -266,8 +419,10 @@ class AbsMesh(Mesh):
         self.matrix = np.abs(self.matrix)
 
 
-    def Update(self):
-        super().Update()
+    def Update(self,
+               debugDwt = None,
+               ):
+        super().Update(debugDwt=debugDwt)
         self.matrix = np.abs(self.matrix)
 
 
