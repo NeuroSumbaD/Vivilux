@@ -8,9 +8,7 @@ from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
 from vivilux.meshes import Mesh
-from vivilux.metrics import RMSE
-from vivilux.learningRules import CHL, GeneRec
-from vivilux.optimizers import Decay
+from vivilux.metrics import ThrMSE, ThrSSE
 from vivilux.visualize import StackedMonitor
 
 import pandas as pd
@@ -30,7 +28,7 @@ warnings.filterwarnings("ignore")
 
 
 # numSamples = 80
-numEpochs = 22
+numEpochs = 50
 inputSize = 5*5
 hiddenSize = 7*7
 outputSize = 5*5
@@ -54,9 +52,23 @@ dwtLog = pd.read_csv(path.join(directory, "ra25_dwtLog.csv"))
 with open(path.join(directory, "ra25_weights.json")) as weightsFile:
     weights = json.load(weightsFile)
 
+leabraRunConfig = {
+    "DELTA_TIME": 0.001,
+    "metrics": {
+        "AvgSSE": ThrMSE,
+        "SSE": ThrSSE,
+    },
+    "outputLayers": {
+        "target": -1,
+    },
+    "Learn": ["minus", "plus"],
+    "Infer": ["minus"],
+}
+
 # Default Leabra net
 leabraNet = Net(name = "LEABRA_NET",
                 monitoring= True,
+                runConfig=leabraRunConfig,
                 )
 
 # Add layers
@@ -103,6 +115,7 @@ for layer in weights["Layers"]:
             recvIndex = rs["Ri"]
             sndIndices = rs["Si"]
             mesh.matrix[recvIndex, sndIndices] = rs["Wt"]
+        mesh.InvSigMatrix()
 
 debugData = {"activityLog": activityLog,
              "dwtLog": dwtLog,}
@@ -110,16 +123,17 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          numEpochs=numEpochs,
                          reset=False,
                          shuffle = False,
-                         debugData=debugData
+                         EvaluateFirst=False,
+                        #  debugData=debugData
                          )
-plt.plot(result['RMSE'], label="Leabra Net")
+plt.plot(result['AvgSSE'], label="Leabra Net")
 
-baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry
+baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry
                     in np.random.uniform(size=(2000,len(targets),outputSize))])
-plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
+plt.axhline(y=baseline, color="b", linestyle="--", label="unformly distributed guessing")
 
-plt.title("Random Input/Output Matching")
-plt.ylabel("RMSE")
+plt.title("Random Associator 25")
+plt.ylabel("AvgSSE")
 plt.xlabel("Epoch")
 plt.legend()
 plt.show()

@@ -32,6 +32,7 @@ class Mesh:
                  wbLoGain = 6,
                  wbInc = 1,
                  wbDec = 1,
+                 WtBalInterval = 10,
                  softBound = True,
                  **kwargs):
         self.size = size if size > len(inLayer) else len(inLayer)
@@ -47,6 +48,7 @@ class Mesh:
         self.wbLoGain = wbLoGain
         self.wbInc = wbInc
         self.wbDec = wbDec
+        self.WtBalInterval = 0
         self.softBound = softBound
 
         # Weight Balance variables
@@ -145,25 +147,25 @@ class Mesh:
         # rcvLayer.phaseProcesses.append(self.XCAL) # Add XCAL as phasic process to layer
 
     def WtBalance(self):
-        if not self.WtBalance: return
-        if self.WtBalCtr % 10:
-            self.WtBalCtr += 1
-            return
-
-        wbAvg = np.mean(self.matrix)
-
-        if wbAvg < self.wbLoThr:
-            if wbAvg < self.wbAvgThr:
-                wbAvg = self.wbAvgThr
-            self.wbFact = self.wbLoGain * (self.wbLoThr - wbAvg)
-            self.wbDec = 1/ (1 + self.wbFact)
-            self.wbInc = 2 - self.wbDec
-        elif wbAvg > self.wbHiThr:
-            self.wbFact = self.wbHiGain * (wbAvg - self.wbHiThr)
-            self.wbInc = 1/ (1 + self.wbFact)
-            self.wbDec = 2 - self.wbInc
-
         self.WtBalCtr += 1
+        if self.WtBalCtr >= self.WtBalInterval:
+            self.WtBalCtr = 0
+
+            ####----WtBalFmWt----####
+            if not self.WtBalance: return
+            wbAvg = np.mean(self.matrix)
+
+            if wbAvg < self.wbLoThr:
+                if wbAvg < self.wbAvgThr:
+                    wbAvg = self.wbAvgThr
+                self.wbFact = self.wbLoGain * (self.wbLoThr - wbAvg)
+                self.wbDec = 1/ (1 + self.wbFact)
+                self.wbInc = 2 - self.wbDec
+            elif wbAvg > self.wbHiThr:
+                self.wbFact = self.wbHiGain * (wbAvg - self.wbHiThr)
+                self.wbInc = 1/ (1 + self.wbFact)
+                self.wbDec = 2 - self.wbInc
+
 
 
     def SoftBound(self, delta):
@@ -174,8 +176,23 @@ class Mesh:
 
             mask2 = np.logical_not(mask1)
             delta[mask2] *= self.wbDec * self.linMatrix[:m,:n][mask2]
+        else:
+            mask1 = delta > 0
+            m, n = delta.shape
+            delta[mask1] *= self.wbInc
+
+            mask2 = np.logical_not(mask1)
+            delta[mask2] *= self.wbDec
                     
         return delta
+    
+    def ClipLinMatrix(self):
+        '''Bounds linear weights on range [0-1]'''
+        mask1 = self.linMatrix < 0
+        self.linMatrix[mask1] = 0
+        
+        mask2 = self.linMatrix > 1
+        self.linMatrix[mask2] = 1
 
     def Update(self,
                dwtLog = None,
@@ -185,11 +202,12 @@ class Mesh:
         # self.matrix[:m, :n] += self.rate*delta
 
         delta = self.XCAL.GetDeltas(dwtLog=dwtLog)
-        self.WtBalance()
         delta = self.SoftBound(delta)
         m, n = delta.shape
         self.linMatrix[:m, :n] += delta
+        self.ClipLinMatrix()
         self.SigMatrix()
+        self.WtBalance()
 
         if dwtLog is not None:
             self.Debug(lwt = self.linMatrix,

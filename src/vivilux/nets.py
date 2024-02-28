@@ -104,7 +104,7 @@ phaseConfig_std = {
     },
 }
 
-runConfig_std = { # Dict of phase names
+runConfig_std = {
     "DELTA_TIME": 0.001,
     "metrics": {
         "RMSE": RMSE,
@@ -321,7 +321,7 @@ class Net:
         # StepTime for each unclamped layer
         for layer in self.layerDict[phaseName]["unclamped"]:
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
-            layer.StepTime(self.time, **debugData)
+            layer.StepTime(self.time, debugData=debugData)
 
         # Update internal variables of clamped layers
         first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
@@ -329,10 +329,10 @@ class Net:
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
             # layer.UpdateConductance()
             if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                layer.EndStep(self.time, **debugData)
+                layer.EndStep(self.time, debugData=debugData)
                 first = False
             else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                layer.StepTime(self.time, **debugData)
+                layer.StepTime(self.time, debugData=debugData)
     
     def StepPhase(self, phaseName: str, debugData = {}, **dataVectors):
         '''Compute a phase of execution for the neural network. A phase is a 
@@ -423,7 +423,8 @@ class Net:
               shuffle: bool = True,
               batchSize = 1, # TODO: Implement batch training (average delta weights over some number of training examples)
               repeat=1, # TODO: Implement repeated sample training (train muliple times for a single input sample before moving on to the next one)
-              debugData = None,
+              EvaluateFirst = True,
+              debugData = {},
               **dataset: dict[str, np.ndarray]) -> dict[str: list]:
         '''Training loop that runs a specified number of epochs.
 
@@ -434,21 +435,21 @@ class Net:
                 - repeat: (NOT IMPLEMENTED)
 
         '''
+        if EvaluateFirst:
+            # Evaluate without training
+            monitoring = self.monitoring
+            self.monitoring = False # Temporarily pause monitoring
+            if self.epochIndex == 0: # only if net has never been trained
+                self.Evaluate(verbosity, reset=True, shuffle=False, **dataset)
+                self.resetActivity()
+            self.monitoring = monitoring # Resume normal monitoring
 
-        # Evaluate without training
-        monitoring = self.monitoring
-        self.monitoring = False # Temporarily pause monitoring
-        if self.epochIndex == 0: # only if net has never been trained
-            self.Evaluate(verbosity, reset=True, shuffle=False, **dataset)
-            self.resetActivity()
-        self.monitoring = monitoring # Resume normal monitoring
-
-        self.time = 0 #TODO: allow choice to reset the timer?
+            self.time = 0 #TODO: allow choice to reset the timer?
             
         # Training loop
         print(f"Begin training [{self.name}]...")
         for epochIndex in range(numEpochs):
-            self.epochIndex = 1 + epochIndex
+            self.epochIndex = int(EvaluateFirst) + epochIndex
             numSamples = self.RunEpoch("Learn", verbosity, reset, shuffle,
                                        debugData=debugData, **dataset)
             self.EvaluateMetrics(**dataset)
@@ -459,7 +460,7 @@ class Net:
                       f" metric[{primaryMetric}]"
                       f" = {self.results[primaryMetric][-1]}")
                 
-        print(f"\nFinished training [{self.name}]")
+        print(f"Finished training [{self.name}]")
         return self.results
 
     def Evaluate(self,
@@ -476,7 +477,7 @@ class Net:
             print(f" metric[{primaryMetric}]"
                 f" = {self.results[primaryMetric][-1]:0.4f}")
             
-        print(f"\nEvaluation complete.")
+        print(f"Evaluation complete.")
         return self.results
     
     def Infer(self,

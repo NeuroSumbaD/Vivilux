@@ -148,12 +148,12 @@ class Layer:
                        )
         self.Gi[:] = self.GiSyn + self.Gi_FFFB # Add synaptic Gi to FFFB contribution
     
-    def StepTime(self, time: float, **debugData):
+    def StepTime(self, time: float, debugData = None):
         # self.UpdateConductance() ## Moved to nets StepPhase
 
         if self.EXTERNAL is not None: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
             self.Clamp(self.EXTERNAL, time, debugData=debugData)
-            self.EndStep(time, **debugData)
+            self.EndStep(time, debugData=debugData)
             return
             
 
@@ -189,7 +189,7 @@ class Layer:
         # Update layer activities
         self.Act[:] += self.DtParams["VmDt"] * (newAct - self.Act)
 
-        self.EndStep(time, **debugData)
+        self.EndStep(time, debugData=debugData)
 
     def Integrate(self):
         '''Integrates raw conductances from incoming synaptic connections.
@@ -250,7 +250,7 @@ class Layer:
             "Vm": self.Vm
         }
 
-    def EndStep(self, time, **debugData):
+    def EndStep(self, time, debugData = None):
         self.ActAvg.StepTime()
         self.FFFB.UpdateAct()
         self.UpdateSnapshot()
@@ -271,7 +271,7 @@ class Layer:
                        GeRaw=self.GeRaw,
                        Gi=self.Gi,
                        GiRaw=self.GiRaw,
-                       **debugData
+                       debugData = debugData,
                        )
 
         # TODO: Improve readability of this line (end of trial code?)
