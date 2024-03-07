@@ -460,7 +460,7 @@ class Net:
             self.EvaluateMetrics(**dataset)
             if verbosity > 0:
                 primaryMetric = [key for key in self.runConfig["metrics"]][0]
-                print(f"Epoch: {self.epochIndex}, "
+                print(f"\rEpoch: {self.epochIndex}, "
                       f"sample: ({numSamples}/{numSamples}), "
                       f" metric[{primaryMetric}]"
                       f" = {self.results[primaryMetric][-1]}")
@@ -487,7 +487,7 @@ class Net:
     
     def Infer(self,
               verbosity = 1,
-              reset: bool = True,
+              reset: bool = False,
               **dataset: dict[str, np.ndarray]):
         '''Applies the network to a given dataset and returns each output
         '''
@@ -528,33 +528,3 @@ class Net:
             strs.append(str(layer))
 
         return "\n\n".join(strs)
-    
-# class RecurNet(Net):
-#     '''A recurrent network with feed forward and feedback meshes
-#         between each layer. Based on ideas presented in [2].
-#     '''
-#     def __init__(self, *args, FeedbackMesh = fbMesh, **kwargs) -> None:
-#         super().__init__(*args, **kwargs)
-#         for index, layer in enumerate(self.layers[1:-1], 1): 
-#             #skip input and output layers, add feedback matrices
-#             nextLayer = self.layers[index+1]
-#             layer.addMesh(FeedbackMesh(nextLayer.excMeshes[0], nextLayer))
-
-# class FFFB(Net):
-#     '''A recurrent network with feed forward and feedback meshes
-#         and a trucated lateral inhibition mechanism. Based on 
-#         ideas presented in [1].
-#     '''
-#     def __init__(self, *args, FeedbackMesh = fbMesh, **kwargs) -> None:
-#         super().__init__(*args, **kwargs)
-#         for index, layer in enumerate(self.layers[1:-1], 1): #skip input and output layers
-#             # add feedback matrices
-#             nextLayer = self.layers[index+1]
-#             layer.addMesh(FeedbackMesh(nextLayer.excMeshes[0], nextLayer))
-#             # add FFFB inhibitory mesh
-#             inhibitoryMesh = InhibMesh(layer.excMeshes[0], layer)
-#             layer.addMesh(inhibitoryMesh, excitatory=False)
-#         # add last layer FFFB mesh
-#         layer = self.layers[-1]
-#         inhibitoryMesh = InhibMesh(layer.excMeshes[0], layer)
-#         layer.addMesh(inhibitoryMesh, excitatory=False)

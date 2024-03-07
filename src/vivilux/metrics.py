@@ -50,6 +50,6 @@ def ThrSSE(predictions, targets, tol = 0.5):
     '''
     numNeurons = len(targets[0]) # grab dimension of first vector
     errors = np.array(predictions - targets)
-    errors[errors < tol] = 0
+    errors[np.abs(errors) < tol] = 0
     errors = np.sum(np.square(errors), axis=1)
     return np.mean(errors)

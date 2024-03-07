@@ -141,6 +141,7 @@ class ActAvg(PhasicProcess):
         self.ActPAvg_Dt = 1/self.ActPAvg_Tau
         self.LrnFact = (LrnMax - LrnMin) / (Gain - Min)
 
+        self.layCosDiffAvg = 0
         self.ActPAvg = self.ActPAvg_Init #TODO: compare with Leabra
         self.ActPAvgEff = self.ActPAvg_Init
 
@@ -198,9 +199,16 @@ class ActAvg(PhasicProcess):
         minus -= np.mean(minus)
         magMinus = np.sum(np.square(minus))
 
-        layCosDiffAvg = np.dot(plus, minus)/np.sqrt(magPlus*magMinus)
+        cosv = np.dot(plus, minus)
+        dist = np.sqrt(magPlus*magMinus)
+        cosv = cosv/dist if dist != 0 else cosv
 
-        self.ModAvgLLrn = np.maximum(1 - layCosDiffAvg, self.ModMin)
+        if self.layCosDiffAvg == 0:
+            self.layCosDiffAvg = cosv
+        else:
+            self.layCosDiffAvg += self.ActPAvg_Dt * (cosv - self.layCosDiffAvg)
+        
+        self.ModAvgLLrn = np.maximum(1 - self.layCosDiffAvg, self.ModMin)
 
 
     def InitTrial(self):
@@ -229,11 +237,7 @@ class ActAvg(PhasicProcess):
         self.ActPAvg = self.ActPAvg_Init
         self.ActPAvgEff = self.ActPAvg_Init
         self.AvgLLrn[:] = 0
-        # self.AvgSS[:] = 0
-        # self.AvgS[:] = 0
-        # self.AvgM[:] = 0
-        # self.AvgL[:] = 0  
-        # self.AvgSLrn[:] = 0
+        self.layCosDiffAvg = 0
 
 
 class XCAL(PhasicProcess):

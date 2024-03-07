@@ -139,3 +139,20 @@ plt.legend()
 plt.show()
 
 print("Done")
+
+# Visualize output pattern vs target
+predictions = leabraNet.outputs["target"]
+
+for index in range(len(targets)):
+    inp = inputs[index].reshape(5,5)
+    prediction = predictions[index].reshape(5,5)
+    target = targets[index].reshape(5,5)
+    fig = plt.figure()
+    ax = fig.subplots(1,3)
+    ax[0].imshow(inp)
+    ax[0].set_title("Input")
+    ax[1].imshow(prediction)
+    ax[1].set_title("Prediction")
+    ax[2].imshow(target)
+    ax[2].set_title("Target")
+    plt.show()

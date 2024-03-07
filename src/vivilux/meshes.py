@@ -22,6 +22,8 @@ class Mesh:
                  inLayer: Layer,
                  AbsScale: float = 1,
                  RelScale: float = 1,
+                 InitMean: float = 0.5,
+                 InitVar: float = 0.25,
                  Off: float = 1,
                  Gain: float = 6,
                  dtype = np.float64,
@@ -57,18 +59,19 @@ class Mesh:
         self.WtBalCtr = 0
         self.wbFact = 0
 
-        # Glorot uniform initialization
-        glorotUniform = np.sqrt(6)/np.sqrt(2*size)
-        self.matrix = 2*glorotUniform*np.random.rand(self.size, self.size)-glorotUniform
-        self.linMatrix = np.copy(self.matrix)
-        self.InvSigMatrix()
+        # Generate from uniform distribution
+        low = InitMean - InitVar
+        high = InitMean + InitVar
+        self.matrix = np.random.uniform(low, high, size=(size, len(inLayer)))
+        self.linMatrix = np.copy(self.matrix) # initialize linear weight
+        self.InvSigMatrix() # correct linear weight
 
         # Other initializations
         self.Gscale = 1#/len(inLayer)
         self.inLayer = inLayer
         self.OptThreshParams = inLayer.OptThreshParams
-        self.lastAct = np.zeros(self.size, dtype=self.dtype)
-        self.inAct = np.zeros(self.size, dtype=self.dtype)
+        self.lastAct = np.zeros(len(inLayer), dtype=self.dtype)
+        self.inAct = np.zeros(len(inLayer), dtype=self.dtype)
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
         self.modified = False
@@ -110,8 +113,6 @@ class Mesh:
 
     def apply(self):
         data = self.getInput()
-        # guarantee that data can be multiplied by the mesh
-        data = np.pad(data[:self.size], (0, self.size - len(data)))
 
         # Implement delta-sender behavior (thresholds changes in conductance)
         ## NOTE: this does not reduce matrix multiplications like it does in Leabra
@@ -230,7 +231,7 @@ class Mesh:
 
         # isolate frame of important data from log
         dwtLog = kwargs["dwtLog"]
-        frame = dwtLog[dwtLog["sName"] == self.inLayer.name]
+        frame = dwtLog[dwtLog["sName"] == self.inLayer.name][dwtLog["rName"] == self.rcvLayer.name]
         frame = frame[frame["time"].round(3) == np.round(time, 3)]
         frame = frame.drop(["time", "rName", "sName"], axis=1)
         if len(frame) == 0: return
@@ -252,13 +253,14 @@ class Mesh:
             leabraData["lwt"][ri][si] = frame["lwt"][row]
             leabraData["wt"][ri][si] = frame["wt"][row]
 
-        return #TODO: LINE UP THE DATA CORRECTLY
+        # return #TODO: LINE UP THE DATA CORRECTLY
         allEqual = {}
         for key in leabraData:
             if key not in viviluxData: continue #skip missing columns
             vlDatum = viviluxData[key]
-            shape = vlDatum.shape
-            lbDatum = leabraData[key][:shape[0],:shape[1]]
+            shape = (len(self.rcvLayer), len(self.inLayer))
+            vlDatum = vlDatum[:shape[0],:shape[1]]
+            lbDatum = leabraData[key]
             percentError = 100 * (vlDatum - lbDatum) / lbDatum
             mask = lbDatum == 0
             mask = np.logical_and(mask, vlDatum==0)
@@ -267,18 +269,7 @@ class Mesh:
             
             allEqual[key] = isEqual
 
-        #     with np.printoptions(threshold=np.inf):
-        #         with open("ViviluxDebuggingLogs.txt", "a") as f:
-        #             f.write(f"Vivilux [{key}]:\n")
-        #             f.write(str(viviluxData[key]))
-        #             f.write("\n\n")
-
-        #         with open("LeabraDbuggingLogs.txt", "a") as f:
-        #             f.write(f"Leabra [{key}]:\n")
-        #             f.write(str(leabraData[key]))
-        #             f.write("\n\n")
-
-        # print(f"{self.name}[{time}]:", allEqual)
+        print(f"{self.name}[{time}]:", allEqual)
 
     def SigMatrix(self):
         '''After an update to the linear weights, the sigmoidal weights must be
