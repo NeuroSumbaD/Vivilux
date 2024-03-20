@@ -209,9 +209,15 @@ class Heatmap:
         self.labels = {id: id for id in neuronID}
 
     def validate(self):
+        self.records = []
         for layer in self.net.layers:
-            if not isinstance(layer.monitor, Record):
-                raise TypeError(f"Net must use monitor of type 'Record' (not '{type(layer.monitor)}'). ")
+            hasRecord = False
+            for monitor in layer.monitors.values():
+                if isinstance(monitor, Record):
+                    hasRecord = True
+                    self.records.append(monitor)
+            if not hasRecord:
+                raise TypeError(f"Layer [{layer.name}] must use a monitor of type 'Record.'")
 
     def draw(self):
         net  = self.net
@@ -245,15 +251,16 @@ class Heatmap:
         labels = self.labels
         numEpochs = self.numEpochs
         numSamples = self.numSamples
+        cycleLength = np.sum([phase["numTimeSteps"] for phase in net.phaseConfig.values()])
 
         plt.figure(figsize=(10.6, 4.4))
         animation_frames = []
 
         # Define time and activity axes
-        time_steps = len(net.layers[0].monitor.data)
+        time_steps = len(self.records[0].data)
         activity_data = []
-        for layer in net.layers:
-            activity_data.append(layer.monitor.data)
+        for record in self.records:
+            activity_data.append(record.data)
         activity_data = np.array(activity_data)
 
         # Create and save animation frames for each time step
@@ -285,8 +292,17 @@ class Heatmap:
             nx.draw_networkx_labels(self.G, pos, labels, font_size=10)
 
             # Set the title
-            title = f'Bidirectional Network (Time Step {t % 50}/50 '
-            title += f'[{"Minus" if ceil(t/50)%2 else "Plus"}], '
+            # Calculate time step within the current cycle
+            cycleStep = t % cycleLength
+            for phase in net.phaseConfig:
+                if cycleStep <= net.phaseConfig[phase]["numTimeSteps"]:
+                    currentPhase = phase
+                    phaseLength = net.phaseConfig[phase]["numTimeSteps"]
+                    break
+                else:
+                    cycleStep -= net.phaseConfig[phase]["numTimeSteps"]
+            title = f'Bidirectional Network (Time Step {cycleStep}/{phaseLength} '
+            title += f'[{currentPhase}], '
             title += f'Sample {floor(t/100)%numSamples+1}/{numSamples}, '
             title += f'Epoch {ceil(t/100/numSamples)}/{numEpochs})'
             plt.title(title)

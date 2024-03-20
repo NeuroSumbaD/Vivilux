@@ -14,27 +14,28 @@ np.random.seed(seed=0)
 
 from copy import deepcopy
 
-numEpochs = 50
-inputSize = 25
-hiddenSize = 49
-outputSize = 25
-patternSize = 6
-numSamples = 25
+numEpochs = 40
+inputSize = 4
+hiddenSize = 4
+outputSize = 4
+inPatternSize = 2
+outPatternSize = 1
+numSamples = 1
 
 #define input and output data (must be one-hot encoded)
 inputs = np.zeros((numSamples, inputSize))
-inputs[:,:patternSize] = 1
+inputs[:,:inPatternSize] = 1
 inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
 targets = np.zeros((numSamples, outputSize))
-targets[:,:patternSize] = 1
+targets[:,:outPatternSize] = 1
 targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
 
 leabraRunConfig = {
     "DELTA_TIME": 0.001,
     "metrics": {
+        "RMSE": RMSE,
         "AvgSSE": ThrMSE,
         "SSE": ThrSSE,
-        "RMSE": RMSE
     },
     "outputLayers": {
         "target": -1,
@@ -44,16 +45,30 @@ leabraRunConfig = {
 }
 
 leabraNet = Net(name = "LEABRA_NET",
+                monitoring= True,
                 runConfig=leabraRunConfig) # Default Leabra net
 
 # Add layers
 layerList = [Layer(inputSize, isInput=True, name="Input"),
              Layer(hiddenSize, name="Hidden1"),
-             Layer(hiddenSize, name="Hidden2"),
              Layer(outputSize, isTarget=True, name="Output")]
-leabraNet.AddLayers(layerList[:-1])
+
+# Define Monitors
+for layer in layerList:
+    layer.AddMonitor(Record(
+        layer.name,
+        labels = ["time step", "activity"],
+        limits=[100, 2],
+        numLines=len(layer)
+        )
+    )
+layConfig = deepcopy(layerConfig_std)
+# layConfig["FFFBparams"]["Gi"] = 1.3
+layConfig["FFFBparams"]["FF"] = 1.2
+leabraNet.AddLayers(layerList[:-1], layerConfig=layConfig)
 outputConfig = deepcopy(layerConfig_std)
-outputConfig["FFFBparams"]["Gi"] = 1.4
+outputConfig["FFFBparams"]["Gi"] = 1.1
+outputConfig["FFFBparams"]["FF"] = 1.2
 leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
 
 # Add feedforward connections
@@ -66,7 +81,7 @@ fbMeshConfig = {"meshType": Mesh,
 fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
                                     meshConfig=fbMeshConfig)
 
-
+plt.ioff()
 
 heatmap = Heatmap(leabraNet, numEpochs, numSamples)
 
@@ -77,15 +92,15 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          EvaluateFirst=False,
                          )
 
-heatmap.animate("single-training-Run")
+heatmap.animate("demoHeatmap")
 
 # Plot RMSE over time
 plt.figure()
-plt.plot(result, label="Mixed")
-# baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
-# plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
-plt.title("Training Demo on Single Sample")
-plt.ylabel("Accuracy")
+plt.plot(result["RMSE"], label="net")
+baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
+plt.axhline(y=baseline, color="b", linestyle="--", label="uniform guessing")
+plt.title("Local Learning Demo")
+plt.ylabel("RMSE")
 plt.xlabel("Epoch")
 plt.legend()
 plt.show()
