@@ -474,7 +474,7 @@ class Net:
               shuffle: bool = True,
               **dataset: dict[str, np.ndarray]):
 
-        print(f"Evaluating [{self.name}] without training...")
+        if verbosity > 0: print(f"Evaluating [{self.name}] without training...")
         self.RunEpoch("Infer", verbosity, reset, shuffle, **dataset)
         self.EvaluateMetrics(**dataset)
         if verbosity > 0:
@@ -491,10 +491,10 @@ class Net:
               **dataset: dict[str, np.ndarray]):
         '''Applies the network to a given dataset and returns each output
         '''
-        print(f"Inferring [{self.name}]...")
+        if verbosity > 0: print(f"Inferring [{self.name}]...")
         self.RunEpoch("Infer", verbosity, reset, shuffle= False, **dataset)
             
-        print(f"Inference complete.")
+        if verbosity > 0: print(f"Inference complete.")
         return self.outputs
 
     def getWeights(self, ffOnly = True):
