@@ -1,5 +1,6 @@
 from typing import Any
-from .photonics import MZImesh, Mesh
+from .meshes import Mesh
+from .photonics.ph_meshes import MZImesh
 
 import numpy as np
 import nidaqmx
@@ -187,27 +188,36 @@ class HardMZI(MZImesh):
         '''Takes a list of MZI->device mappingss and sets each MZI to the bar state.
         '''
         for device, chan, value in mzis:
-            # print(f"Device: {device}, type: {type(device)}")
-            # print(f"Chan: {chan}, type: {type(chan)}")
-            # print(f"Value: {value}, type: {type(value)}")
-            # print(f"AO_range: {ao_range}, type: {type(ao_range)}")
             ul.v_out(device, chan, ao_range, value)
 
 
     def setParams(self, params):
+        '''Sets the current matrix from the phase shifter params.
+        '''
         ps = params[0]
         assert(ps.size == self.numUnits), f"Error: {ps.size} != {self.numUnits}"
         self.voltages = self.BoundParams(params)[0]
-        for (dev, chan), volt in zip(self.mziMapping, self.voltages.flatten()):
-            ul.v_out(dev, chan, ao_range, volt)
             
         self.modified = True
 
+    def setFromParams(self):
+        '''Sets the current matrix from the phase shifter params.
+        '''
+        for (dev, chan), volt in zip(self.mziMapping, self.voltages.flatten()):
+            ul.v_out(dev, chan, ao_range, volt)
+
     def testParams(self, params):
         '''Temporarily set the params'''
+        assert(params.size ==self.numUnits), f"Error: {params.size} != {self.numUnits}, params[0]"
+        assert params.max() <= self.upperLimit and params.min() >= 0, f"Error params out of bounds: {params}"
         for (dev, chan), volt in zip(self.mziMapping, params.flatten()):
             assert volt >= 0 and volt <= self.upperLimit, f"ERROR voltage out of bounds: {params}"
             ul.v_out(dev, chan, ao_range, volt)
+
+        powerMatrix = np.zeros((self.size, self.size)) # for pass by reference
+        powerMatrix = self.measureMatrix(powerMatrix)
+        self.resetParams()
+        return powerMatrix
 
     def resetParams(self):
         for (dev, chan), volt in zip(self.mziMapping, self.voltages.flatten()):
@@ -225,82 +235,31 @@ class HardMZI(MZImesh):
             self.inGen(np.zeros(self.size), scale=scale)
             offset = self.readOut()
             offset /= L1norm(self.inGen.readDetectors()) 
-            # print(f"Offset readout: {offset}")
             # now offset input vector and normalize result
-            # print(f"Get using one-hot: {oneHot}")
             self.inGen(oneHot, scale=scale)
             columnReadout = self.readOut()
             columnReadout /= L1norm(self.inGen.readDetectors()) 
-            # print(f"Column readout: {columnReadout}")
             column = np.maximum(columnReadout - offset, 0) # assume negative values are noise
             norm = np.sum(np.abs(column)) #L1 norm
-            # print(self.getParams())
             assert norm != 0, f"ERROR: Zero norm on chan={chan} with scale={scale}. Column readout:\n{columnReadout}\nOffset:\n{offset}"
-            # column /= norm
-            # column /= magnitude(column) #L2 norm
             powerMatrix[:,chan] = column
-        # print(f"Current voltages: {self.voltages}")
-        # print("Power matrix before invScatter:")
-        # print(np.round(powerMatrix,2))
-        # powerMatrix = powerMatrix @ self.inGen.invScatter#/np.max(np.abs(self.inGen.invScatter))
-        # print("Power matrix after invScatter:")
-        # print(np.round(powerMatrix,2))
         for col in range(len(powerMatrix)): # re-norm the output
             powerMatrix[:,col] /= L1norm(powerMatrix[:,col])
-        # print("Power matrix after L1 column norm:")
-        # print(np.round(powerMatrix,2))
         return powerMatrix
             
     def get(self, params=None):
         '''Returns full mesh matrix.
         '''
         powerMatrix = np.zeros((self.size, self.size))
-        if params is not None: # calculate matrix using params
-            # return self.Gscale * self.psToMat(params[0])
-            # print(f'Get params={params}')
-            assert(params[0].size ==self.numUnits), f"Error: {params[0].size} != {self.numUnits}, params[0]"
-            assert params[0].max() <= self.upperLimit and params[0].min() >= 0, f"Error params out of bounds: {params}"
-            self.testParams(params[0])
-            # for chan in range(self.size):
-            #     oneHot = np.zeros(self.size)
-            #     oneHot[int(chan)] = 1
-            #     scale = 1#350/np.max(self.inGen.scalePower(oneHot))
-            #     # first offset min laser power
-            #     self.inGen(np.zeros(self.size), scale=scale)
-            #     offset = self.readOut()
-            #     offset /= L1norm(self.inGen.readDetectors()) 
-            #     # print(f"Offset readout: {offset}")
-            #     # print(f"Offset readout: {np.sum(offset)}")
-            #     # now offset input vector and normalize result
-            #     self.inGen(oneHot, scale=scale)
-            #     columnReadout = self.readOut()
-            #     columnReadout /= L1norm(self.inGen.readDetectors()) 
-            #     # print(f"Column readout: {columnReadout}")
-            #     # print(f"Column readout: {np.sum(columnReadout)}")
-
-            #     # column = np.maximum(columnReadout - offset, -0.05)
-            #     column = np.maximum(columnReadout - offset, 0) # assume negative values are noise
-            #     norm = np.sum(np.abs(column)) #L1 norm
-            #     assert norm != 0, f"ERROR: Zero norm on chan={chan} with scale={scale}. Column readout:\n{columnReadout}\nOffset:\n{offset}"
-            #     print(params)
-            #     # column /= norm
-            #     # assert(np.any(np.isnan(column))), f"Error: column readout: {columnReadout}, column: {column}"
-            #     # column /= magnitude(column) #L2 norm
-            #     powerMatrix[:,chan] = column
-            # powerMatrix = powerMatrix @ self.inGen.invScatter
-            powerMatrix = self.measureMatrix(powerMatrix)
-            self.resetParams()
-            return powerMatrix
-
         
         if (self.modified == True): # only recalculate matrix when modified
+            self.setFromParams
             powerMatrix = self.measureMatrix(powerMatrix)
-            self.set(powerMatrix)
             self.modified = False
         else:
             powerMatrix = self.matrix
         
-        return powerMatrix
+        return self.Gscale * powerMatrix
     
     def applyTo(self, data):
         self.inGen(np.zeros(self.size))
@@ -375,23 +334,16 @@ class HardMZI(MZImesh):
         currMat = self.get()
         derivativeMatrix = np.zeros(currMat.shape)
 
-        # print("\t\tCurrent Voltages:\n\t\t", str(voltages).replace('\n','\n\t\t'))
         # Forward step
         plusVectors = voltages + stepVector
         assert (plusVectors.max() <= self.upperLimit or plusVectors.min() >= 0), f"Error: plus vector out of bounds: {plusVectors}"
-        # print("\t\tForward step:\n\t\t", str(plusVectors).replace('\n','\n\t\t'))
-        plusMatrix = self.get([plusVectors])
+        plusMatrix = self.testParams(plusVectors)
         # Backward step
         minusVectors = voltages - stepVector
         assert (minusVectors.max() <= self.upperLimit or minusVectors.min() >= 0), f"Error: minus vector out of bounds: {minusVectors}"
-        # print("\t\tBackward step:\n\t\t", str(minusVectors).replace('\n','\n\t\t'))
-        minusMatrix = self.get([minusVectors])
+        minusMatrix = self.testParams(minusVectors)
 
         differenceMatrix = plusMatrix-minusMatrix
-        # diffMatStr = str(differenceMatrix).replace('\n','\n\t\t')
-        # print(f"\t\tDifference matrix:\n\t\t{diffMatStr}"
-        #       "\n\t\tmagnitude:"
-        #       f" {magnitude(differenceMatrix.flatten())}")
         derivativeMatrix = differenceMatrix/updateMagnitude
         
 
@@ -419,9 +371,14 @@ class HardMZI(MZImesh):
         return X, V
     
     
-    def stepGradient(self, delta: np.ndarray, eta=1, numDirections=3, 
+    def ApplyDelta(self, delta: np.ndarray, eta=1, numDirections=3, 
                      numSteps=10, earlyStop = 1e-3, verbose=False):
-        '''Calculate gradients and step towards desired delta.
+        '''Uses directional derivatives to find the set of phase shifters which
+            implements some change in weights for the matrix. Uses the LSO Analog
+            Matrix Mapping (LAMM) algorithm.
+            
+            Updates self.matrix and returns the difference vector between target
+            and implemented delta.
         '''
 
         deltaFlat = delta.copy().flatten().reshape(-1,1)
@@ -431,7 +388,7 @@ class HardMZI(MZImesh):
 
         for step in range(numSteps):
             newPs = self.voltages.copy()
-            currMat = self.get()
+            currMat = self.get()/self.Gscale
             print(f"Step: {step}, magnitude delta = {magnitude(deltaFlat)}")  
             X, V = self.getGradients(delta, newPs, numDirections, verbose)
             # minimize least squares difference to deltas
@@ -450,8 +407,7 @@ class HardMZI(MZImesh):
             scaledUpdate = eta*update
             self.setParams([newPs + scaledUpdate]) # sets the parameters and bounds if necessary
             params.append(newPs + scaledUpdate)
-            # print("Voltages: ", self.voltages)
-            trueDelta = self.get() - currMat
+            trueDelta = self.get()/self.Gscale - currMat
             matrices.append(trueDelta + currMat)
             
             if verbose:
@@ -470,8 +426,8 @@ class HardMZI(MZImesh):
                 break
         return self.record, params, matrices
 
-    def Update(self, delta: np.ndarray):
-        self.records.append(self.stepGradient(delta))
+    # def Update(self, delta: np.ndarray):
+    #     self.records.append(self.stepGradient(delta))
 class InputGenerator:
     def __init__(self, size=4, detectors = [12,8,9,10], limits=[160,350], verbose=False) -> None:
         self.size = size

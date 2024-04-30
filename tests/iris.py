@@ -1,79 +1,117 @@
 '''Algorithm test using iris dataset classification task.
 '''
 from vivilux import *
-from vivilux.learningRules import CHL, GeneRec
-from vivilux.metrics import HardmaxAccuracy
+from vivilux.nets import Net, layerConfig_std
+from vivilux.layers import Layer
+from vivilux.meshes import Mesh
+from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
 import numpy as np    
 from sklearn import datasets
 import matplotlib.pyplot as plt
 
-np.random.seed(0)
+from copy import deepcopy
 
-numSamples = 200
-numEpochs = 100
+np.random.seed(20)
 
-netCHL = FFFB([
-    Layer(4, isInput=True),
-    Layer(4, learningRule=CHL),
-    Layer(4, learningRule=CHL)
-], AbsMesh, metric=[HardmaxAccuracy, RMSE], learningRate = 0.01)
+numEpochs = 50
+inputSize = 25
+hiddenSize = 49
+outputSize = 25
+patternSize = 6
+numSamples = 25
 
-netGR = FFFB([
-    Layer(4, isInput=True),
-    Layer(4, learningRule=GeneRec),
-    Layer(4, learningRule=GeneRec)
-], AbsMesh, metric=[HardmaxAccuracy, RMSE], learningRate = 0.01)
+targetPatterns = np.zeros((3, outputSize))
+targetPatterns[:,:patternSize] = 1
+targetPatterns = np.apply_along_axis(np.random.permutation, axis=1, arr=targetPatterns)
 
-netMixed = FFFB([
-    Layer(4, isInput=True),
-    Layer(4, learningRule=CHL),
-    Layer(4, learningRule=GeneRec)
-], AbsMesh, metric=[HardmaxAccuracy, RMSE], learningRate = 0.01)
+def sig(x):
+    return 1/(1+np.exp(-10*(x-0.5)))
 
-netMixed2 = FFFB([
-    Layer(4, isInput=True),
-    Layer(4, learningRule=CHL),
-    Layer(4, learningRule=GeneRec)
-], AbsMesh, metric=[HardmaxAccuracy, RMSE], learningRate = 0.01)
-netMixed2.setLearningRule(GeneRec, 2) #sets second layer learnRule
-netMixed2.layers[1].Freeze()
+def manyHot(arr, numHot):
+    maxIndices = np.argpartition(arr, kth=1, axis=0)[:,:numHot]
+    arr[:] = 0
+    arr[maxIndices] = 1
+    return arr
+    # for row in len(arr):
+    #     maxIndices = [0]
+    #     for col, item in enumerate(arr[row]):
+    #         check = [item > arr[row, ind] for ind in maxIndices]
+    #         if np.sum(check) > 0:
+
+    #     arr[:] = 0
+    #     arr[row, maxIndices] = 1
 
 iris = datasets.load_iris()
 inputs = iris.data
 maxMagnitude = np.max(np.sqrt(np.sum(np.square(inputs), axis=1)))
 inputs = inputs/maxMagnitude # bound on (0,1]
-targets = np.zeros((len(inputs),4))
-targets[np.arange(len(inputs)), iris.target] = 1
+inputs = (np.random.rand(inputSize, 4) @ inputs.T).T # project from 4 dimensional input to inputSize
+inputs = manyHot(inputs, patternSize)
+# inputs *= (6/inputSize)/np.mean(inputs)
+# Assign targets to target pattern
+targets = np.array([targetPatterns[flower] for flower in iris.target])
 #shuffle both arrays in the same manner
 shuffle = np.random.permutation(len(inputs))
-inputs, targets = inputs[shuffle][:numSamples], targets[shuffle][:numSamples]
+trainInputs, trainTargets = inputs[shuffle][:numSamples], targets[shuffle][:numSamples]
+evalInputs, evalTargets = inputs[shuffle][numSamples:], targets[shuffle][numSamples:]
 
-resultCHL = netCHL.Learn(inputs, targets, numEpochs=numEpochs)
-resultGR = netGR.Learn(inputs, targets, numEpochs=numEpochs)
-resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs)
-resultMixed2 = netMixed2.Learn(inputs, targets, numEpochs=numEpochs)
+leabraRunConfig = {
+    "DELTA_TIME": 0.001,
+    "metrics": {
+        "AvgSSE": ThrMSE,
+        "SSE": ThrSSE,
+        "RMSE": RMSE
+    },
+    "outputLayers": {
+        "target": -1,
+    },
+    "Learn": ["minus", "plus"],
+    "Infer": ["minus"],
+}
 
-plt.plot(resultCHL[0], label="CHL")
-plt.plot(resultGR[0], label="GeneRec")
-plt.plot(resultMixed[0], label="Mixed")
-plt.plot(resultMixed2[0], label="Frozen 1st Layer")
+leabraNet = Net(name = "LEABRA_NET",
+                runConfig=leabraRunConfig) # Default Leabra net
+
+# Add layers
+layerList = [Layer(inputSize, isInput=True, name="Input"),
+             Layer(hiddenSize, name="Hidden1"),
+             Layer(hiddenSize, name="Hidden2"),
+             Layer(outputSize, isTarget=True, name="Output")]
+layConfig = deepcopy(layerConfig_std)
+# layConfig["FFFBparams"]["Gi"] = 1.4
+leabraNet.AddLayers(layerList[:-1], layerConfig=layConfig)
+outputConfig = deepcopy(layerConfig_std)
+outputConfig["FFFBparams"]["Gi"] = 1.4
+leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
+
+# Add feedforward connections
+ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:])
+# Add feedback connections
+fbMeshConfig = {"meshType": Mesh,
+                "meshArgs": {"AbsScale": 1,
+                             "RelScale": 0.2},
+                }
+fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
+                                    meshConfig=fbMeshConfig)
 
 
-plt.title("Iris Dataset")
-plt.ylabel("Accuracy")
-plt.xlabel("Epoch")
-plt.legend()
-plt.show()
+result = leabraNet.Learn(input=trainInputs, target=trainTargets,
+                         numEpochs=numEpochs,
+                         reset=False,
+                         shuffle=False,
+                         EvaluateFirst=False,
+                         )
+time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
+plt.plot(time, result['AvgSSE'], label="Leabra Net")
 
-plt.plot(resultCHL[1], label="CHL")
-plt.plot(resultGR[1], label="GeneRec")
-plt.plot(resultMixed[1], label="Mixed")
-plt.plot(resultMixed2[1], label="Frozen 1st Layer")
+baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), trainTargets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
+plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
-
-plt.title("Iris Dataset")
+plt.title("Random Input/Output Matching")
 plt.ylabel("RMSE")
 plt.xlabel("Epoch")
 plt.legend()
 plt.show()
+
+print("Done")

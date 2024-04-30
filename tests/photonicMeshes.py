@@ -1,187 +1,107 @@
-import vivilux as vl
-import vivilux.photonics
-from vivilux import FFFB, RecurNet, Layer, GainLayer, ConductanceLayer, AbsMesh
-from vivilux.learningRules import CHL, GeneRec, ByPass, Nonsense
-from vivilux.optimizers import Adam, Momentum, Simple
+from vivilux import *
+from vivilux.nets import Net, layerConfig_std
+from vivilux.layers import Layer
+from vivilux.photonics.ph_meshes import MZImesh
+from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
 np.random.seed(seed=0)
 
-import pandas as pd
-import seaborn as sns
-from sklearn import datasets
-
-numSamples = 1
-numEpochs = 100
+from copy import deepcopy
 
 
-#define input and output data (must be normalized and positive-valued)
-# vecs = np.random.normal(size=(numSamples, 4))
-# mags = np.linalg.norm(vecs, axis=-1)
-# inputs = np.abs(vecs/mags[...,np.newaxis])
-# vecs = np.random.normal(size=(numSamples, 4))
-# mags = np.linalg.norm(vecs, axis=-1)
-# targets = np.abs(vecs/mags[...,np.newaxis])
-# del vecs, mags
+numEpochs = 50
+inputSize = 25
+hiddenSize = 49
+outputSize = 25
+patternSize = 6
+numSamples = 25
 
-diabetes = datasets.load_diabetes()
-inputs = diabetes.data * 2 + 0.5 # mean at 0.5, +/- 0.4
-targets = diabetes.target
-targets /= targets.max() # normalize output
-targets = targets.reshape(-1, 1) # reshape into 1D vector
-inputs = inputs[:numSamples,:4]
-targets = targets[:numSamples]
+#define input and output data (must be one-hot encoded)
+inputs = np.zeros((numSamples, inputSize))
+inputs[:,:patternSize] = 1
+inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
+targets = np.zeros((numSamples, outputSize))
+targets[:,:patternSize] = 1
+targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
 
-optArgs = {"lr" : 0.1,
-            "beta1" : 0.9,
-            "beta2": 0.999,
-            "epsilon": 1e-08}
+leabraRunConfig = {
+    "DELTA_TIME": 0.001,
+    "metrics": {
+        "AvgSSE": ThrMSE,
+        "SSE": ThrSSE,
+        "RMSE": RMSE
+    },
+    "outputLayers": {
+        "target": -1,
+    },
+    "Learn": ["minus", "plus"],
+    "Infer": ["minus"],
+}
 
-# netGR = RecurNet([
-#     Layer(4, isInput=True),
-#     GainLayer(4, learningRule=GeneRec),
-#     GainLayer(4, learningRule=GeneRec)
-# ], AbsMesh, optimizer = Momentum, name = "NET_GR")
+leabraNet = Net(name = "LEABRA_NET",
+                runConfig=leabraRunConfig) # Default Leabra net
 
-# netMixed = RecurNet([
-#     Layer(4, isInput=True),
-#     GainLayer(4, learningRule=CHL),
-#     GainLayer(4, learningRule=GeneRec)
-# ], AbsMesh, optimizer = Momentum, name = "NET_Mixed")
+# Add layers
+layerList = [Layer(inputSize, isInput=True, name="Input"),
+             Layer(hiddenSize, name="Hidden1"),
+             Layer(hiddenSize, name="Hidden2"),
+             Layer(outputSize, isTarget=True, name="Output")]
+leabraNet.AddLayers(layerList[:-1])
+outputConfig = deepcopy(layerConfig_std)
+outputConfig["FFFBparams"]["Gi"] = 1.4
+leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
 
-
-# netCHL = RecurNet([
-#     Layer(4, isInput=True),
-#     GainLayer(4, learningRule=CHL),
-#     Layer(1, learningRule=CHL)
-#     ],
-#     AbsMesh,
-#     optimizer = Simple, optArgs=optArgs,
-#     name = "NET_CHL")
-
-
-
-
-# netGR_MZI = RecurNet([
-#         Layer(4, isInput=True),
-#         GainLayer(4, learningRule=GeneRec),
-#         GainLayer(4, learningRule=GeneRec)
-#     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-#     # optimizer = Adam, optArgs = optArgs,
-#     optimizer = Momentum,
-#     name = "NET_GR(MZI)")
-
-# netMixed_MZI = RecurNet([
-#         Layer(4, isInput=True),
-#         GainLayer(4, learningRule=CHL),
-#         GainLayer(4, learningRule=GeneRec)
-#     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-#     # optimizer = Adam, optArgs = optArgs,
-#     optimizer = Momentum,
-#     name = "NET_Mixed(MZI)")
+# Add feedforward connections
+ffMeshConfig = {"meshType": MZImesh,
+                "meshArgs": {"AbsScale": 1,
+                             "RelScale": 1},
+                }
+ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:],
+                                    meshConfig=ffMeshConfig)
+# Add feedback connections
+fbMeshConfig = {"meshType": MZImesh,
+                "meshArgs": {"AbsScale": 1,
+                             "RelScale": 0.2},
+                }
+fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
+                                    meshConfig=fbMeshConfig)
 
 
-netCHL_MZI = RecurNet([
-        Layer(4, isInput=True),
-        GainLayer(4, learningRule=CHL),
-        Layer(1, learningRule=CHL)
-    ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-    # optimizer = Adam,
-    optimizer = Simple,
-    optArgs = optArgs,
-    name = "Net_CHL(MZI)")
+result = leabraNet.Learn(input=inputs, target=targets,
+                         numEpochs=numEpochs,
+                         reset=False,
+                         shuffle=False,
+                         EvaluateFirst=False,
+                         )
+time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
+plt.plot(time, result['AvgSSE'], label="Leabra Net")
 
+baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
+plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
-# netMixed_MZI_Adam = RecurNet([
-#         Layer(4, isInput=True),
-#         Layer(4, learningRule=CHL),
-#         Layer(4, learningRule=GeneRec)
-#     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-#     learningRate = 0.1, name = "NET_Mixed",  optimizer = Adam, optArgs = optArgs)
-
-
-# netMixed2_MZI_Adam = RecurNet([
-#         Layer(4, isInput=True),
-#         Layer(4, learningRule=CHL),
-#         Layer(4, learningRule=GeneRec)
-#     ], vl.photonics.MZImesh, FeedbackMesh=vl.photonics.phfbMesh,
-#     learningRate = 0.1, name = "NET_CHL-Frozen",  optimizer = Adam, optArgs = optArgs)
-# netMixed2_MZI.layers[1].Freeze()
-
-
-
-
-# resultGR = netGR.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-# plt.plot(resultGR, "r", label="GeneRec")
-
-# resultMixed = netMixed.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-# plt.plot(resultMixed, "b", label="Mixed")
-
-# resultCHL = netCHL.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-# plt.plot(resultCHL, "g", label="CHL")
-
-# resultGRMZI = netGR_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-# plt.plot(resultGRMZI, "--r", label="MZI: GeneRec")
-
-# resultMixedMZI = netMixed_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-# plt.plot(resultMixedMZI, "--b", label="MZI: Mixed")
-
-resultCHLMZI1 = netCHL_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-netCHL_MZI.layers[1].Freeze()
-resultCHLMZI = netCHL_MZI.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-plt.plot(resultCHLMZI, "--g", label="MZI: CHL")
-
-# resultMixedMZI_Adam = netMixed_MZI_Adam.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-# plt.plot(resultMixedMZI_Adam, "-b", label="MZI: Mixed (Adam)")
-
-# resultMixed2MZI_Adam = netMixed2_MZI_Adam.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-# plt.plot(resultMixed2MZI_Adam, "-g", label="MZI: Frozen 1st layer (Adam)")
-
-# RuleSet = [[CHL,CHL],[GeneRec,GeneRec],[CHL, GeneRec],[ByPass, GeneRec]]
-# learningRates = [10, 5, 0.5, 0.1, 0.05, 0.01, 0.05]
-# numDirections = [3, 5, 10, 20]
-
-# df = pd.DataFrame(columns=["RuleSet", "numEpochs", "numDirections", "learningRate", "RMSE"])
-
-# for rules in RuleSet:
-#     for numDirection in numDirections:
-#         for lr in learningRates:
-#             meshArgs = {"numDirections": numDirection}
-#             net = FFFB(
-#                 [
-#                     vl.photonics.PhotonicLayer(4, isInput=True),
-#                     *[vl.photonics.PhotonicLayer(4, learningRule = rule) for rule in rules]
-#                 ], 
-#                 vl.photonics.MZImesh,
-#                 learningRate = lr,
-#                 name = f"MZINET_[INPUT,{','.join([rule.__name__ for rule in rules])}",
-#                 meshArgs = meshArgs
-#             )
-
-#             result = net.Learn(inputs, targets, numEpochs=numEpochs, reset=True)
-#             # plt.plot(result, label=net.name)
-
-#             currentEntry = {
-#                 "RuleSet": f"[INPUT,{','.join([rule.__name__ for rule in rules])}",
-#                 "numEpochs": numEpochs,
-#                 "numDirections": numDirection,
-#                 "learningRate": lr,
-#                 "Epoch": range(numEpochs+1),
-#                 "RMSE": result
-#             }
-#             df = pd.concat([df, pd.DataFrame(currentEntry)])
-
-
-# g = sns.FacetGrid(df, row="RuleSet", col="numDirections", hue="learningRate", margin_titles=True)
-# g.map(plt.plot, "Epoch", "RMSE")
-# g.add_legend()
-
-# baseline = np.mean([vl.RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
-# plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
-
-plt.title("Random Input/Output Matching with MZI meshes")
+plt.title("Random Input/Output Matching")
 plt.ylabel("RMSE")
 plt.xlabel("Epoch")
 plt.legend()
 plt.show()
+
+print("Done")
+
+# Visualize output pattern vs target
+predictions = leabraNet.outputs["target"]
+
+for index in range(len(targets)):
+    inp = inputs[index].reshape(5,5)
+    prediction = predictions[index].reshape(5,5)
+    target = targets[index].reshape(5,5)
+    fig = plt.figure()
+    ax = fig.subplots(1,3)
+    ax[0].imshow(inp)
+    ax[0].set_title("Input")
+    ax[1].imshow(prediction)
+    ax[1].set_title("Prediction")
+    ax[2].imshow(target)
+    ax[2].set_title("Target")
+    plt.show()

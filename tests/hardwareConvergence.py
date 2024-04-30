@@ -1,7 +1,7 @@
-import vivilux as vl
-import vivilux.photonics
+from vivilux import *
+from vivilux.nets import Net, layerConfig_std
+from vivilux.layers import Layer
 import vivilux.hardware
-from vivilux import RecurNet, Layer
 from vivilux.learningRules import CHL
 from vivilux.optimizers import Simple
 
@@ -45,21 +45,23 @@ meshArgs = {"mziMapping": mziMapping,
             # "updateMagnitude": 0.5,
             }
 
-netCHL_MZI = RecurNet([
-        Layer(4, isInput=True),
-        Layer(4, learningRule=CHL),
-    ], vl.hardware.HardMZI, FeedbackMesh=vl.photonics.phfbMesh,
-    # optimizer = Adam,
-    optimizer = Simple,
-    optArgs = optArgs,
-    meshArgs=meshArgs,
-    name = "Net_CHL(MZI)")
+layerList = [Layer(4, isInput=True),
+             Layer(4, learningRule=CHL),
+             ]
+netMZI = Net(name = "Net_MZI")# , vl.hardware.HardMZI, FeedbackMesh=vl.photonics.phfbMesh,
+netMZI.AddLayers(layerList)
+ffMeshConfig = {"meshType": vivilux.hardware.HardMZI,
+                "meshArgs": {"AbsScale": 1,
+                             "RelScale": 1},
+                }
+ffMeshes = netMZI.AddConnection(layerList[0], layerList[1],
+                                meshConfig=ffMeshConfig)
 
 # handles for convenience
-mesh = netCHL_MZI.layers[1].excMeshes[0]
+mesh = netMZI.layers[1].excMeshes[0]
 inGen = mesh.inGen
-magnitude = vl.hardware.magnitude
-L1norm = vl.hardware.L1norm
+magnitude = vivilux.hardware.magnitude
+L1norm = vivilux.hardware.L1norm
 
 
 numDeltas = 5
@@ -116,7 +118,7 @@ for iteration in range(50):
     
     start = time()
     try:
-        record, params, matrices = mesh.stepGradient(delta, eta=1,
+        record, params, matrices = mesh.ApplyDelta(delta, eta=1,
                                                      numDirections=3, 
                                                      numSteps=30,
                                                       earlyStop=8e-2
@@ -149,7 +151,7 @@ for iteration in range(50):
 
     
     
-vl.hardware.DAC_Init()
+vivilux.hardware.DAC_Init()
 inGen.agilent.lasers_on([0,0,0,0])
 print("\n\nSUCCESSFULLY FINISHED. PLEASE MAKE SURE LASER AND TEMPERATURE CONTROL ARE OFF.")
 

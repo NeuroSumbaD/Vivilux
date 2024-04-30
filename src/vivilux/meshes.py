@@ -113,6 +113,8 @@ class Mesh:
 
     def apply(self):
         data = self.getInput()
+        pad = self.size - len(data)
+        data = np.pad(data, pad_width=(0,pad))
 
         # Implement delta-sender behavior (thresholds changes in conductance)
         ## NOTE: this does not reduce matrix multiplications like it does in Leabra
@@ -148,6 +150,8 @@ class Mesh:
         self.XCAL.AttachLayer(self.inLayer, rcvLayer)
 
     def WtBalance(self):
+        '''Updates the weight balancing factors used by XCAL.
+        '''
         self.WtBalCtr += 1
         if self.WtBalCtr >= self.WtBalInterval:
             self.WtBalCtr = 0
@@ -193,19 +197,42 @@ class Mesh:
         mask2 = self.linMatrix > 1
         self.linMatrix[mask2] = 1
 
-    def Update(self,
-               dwtLog = None,
-               # delta: np.ndarray ### Now delta is handled by the 
-               ):
-        # self.modified = True
-        # self.matrix[:m, :n] += self.rate*delta
+    def CalculateUpdate(self,
+                        dwtLog = None,
+                        ):
+        '''Calculates the delta vector according to XCAL rule. Returns the
+            delta vector and its shape (m,n).
 
+            Overwrite this function for other learning rules.
+        '''
         delta = self.XCAL.GetDeltas(dwtLog=dwtLog)
         delta = self.SoftBound(delta)
         m, n = delta.shape
+        return delta, m, n
+    
+    def ApplyUpdate(self, delta, m, n):
+        '''Applies the delta vector to the linear weights and calculates the 
+            corresponding contrast enhances matrix.
+
+            Overwrite this function for other learning rule or mesh types.
+        '''
         self.linMatrix[:m, :n] += delta
         self.ClipLinMatrix()
         self.SigMatrix()
+
+    def Update(self,
+               dwtLog = None,
+               ):
+        '''Calculates and applies the weight update according to the
+            learning rule and updates other related internal variables.
+
+            This function should apply to all meshes.
+        '''
+        # self.modified = True
+        # self.matrix[:m, :n] += self.rate*delta
+
+        delta, m, n = self.CalculateUpdate(dwtLog=dwtLog)
+        self.ApplyUpdate(delta, m, n)
         self.WtBalance()
 
         if dwtLog is not None:
@@ -288,6 +315,8 @@ class Mesh:
         mask3 = np.logical_not(np.logical_or(mask1, mask2))
         self.matrix[mask3] = self.sigmoid(self.linMatrix[mask3])
 
+        return self.matrix
+
     def sigmoid(self, data):
         return 1 / (1 + np.power(self.Off*(1-data)/data, self.Gain))
     
@@ -303,6 +332,8 @@ class Mesh:
 
         mask3 = np.logical_not(np.logical_or(mask1, mask2))
         self.linMatrix[mask3] = self.invSigmoid(self.matrix[mask3])
+
+        return self.linMatrix
     
     def invSigmoid(self, data):
         return 1 / (1 + np.power((1/self.Off)*(1-data)/data, (1/self.Gain)))

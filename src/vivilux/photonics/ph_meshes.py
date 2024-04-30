@@ -13,43 +13,101 @@ class Unitary(Mesh):
 class MZImesh(Mesh):
     '''Base class for a single rectangular MZI used in incoherent mode.
     '''
-    def __init__(self, *args, numDirections = 5, updateMagnitude = 0.01,
+    def __init__(self,
+                 size: int,
+                 inLayer: Layer,
+                 AbsScale: float = 1,
+                 RelScale: float = 1,
+                 InitMean: float = 0.5,
+                 InitVar: float = 0.25,
+                 Off: float = 1,
+                 Gain: float = 6,
+                 dtype = np.float64,
+                 wbOn = True,
+                 wbAvgThr = 0.25,
+                 wbHiThr = 0.4,
+                 wbHiGain = 4,
+                 wbLoThr = 0.4,
+                 wbLoGain = 6,
+                 wbInc = 1,
+                 wbDec = 1,
+                 WtBalInterval = 10,
+                 softBound = True,
+                 numDirections = None,
+                 updateMagnitude = 0.1,
+                 numSteps = 200,
+                 earlyStop = 1e-2, 
                  **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
+                         Gain,dtype,wbOn,wbAvgThr,wbHiThr,wbHiGain,wbLoThr,
+                         wbLoGain,wbInc,wbDec,WtBalInterval,softBound, **kwargs)
+
+        # pad initial matrix to square matrix
+        if size > len(self.inLayer): # expand variables appropriately
+            size = size
+            self.lastAct = np.zeros(size, dtype=self.dtype)
+            self.inAct = np.zeros(size, dtype=self.dtype)
+        else: 
+            size = len(self.inLayer)
+        shape1 = self.linMatrix.shape
+        self.linMatrix = np.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
+        shape2 = self.matrix.shape
+        self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
         
         self.numUnits = int(self.size*(self.size-1)/2)
         self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
 
-        self.modified = True
-        self.get()
+        self.setFromParams()
+        self.modified = False
 
-        # self.numDirections = numDirections
-        numParams = int(np.concatenate([param.flatten() for param in self.getParams()]).size)
-        self.numDirections = int(np.round(numParams/3)) # arbitrary guess for how many directions are needed
+        self.numDirections = numDirections
+        numParams = np.concatenate([param.flatten() for param in self.getParams()]).size
+        # arbitrary guess for how many directions are needed
+        self.numDirections = int(np.round(numParams/3)) if numDirections is None else numDirections
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
+        self.numSteps = numSteps
+        self.earlyStop = earlyStop # early stopping criteria for AMM
 
-    def get(self, params=None, complex=True):
-        '''Returns full mesh matrix.
+    def getFromParams(self):
+        return np.square(np.abs(psToRect(self.getParams()[0], self.size)))
+    
+    def set(self, matrix, verbose=False):
+        '''Function used to directly set the matrix implemented by the mesh
+            without knowledge of the parameters needed. 
         '''
-        if params is not None: # calculate matrix using params
-            return self.Gscale * self.psToMat(params[0]) if complex else np.square(np.abs(self.Gscale * self.psToMat(params[0])))
-        
+        self.modified = True
+        delta = matrix - self.matrix
+        return self.ApplyDelta(delta=delta, verbose=verbose)
+    
+    def get(self):
+        '''Returns the current matrix representation multiplied by the Gscale.
+            This function is generic to any photonic mesh and should not be
+            overwritten.
+        '''
         if (self.modified == True): # only recalculate matrix when modified
-            self.set(self.psToMat())
+            self.setFromParams()
             self.modified = False
         
-        return self.Gscale * self.matrix if complex else np.square(np.abs(self.Gscale * self.matrix))
+        return self.Gscale * self.matrix
     
     def getParams(self):
+        '''Returns a list of the parameters for the given mesh. This function
+            must be overwritten for meshes with different parameter structures.
+        '''
         return [self.phaseShifters]
     
     def setParams(self, params):
+        ''' Stores the params in the appropriate internal variables.
+        
+            Overwrite for meshes with different parameter structures.
+        '''
         ps = params[0]
         self.phaseShifters = BoundTheta(ps)
+        self.modified = True
     
     def reshapeParams(self, flatParams):
-        '''Helper function to reshape a flattened set of parameters to list format
-            accepted by getter and setter functions.
+        '''Reshapes a flattened set of parameters to list format
+            accepted by getParams and setParams.
         '''
         startIndex = 0
         reshapedParams = []
@@ -59,17 +117,51 @@ class MZImesh(Mesh):
             startIndex += numElements
         return reshapedParams
 
-    def apply(self):
-        data = self.getInput()
-        # guarantee that data can be multiplied by the mesh
-        data = np.pad(data[:self.size], (0, self.size - len(data)))
-        # Split data into diagonal matrix
-        ## Take the sum of squared magnitude (power)
-        return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
- 
+    def applyTo(self, data):
+        '''Applies the mesh matrix according to how it should physically be
+            interpretted. In this case, signals on each waveguide should be
+            incoherent with one another, so they are split into separate
+            channels and then summed together.
+            
+            This function should be overwritten for other meshes
+        '''
+        # Split data into diagonal matrix where cols represent wavelength
+        # TODO: Check for slowdown because of reshaping in super().applyTo()
+        matrixData = Diagonalize(data)
+        shape = matrixData.shape
+        result = super().applyTo(matrixData)
+        result = result.reshape(shape)
+        ## Take the sum across each wavelength
+        return np.sum(result, axis=1)
     
-    def Update(self, delta:np.ndarray, numSteps = 100, earlyStop = 1e-3, verbose=False):
-        # FIXME:: Update does not converge on delta. Possibly not enough iterations?
+    def ApplyUpdate(self, delta, m, n):
+        '''Applies the delta vector to the linear weights and calculates the 
+            corresponding contrast enhanced matrix. Since the MZI cannot 
+            implement this change directly, it calculates a new delta from the
+            ideal change, and then implements that change.
+        '''
+        self.linMatrix[:m, :n] += delta
+        self.ClipLinMatrix()
+        matrix = self.get().copy() # matrix gets modified by SigMatrix
+        newMatrix = self.SigMatrix()
+        self.ApplyDelta(newMatrix-matrix) # implement with params
+
+    def setFromParams(self):
+        '''Sets the current matrix from the phase shifter params.
+
+            Overwrite this function for other mesh types.
+        '''
+        self.matrix = np.square(np.abs(psToRect(self.getParams()[0], self.size)))
+        self.InvSigMatrix()
+    
+    def ApplyDelta(self, delta:np.ndarray, verbose=False):
+        '''Uses directional derivatives to find the set of phase shifters which
+            implements some change in weights for the matrix. Uses the LSO Analog
+            Matrix Mapping (LAMM) algorithm.
+            
+            Updates self.matrix and returns the difference vector between target
+            and implemented delta.
+        '''
         self.modified = True
 
         # Make column vectors for deltas and theta
@@ -78,12 +170,14 @@ class MZImesh(Mesh):
         thetaFlat = np.concatenate([param.flatten() for param in self.getParams()]).reshape(-1,1)
 
         initDeltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
-        earlyStop *= initDeltaMagnitude
+        self.record = -np.ones(self.numSteps+1)
+        self.record[0] = initDeltaMagnitude
+        # earlyStop = self.earlyStop * initDeltaMagnitude
         if verbose:
             print(f"Initial delta magnitude: {initDeltaMagnitude}")
 
-        for step in range(numSteps):
-            currMat = self.get(complex=False)
+        for step in range(self.numSteps):
+            currMat = self.get()/self.Gscale
             X = np.zeros((deltaFlat.shape[0], self.numDirections))
             V = np.zeros((thetaFlat.shape[0], self.numDirections))
             
@@ -105,42 +199,26 @@ class MZImesh(Mesh):
                     V = V[:,:-1]
                     continue
             
+            # Apply update to parameters
             linearCombination = V @ a
             updatedParams = [param + opt for param, opt in zip(self.getParams(), self.reshapeParams(linearCombination))]
             self.setParams(updatedParams)
             
-            trueDelta = self.get(complex=False) - currMat
+            # Check difference vector after update
+            trueDelta = self.get()/self.Gscale - currMat
             deltaFlat -= trueDelta.flatten().reshape(-1,1)
             deltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
-            if deltaMagnitude < earlyStop:
+            self.record[step+1]=deltaMagnitude
+            if deltaMagnitude < self.earlyStop:
                 if verbose:
                     print(f"Break after {step+1} steps, delta magnitude: {deltaMagnitude}")
                 break
         if verbose:
             print(f"Final delta magnitude: {deltaMagnitude}, success: {initDeltaMagnitude > deltaMagnitude}")
 
-
-    def psToMat(self, phaseShifters = None):
-        '''Helper function which calculates the matrix of a MZI mesh from its
-            set of phase shifters.
-        '''
-        phaseShifters = self.phaseShifters if phaseShifters is None else phaseShifters
-        fullMatrix = np.eye(self.size, dtype=np.cdouble)
-        index = 0
-        for stage in range(self.size):
-            stageMatrix = np.eye(self.size, dtype=np.cdouble)
-            parity = stage % 2 # even or odd stage
-            for wg in range(parity, self.size, 2): 
-                # add MZI weights in pairs
-                if wg >= self.size-1: break # handle case of last pair
-                theta, phi = phaseShifters[index]
-                index += 1
-                stageMatrix[wg:wg+2,wg:wg+2] = np.array([[np.exp(1j*phi)*np.sin(theta),np.cos(theta)],
-                                                            [np.exp(1j*phi)*np.cos(theta),-np.sin(theta)]],
-                                                            dtype=np.cdouble)
-            fullMatrix[:] = stageMatrix @ fullMatrix
-        return fullMatrix
-            
+        self.setFromParams()
+        # assert(deltaMagnitude < 1e-2)
+        return deltaMagnitude, step          
         
     def matrixGradient(self, stepVector: np.ndarray = None):
         '''Calculates the gradient of the matrix with respect to the phase
@@ -159,30 +237,17 @@ class MZImesh(Mesh):
         
         derivativeMatrix = np.zeros(self.matrix.shape)
 
+        #TODO: fix steps to be generic for any param structure (make flatten/shape function?)
         # Forward step
         plusVectors = [param + stepVector for param, stepVector in zip(paramsList, stepVectors)]
-        plusMatrix = self.get(plusVectors, complex=False)
+        plusMatrix = np.square(np.abs(psToRect(plusVectors[0], self.size)))
         # Backward step
         minusVectors = [param - stepVector for param, stepVector in zip(paramsList, stepVectors)]
-        minusMatrix = self.get(minusVectors, complex=False)
+        minusMatrix = np.square(np.abs(psToRect(minusVectors[0], self.size)))
 
         derivativeMatrix = (plusMatrix-minusMatrix)/self.updateMagnitude
-        # for col in range(self.size):
-        #     mask = np.zeros(self.size)
-        #     mask[col] = 1 # mask off contribution from a single input waveguide
-            
-        #     # isolate column and shape as column vector
-        #     detectedVectorPlus = np.square(np.abs(plusMatrix @ mask))
 
-        #     # isolate column and shape as column vector
-        #     detectedVectorMinus = np.square(np.abs(minusMatrix @ mask))
-
-        #     derivative = (detectedVectorPlus - detectedVectorMinus)/self.updateMagnitude
-        #     derivativeMatrix[:,col] = derivative
-
-        # return flattened vectors for the directional derivatives and their unit vector directions
         return derivativeMatrix, stepVectors
-        # return derivativeMatrix, [stepVector/self.updateMagnitude for stepVector in stepVectors]
     
 
 class CohMZIMesh(MZImesh):
@@ -216,21 +281,6 @@ class DiagMZI(MZImesh):
         self.numDirections = int(np.round(numParams/3))
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
 
-    def get(self, params=None):
-        '''Returns full mesh matrix.
-        '''
-        if params is not None: # calculate matrix using params
-            mat = self.psToMat(params[0])
-            return self.Gscale * Diagonalize(self.diagonals) @ mat
-        
-        if (self.modified == True): # only recalculate matrix when modified
-            mat= self.psToMat()
-            fullMatrix = Diagonalize(self.diagonals) @ mat
-            self.set(fullMatrix)
-            self.modified = False
-        
-        return self.Gscale * self.matrix
-
     def getParams(self):
         return [self.phaseShifters, self.diagonals]
     
@@ -256,51 +306,6 @@ class SVDMZI(MZImesh):
         numParams = int(np.concatenate([param.flatten() for param in self.getParams()]).size)
         self.numDirections = int(np.round(numParams/3))
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
-
-    def psToMat(self, phaseShifters = None):
-        '''Helper function which calculates the matrix of a MZI mesh from its
-            set of phase shifters.
-        '''
-        phaseShiftersAll = self.phaseShifters if phaseShifters is None else phaseShifters
-        phaseShifters1 = phaseShiftersAll[:self.numUnits,:]
-        phaseShifters2 = phaseShiftersAll[self.numUnits:,:]
-        fullMatrix1 = np.eye(self.size, dtype=np.cdouble)
-        fullMatrix2 = np.eye(self.size, dtype=np.cdouble)
-        index = 0
-        for stage in range(self.size):
-            stageMatrix1 = np.eye(self.size, dtype=np.cdouble)
-            stageMatrix2 = np.eye(self.size, dtype=np.cdouble)
-            parity = stage % 2 # even or odd stage
-            for wg in range(parity, self.size, 2): 
-                # add MZI weights in pairs
-                if wg >= self.size-1: break # handle case of last pair
-                theta1, phi1 = phaseShifters1[index]
-                theta2, phi2 = phaseShifters2[index]
-                index += 1
-                stageMatrix1[wg:wg+2,wg:wg+2] = np.array([[np.exp(1j*phi1)*np.sin(theta1),np.cos(theta1)],
-                                                            [np.exp(1j*phi1)*np.cos(theta1),-np.sin(theta1)]],
-                                                            dtype=np.cdouble)
-                stageMatrix2[wg:wg+2,wg:wg+2] = np.array([[np.exp(1j*phi2)*np.sin(theta2),np.cos(theta2)],
-                                                            [np.exp(1j*phi2)*np.cos(theta2),-np.sin(theta2)]],
-                                                            dtype=np.cdouble)
-            fullMatrix1[:] = stageMatrix1 @ fullMatrix1
-            fullMatrix2[:] = stageMatrix2 @ fullMatrix2
-        return fullMatrix1, fullMatrix2
-    
-    def get(self, params=None):
-        '''Returns full mesh matrix.
-        '''
-        if params is not None: # calculate matrix using params
-            mat1, mat2 = self.psToMat(params[0])
-            return self.Gscale * mat2 @ Diagonalize(self.diagonals) @ mat1
-        
-        if (self.modified == True): # only recalculate matrix when modified
-            matrix1, matrix2 = self.psToMat()
-            fullMatrix = matrix2 @ Diagonalize(self.diagonals) @ matrix1
-            self.set(fullMatrix)
-            self.modified = False
-        
-        return self.Gscale * self.matrix
 
     def getParams(self):
         return [self.phaseShifters, self.diagonals]
