@@ -1,6 +1,7 @@
 from ..meshes import Mesh
 from ..layers import Layer
 from .utils import *
+from .devices import Device
 
 import numpy as np
 from scipy.stats import ortho_group
@@ -55,21 +56,67 @@ class MZImesh(Mesh):
         self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
         
         self.numUnits = int(self.size*(self.size-1)/2)
-        self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
-
-        self.setFromParams()
-        self.modified = False
-
-        self.numDirections = numDirections
+        self.Initialize()
         numParams = np.concatenate([param.flatten() for param in self.getParams()]).size
         # arbitrary guess for how many directions are needed
-        self.numDirections = int(np.round(numParams/3)) if numDirections is None else numDirections
+        self.numDirections = int(np.round(numParams/4)) if numDirections is None else numDirections
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
         self.numSteps = numSteps
         self.earlyStop = earlyStop # early stopping criteria for AMM
 
-    def getFromParams(self):
-        return np.square(np.abs(psToRect(self.getParams()[0], self.size)))
+        self.setFromParams()
+
+    def Initialize(self):
+        '''Initializes internal variables for each set of parameter.
+
+            This function should be overwritten for each mesh type.
+        '''
+        self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
+
+    def GetEnergy(self):
+        self.totalEnergy = self.holdEnergy + self.updateEnergy
+        return self.totalEnergy, self.holdEnergy, self.updateEnergy
+    
+    def AttachDevice(self, device: Device):
+        '''Stores a copy of the device definition for use in updating.
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        self.device = device
+        self.holdEnergy = 0
+        self.updateEnergy = 0
+
+    def DeviceHold(self):
+        '''Calls the hold function for each device in the mesh according
+            to the current parameters.
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        DT = self.inLayer.net.DELTA_TIME
+        self.holdEnergy += self.device.Hold(self.getParams(), DT)
+
+
+    def DeviceUpdate(self, updatedParams):
+        '''Calls the reset() and set() functions for each device in the mesh
+            according to the updated parameters
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        self.updateEnergy += self.device.Reset(self.getParams())
+        self.updateEnergy += self.device.Set(updatedParams)
+
+    def getFromParams(self, params = None):
+        '''Function generates matrix from a list of params.
+
+            This function should be overwritten for meshes with different
+            parameter structures.
+        '''
+        params = self.getParams() if params is None else params
+        complexMat = psToRect(params[0], self.size)
+        return np.square(np.abs(complexMat))
     
     def set(self, matrix, verbose=False):
         '''Function used to directly set the matrix implemented by the mesh
@@ -86,13 +133,13 @@ class MZImesh(Mesh):
         '''
         if (self.modified == True): # only recalculate matrix when modified
             self.setFromParams()
-            self.modified = False
         
         return self.Gscale * self.matrix
     
     def getParams(self):
-        '''Returns a list of the parameters for the given mesh. This function
-            must be overwritten for meshes with different parameter structures.
+        '''Returns a list of the parameters for the given mesh. 
+        
+            Overwrite for meshes with different parameter structures.
         '''
         return [self.phaseShifters]
     
@@ -101,8 +148,9 @@ class MZImesh(Mesh):
         
             Overwrite for meshes with different parameter structures.
         '''
-        ps = params[0]
-        self.phaseShifters = BoundTheta(ps)
+        params[0] = BoundTheta(params[0])
+        self.DeviceUpdate(params)
+        self.phaseShifters = params[0]
         self.modified = True
     
     def reshapeParams(self, flatParams):
@@ -123,10 +171,12 @@ class MZImesh(Mesh):
             incoherent with one another, so they are split into separate
             channels and then summed together.
             
-            This function should be overwritten for other meshes
+            This function should be overwritten for other meshes where the
+            matrix is not interpreteted the same way.
         '''
         # Split data into diagonal matrix where cols represent wavelength
         # TODO: Check for slowdown because of reshaping in super().applyTo()
+        self.DeviceHold()
         matrixData = Diagonalize(data)
         shape = matrixData.shape
         result = super().applyTo(matrixData)
@@ -151,8 +201,9 @@ class MZImesh(Mesh):
 
             Overwrite this function for other mesh types.
         '''
-        self.matrix = np.square(np.abs(psToRect(self.getParams()[0], self.size)))
+        self.matrix = self.getFromParams()
         self.InvSigMatrix()
+        self.modified = False
     
     def ApplyDelta(self, delta:np.ndarray, verbose=False):
         '''Uses directional derivatives to find the set of phase shifters which
@@ -162,8 +213,6 @@ class MZImesh(Mesh):
             Updates self.matrix and returns the difference vector between target
             and implemented delta.
         '''
-        self.modified = True
-
         # Make column vectors for deltas and theta
         m, n = delta.shape # presynaptic, postsynaptic array lengths
         deltaFlat = delta.flatten().reshape(-1,1)
@@ -240,52 +289,82 @@ class MZImesh(Mesh):
         #TODO: fix steps to be generic for any param structure (make flatten/shape function?)
         # Forward step
         plusVectors = [param + stepVector for param, stepVector in zip(paramsList, stepVectors)]
-        plusMatrix = np.square(np.abs(psToRect(plusVectors[0], self.size)))
+        plusMatrix = self.getFromParams(plusVectors)
+        # plusMatrix = np.square(np.abs(psToRect(plusVectors[0], self.size)))
         # Backward step
         minusVectors = [param - stepVector for param, stepVector in zip(paramsList, stepVectors)]
-        minusMatrix = np.square(np.abs(psToRect(minusVectors[0], self.size)))
+        minusMatrix = self.getFromParams(minusVectors)
+        # minusMatrix = np.square(np.abs(psToRect(minusVectors[0], self.size)))
 
         derivativeMatrix = (plusMatrix-minusMatrix)/self.updateMagnitude
 
         return derivativeMatrix, stepVectors
     
 
-class CohMZIMesh(MZImesh):
-    '''A single rectangular MZI mesh used as a coherent matrix multiplier.'''
-    def __init__(self, *args, numDirections=5, updateMagnitude=0.01, **kwargs):
-        super().__init__(*args, numDirections=numDirections, updateMagnitude=updateMagnitude, **kwargs)
+# class CohMZIMesh(MZImesh):
+#     '''A single rectangular MZI mesh used as a coherent matrix multiplier.'''
+#     def __init__(self, *args, numDirections=5, updateMagnitude=0.01, **kwargs):
+#         super().__init__(*args, numDirections=numDirections, updateMagnitude=updateMagnitude, **kwargs)
 
-    def apply(self):
-        data = self.getInput()
-        # guarantee that data can be multiplied by the mesh
-        data = np.pad(data[:self.size], (0, self.size - len(data)))
-        # Return the output magnitude squared
-        return np.square(np.abs(self.applyTo(data)))
+#     def apply(self):
+#         data = self.getInput()
+#         # guarantee that data can be multiplied by the mesh
+#         data = np.pad(data[:self.size], (0, self.size - len(data)))
+#         # Return the output magnitude squared
+#         return np.square(np.abs(self.applyTo(data)))
     
 
 class DiagMZI(MZImesh):
     '''Class of MZI mesh followed by a set of amplifier/attenuators forming
         a unitary*diagonal matrix configuration.
     '''
-    def __init__(self, *args, numDirections=5, updateMagnitude=0.01, **kwargs):
-        Mesh.__init__(self, *args, **kwargs)
-        self.numUnits = int(self.size*(self.size-1)/2)
+    def Initialize(self):
+        '''Initializes internal variables for each set of parameter.
+        '''
         self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
         self.diagonals = np.random.rand(self.size)
 
-        self.modified = True
-        self.get()
+    def AttachDevice(self,
+                     psDevice: Device,
+                    #  soaDevice: Device, #TODO Implement SOA
+                     ):
+        self.psDevice = psDevice
+        # self.soaDevice = soaDevice
+        self.holdEnergy = 0
+        self.updateEnergy = 0
 
-        # self.numDirections = numDirections
-        numParams = int(np.concatenate([param.flatten() for param in self.getParams()]).size)
-        self.numDirections = int(np.round(numParams/3))
-        self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
+    def DeviceHold(self):
+        DT = self.inLayer.net.DELTA_TIME
+        self.holdEnergy += self.psDevice.Hold(self.getParams(), DT)
+        # TODO implement SOA
 
+    def DeviceUpdate(self, updatedParams):
+        '''Calls the reset() and set() functions for each device in the mesh
+            according to the updated parameters
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        self.updateEnergy += self.psDevice.Reset(self.getParams()[:1])
+        self.updateEnergy += self.psDevice.Set(updatedParams[:1])
+        
+        # TODO implement SOA
+    
+    def getFromParams(self, params = None):
+        '''Function generates matrix from the list of params.
+        '''
+        params = self.getParams() if params is None else params
+        complexMat = psToRect(params[0], self.size)
+        soaStage = Diagonalize(params[1])
+        return soaStage @ np.square(np.abs(complexMat))
+    
     def getParams(self):
         return [self.phaseShifters, self.diagonals]
     
     def setParams(self, params):
-        self.phaseShifters = BoundTheta(params[0])
+        params[0] = BoundTheta(params[0])
+        self.DeviceUpdate(params)
+        self.phaseShifters = params[0]
         self.diagonals = params[1]
 
 class SVDMZI(MZImesh):
@@ -293,26 +372,57 @@ class SVDMZI(MZImesh):
         two rectangular MZI meshes with a set of amplifier/attenuators in
         between creating a unitary*diagonal*unitary matrix configuration.
     '''
-    def __init__(self, *args, numDirections=5, updateMagnitude=0.01, **kwargs):
-        Mesh.__init__(self,*args, **kwargs)
-        self.numUnits = int(self.size*(self.size-1)/2)
-        self.phaseShifters = np.random.rand(self.numUnits*2,2)*2*np.pi
+    def Initialize(self):
+        self.phaseShifters1 = np.random.rand(self.numUnits,2)*2*np.pi
         self.diagonals = np.random.rand(self.size)
+        self.phaseShifters2 = np.random.rand(self.numUnits,2)*2*np.pi
 
-        self.modified = True
-        self.get()
+    def AttachDevice(self,
+                     psDevice: Device,
+                    #  soaDevice: Device, #TODO Implement SOA
+                     ):
+        self.psDevice = psDevice
+        # self.soaDevice = soaDevice
+        self.holdEnergy = 0
+        self.updateEnergy = 0
 
-        # self.numDirections = numDirections
-        numParams = int(np.concatenate([param.flatten() for param in self.getParams()]).size)
-        self.numDirections = int(np.round(numParams/3))
-        self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
+    def DeviceHold(self):
+        DT = self.inLayer.net.DELTA_TIME
+        self.holdEnergy += self.psDevice.Hold(self.getParams(), DT)
+        # TODO implement SOA
+
+    def DeviceUpdate(self, updatedParams):
+        '''Calls the reset() and set() functions for each device in the mesh
+            according to the updated parameters
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        self.updateEnergy += self.psDevice.Reset(self.getParams()[:1])
+        self.updateEnergy += self.psDevice.Reset(self.getParams()[-1:])
+        self.updateEnergy += self.psDevice.Set(updatedParams[:1])
+        self.updateEnergy += self.psDevice.Set(updatedParams[-1:])
+        
+        # TODO implement SOA
+
+    def getFromParams(self, params = None):
+        '''Function generates matrix from the list of params.
+        '''
+        params = self.getParams() if params is None else params
+        complexMat1 = psToRect(params[0], self.size)
+        soaStage = Diagonalize(params[1])
+        complexMat2 = psToRect(params[0], self.size)
+        fullComplexMat = complexMat2 @ np.sqrt(soaStage) @ complexMat1
+
+        return np.square(np.abs(fullComplexMat))
 
     def getParams(self):
-        return [self.phaseShifters, self.diagonals]
+        return [self.phaseShifters1, self.diagonals, self.phaseShifters2]
     
     def setParams(self, params):
-        self.phaseShifters = BoundTheta(params[0])
+        self.phaseShifters1 = BoundTheta(params[0])
         self.diagonals = params[1]
+        self.phaseShifters2 = BoundTheta(params[0])
         
 class phfbMesh(Mesh):
     '''A class for photonic feedback meshes based on the transpose of an MZI mesh.
@@ -338,54 +448,10 @@ class phfbMesh(Mesh):
     def Update(self, delta):
         return None
     
-    def apply(self):
-        data = self.getInput()
-        # guarantee that data can be multiplied by the mesh
-        data = np.pad(data[:self.size], (0, self.size - len(data)))
-        return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
+    # def apply(self):
+    #     data = self.getInput()
+    #     # guarantee that data can be multiplied by the mesh
+    #     data = np.pad(data[:self.size], (0, self.size - len(data)))
+    #     return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
 
 MZImesh.feedback = phfbMesh
-
-
-
-###<------ DEVICE TABLES ------>###
-
-phaseShift_ITO = {
-    "length": 0.0035, # mm
-    "shiftDelay": 0.3, # ns
-    "shiftCost": 77.6/np.pi, # pJ/radian
-    "opticalLoss": 5.6, # dB
-    "staticPower": 0, # pJ
-}
-
-phaseShift_LN = {
-    "length": 2, # mm
-    "shiftDelay": 0.02, # ns
-    "shiftCost": 8.1/np.pi, # pJ/radian
-    "opticalLoss": 0.6, # dB
-    "staticPower": 0, # pJ
-}
-
-phaseShift_LN_theoretical = {
-    "length": 2, # mm
-    "shiftDelay": 0.0035, # ns
-    "shiftCost": 8.1/np.pi, # pJ/radian
-    "opticalLoss": 0.6, # dB
-    "staticPower": 0, # pJ
-}
-
-phaseShift_LN_plasmonic = {
-    "length": 0.015, # mm
-    "shiftDelay": 0.035, # ns
-    "shiftCost": 38.6/np.pi, # pJ/radian
-    "opticalLoss": 19.5, # dB
-    "staticPower": 0, # pJ
-}
-
-phaseShift_PCM = {
-    "length": 0.011, # mm
-    "shiftDelay": 0.035, # ns
-    "shiftCost": 1e5/np.pi, # pJ/radian
-    "opticalLoss": 0.33, # dB
-    "staticPower": 0, # pJ
-}

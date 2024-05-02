@@ -115,6 +115,7 @@ class Mesh:
         data = self.getInput()
         pad = self.size - len(data)
         data = np.pad(data, pad_width=(0,pad))
+        data = data[:len(self.lastAct)] # TODO make self.shape to fix this ugliness
 
         # Implement delta-sender behavior (thresholds changes in conductance)
         ## NOTE: this does not reduce matrix multiplications like it does in Leabra
