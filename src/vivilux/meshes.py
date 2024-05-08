@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .nets import Net
     from .layers import Layer
+    from .photonics.devices import Device
 
 from .processes import XCAL
 
@@ -83,9 +84,72 @@ class Mesh:
         self.sndActAvg = inLayer.ActAvg
         self.rcvActAvg = None
 
+        # external matrix scaling parameters (constant synaptic gain)
         self.AbsScale = AbsScale
         self.RelScale = RelScale
 
+    def GetEnergy(self, device: Device = None):
+        '''Returns integrated energy over the course of the simulation.
+            If a device is provided, it calculates the energy from the given
+            device, otherwise it uses device parameters previously set.
+        '''
+        if device is None:
+            self.totalEnergy = self.holdEnergy + self.updateEnergy
+            return self.totalEnergy, self.holdEnergy, self.updateEnergy
+        else:
+            holdEnergy = device.Hold(self.holdIntegration, self.holdTime)
+            
+            updateEnergy = device.Set(self.setIntegration)
+            updateEnergy += device.Rest(self.resetIntegration)
+
+            totalEnergy = holdEnergy + updateEnergy
+            return totalEnergy, holdEnergy, updateEnergy
+    
+    def AttachDevice(self, device: Device):
+        '''Stores a copy of the device definition for use in updating.
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        self.device = device
+        self.holdEnergy = 0
+        self.updateEnergy = 0
+
+        # integration variables for calculating energy of other devices
+        self.holdIntegration = 0
+        self.holdTime = 0
+        self.setIntegration = 0
+        self.resetIntegration = 0
+
+    def DeviceHold(self):
+        '''Calls the hold function for each device in the mesh according
+            to the current parameters.
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        DT = self.inLayer.net.DELTA_TIME
+        self.holdEnergy += self.device.Hold(self.matrix, DT)
+
+        self.holdIntegration += np.sum(self.matrix)
+        self.holdTime += DT
+
+
+    def DeviceUpdate(self, delta):
+        '''Calls the reset() and set() functions for each device in the mesh
+            according to the updated parameters
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        currMat = self.matrix
+        newMat = self.sigmoid(self.linMatrix + delta)
+        self.updateEnergy += self.device.Reset(currMat)
+        self.updateEnergy += self.device.Set(newMat)
+
+        self.setIntegration += np.sum(currMat)
+        self.resetIntegration += np.sum(newMat)
+    
     def set(self, matrix):
         self.modified = True
         self.matrix = matrix
@@ -112,6 +176,7 @@ class Mesh:
         return self.inLayer.getActivity()
 
     def apply(self):
+        self.DeviceHold()
         data = self.getInput()
         pad = self.size - len(data)
         data = np.pad(data, pad_width=(0,pad))
@@ -229,10 +294,8 @@ class Mesh:
 
             This function should apply to all meshes.
         '''
-        # self.modified = True
-        # self.matrix[:m, :n] += self.rate*delta
-
         delta, m, n = self.CalculateUpdate(dwtLog=dwtLog)
+        self.DeviceUpdate(delta)
         self.ApplyUpdate(delta, m, n)
         self.WtBalance()
 

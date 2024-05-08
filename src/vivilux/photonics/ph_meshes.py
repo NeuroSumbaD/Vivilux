@@ -37,7 +37,8 @@ class MZImesh(Mesh):
                  numDirections = None,
                  updateMagnitude = 0.1,
                  numSteps = 200,
-                 earlyStop = 1e-2, 
+                 atol = 0, # absolute tolerance
+                 rtol = 1e-2, # relative tolerance
                  **kwargs):
         super().__init__(size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
                          Gain,dtype,wbOn,wbAvgThr,wbHiThr,wbHiGain,wbLoThr,
@@ -62,7 +63,11 @@ class MZImesh(Mesh):
         self.numDirections = int(np.round(numParams/4)) if numDirections is None else numDirections
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
         self.numSteps = numSteps
-        self.earlyStop = earlyStop # early stopping criteria for AMM
+        
+        # early stopping criteria for LAMM
+        self.atol = atol
+        self.rtol = rtol
+        self.numOverflows = 0 # counts each time LAMM reaches numSteps
 
         self.setFromParams()
 
@@ -73,20 +78,6 @@ class MZImesh(Mesh):
         '''
         self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
 
-    def GetEnergy(self):
-        self.totalEnergy = self.holdEnergy + self.updateEnergy
-        return self.totalEnergy, self.holdEnergy, self.updateEnergy
-    
-    def AttachDevice(self, device: Device):
-        '''Stores a copy of the device definition for use in updating.
-
-            This function should be overwritten for meshses with different
-            parameter structures.
-        '''
-        self.device = device
-        self.holdEnergy = 0
-        self.updateEnergy = 0
-
     def DeviceHold(self):
         '''Calls the hold function for each device in the mesh according
             to the current parameters.
@@ -95,7 +86,11 @@ class MZImesh(Mesh):
             parameter structures.
         '''
         DT = self.inLayer.net.DELTA_TIME
-        self.holdEnergy += self.device.Hold(self.getParams(), DT)
+        params = self.getParams()
+        self.holdEnergy += self.device.Hold(params, DT)
+
+        self.holdIntegration += np.sum(params)
+        self.holdTime += DT
 
 
     def DeviceUpdate(self, updatedParams):
@@ -105,8 +100,12 @@ class MZImesh(Mesh):
             This function should be overwritten for meshses with different
             parameter structures.
         '''
-        self.updateEnergy += self.device.Reset(self.getParams())
+        currParams = self.getParams()
+        self.updateEnergy += self.device.Reset(currParams)
         self.updateEnergy += self.device.Set(updatedParams)
+
+        self.setIntegration += np.sum(currParams)
+        self.resetIntegration += np.sum(updatedParams)
 
     def getFromParams(self, params = None):
         '''Function generates matrix from a list of params.
@@ -148,7 +147,8 @@ class MZImesh(Mesh):
         
             Overwrite for meshes with different parameter structures.
         '''
-        params[0] = BoundTheta(params[0])
+        self.boundParams(params)
+        
         self.DeviceUpdate(params)
         self.phaseShifters = params[0]
         self.modified = True
@@ -164,6 +164,15 @@ class MZImesh(Mesh):
             reshapedParams.append(flatParams[startIndex:startIndex+numElements].reshape(*param.shape))
             startIndex += numElements
         return reshapedParams
+    
+    def boundParams(self, params):
+        '''Bounds the parameters into their allowed ranges. Remember that lists
+            are passed by reference and changes are reflected outside the
+            function.
+        '''
+        params[0] = BoundTheta(params[0])
+
+        return params
 
     def applyTo(self, data):
         '''Applies the mesh matrix according to how it should physically be
@@ -221,7 +230,8 @@ class MZImesh(Mesh):
         initDeltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
         self.record = -np.ones(self.numSteps+1)
         self.record[0] = initDeltaMagnitude
-        # earlyStop = self.earlyStop * initDeltaMagnitude
+        earlyStop = self.atol + self.rtol * initDeltaMagnitude
+        overflow = True
         if verbose:
             print(f"Initial delta magnitude: {initDeltaMagnitude}")
 
@@ -258,12 +268,15 @@ class MZImesh(Mesh):
             deltaFlat -= trueDelta.flatten().reshape(-1,1)
             deltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
             self.record[step+1]=deltaMagnitude
-            if deltaMagnitude < self.earlyStop:
+            if deltaMagnitude < earlyStop:
                 if verbose:
                     print(f"Break after {step+1} steps, delta magnitude: {deltaMagnitude}")
+                overflow = False
                 break
         if verbose:
             print(f"Final delta magnitude: {deltaMagnitude}, success: {initDeltaMagnitude > deltaMagnitude}")
+        
+        self.numOverflows += int(overflow) # always increments except during earlyStop
 
         self.setFromParams()
         # assert(deltaMagnitude < 1e-2)
@@ -280,7 +293,8 @@ class MZImesh(Mesh):
         # create a random step vector and set magnitude to self.updateMagnitude
         if stepVector is None:
             stepVectors = [np.random.rand(*param.shape) for param in paramsList]
-            randMagnitude = np.sqrt(np.sum(np.square(np.concatenate([stepVector.flatten() for stepVector in stepVectors]))))
+            flatVectors = [stepVector.flatten() for stepVector in stepVectors]
+            randMagnitude = np.sqrt(np.sum(np.square(np.concatenate(flatVectors))))
             stepVectors = [stepVector/randMagnitude for stepVector in stepVectors]
             stepVectors = [stepVector*self.updateMagnitude for stepVector in stepVectors]
         
@@ -289,10 +303,12 @@ class MZImesh(Mesh):
         #TODO: fix steps to be generic for any param structure (make flatten/shape function?)
         # Forward step
         plusVectors = [param + stepVector for param, stepVector in zip(paramsList, stepVectors)]
+        self.boundParams(plusVectors)
         plusMatrix = self.getFromParams(plusVectors)
         # plusMatrix = np.square(np.abs(psToRect(plusVectors[0], self.size)))
         # Backward step
         minusVectors = [param - stepVector for param, stepVector in zip(paramsList, stepVectors)]
+        self.boundParams(minusVectors)
         minusMatrix = self.getFromParams(minusVectors)
         # minusMatrix = np.square(np.abs(psToRect(minusVectors[0], self.size)))
 
@@ -333,10 +349,20 @@ class DiagMZI(MZImesh):
         self.holdEnergy = 0
         self.updateEnergy = 0
 
+        # integration variables for calculating energy of other devices
+        self.holdIntegration = 0
+        self.holdTime = 0
+        self.setIntegration = 0
+        self.resetIntegration = 0
+
     def DeviceHold(self):
         DT = self.inLayer.net.DELTA_TIME
-        self.holdEnergy += self.psDevice.Hold(self.getParams(), DT)
+        currParams = self.getParams()
+        self.holdEnergy += self.psDevice.Hold(currParams[:1], DT)
         # TODO implement SOA
+
+        self.holdIntegration += np.sum(currParams[:1])
+        self.holdTime += DT
 
     def DeviceUpdate(self, updatedParams):
         '''Calls the reset() and set() functions for each device in the mesh
@@ -345,10 +371,13 @@ class DiagMZI(MZImesh):
             This function should be overwritten for meshses with different
             parameter structures.
         '''
-        self.updateEnergy += self.psDevice.Reset(self.getParams()[:1])
+        currParams = self.getParams()
+        self.updateEnergy += self.psDevice.Reset(currParams[:1])
         self.updateEnergy += self.psDevice.Set(updatedParams[:1])
         
         # TODO implement SOA
+        self.setIntegration += np.sum(currParams[:1])
+        self.resetIntegration += np.sum(updatedParams[:1])
     
     def getFromParams(self, params = None):
         '''Function generates matrix from the list of params.
@@ -362,10 +391,18 @@ class DiagMZI(MZImesh):
         return [self.phaseShifters, self.diagonals]
     
     def setParams(self, params):
-        params[0] = BoundTheta(params[0])
-        self.DeviceUpdate(params)
+        self.boundParams(params)
+
+        self.DeviceUpdate(params) # TODO: Implement SOA udpates
+        
         self.phaseShifters = params[0]
         self.diagonals = params[1]
+
+    def boundParams(self, params):
+        params[0] = BoundTheta(params[0])
+        params[1] = BoundGain(params[1])
+
+        return params
 
 class SVDMZI(MZImesh):
     '''Class of MZI mesh following the SVD decomposition scheme. There are
@@ -386,10 +423,20 @@ class SVDMZI(MZImesh):
         self.holdEnergy = 0
         self.updateEnergy = 0
 
+        # integration variables for calculating energy of other devices
+        self.holdIntegration = 0
+        self.holdTime = 0
+        self.setIntegration = 0
+        self.resetIntegration = 0
+
     def DeviceHold(self):
         DT = self.inLayer.net.DELTA_TIME
-        self.holdEnergy += self.psDevice.Hold(self.getParams(), DT)
+        currParams = self.getParams()
+        self.holdEnergy += self.psDevice.Hold(currParams[:1], DT)
         # TODO implement SOA
+
+        self.holdIntegration += np.sum(currParams[:1])
+        self.holdTime += DT
 
     def DeviceUpdate(self, updatedParams):
         '''Calls the reset() and set() functions for each device in the mesh
@@ -398,12 +445,17 @@ class SVDMZI(MZImesh):
             This function should be overwritten for meshses with different
             parameter structures.
         '''
-        self.updateEnergy += self.psDevice.Reset(self.getParams()[:1])
-        self.updateEnergy += self.psDevice.Reset(self.getParams()[-1:])
-        self.updateEnergy += self.psDevice.Set(updatedParams[:1])
-        self.updateEnergy += self.psDevice.Set(updatedParams[-1:])
+        currParams = self.getParams()
+        self.updateEnergy += self.psDevice.Reset(currParams[:1]) # left mat
+        self.updateEnergy += self.psDevice.Reset(currParams[-1:]) # right mat
+        self.updateEnergy += self.psDevice.Set(updatedParams[:1]) # left mat
+        self.updateEnergy += self.psDevice.Set(updatedParams[-1:]) # right mat
         
         # TODO implement SOA
+        self.setIntegration += np.sum(currParams[:1]) # left mat
+        self.setIntegration += np.sum(currParams[-1:]) # right mat
+        self.resetIntegration += np.sum(updatedParams[:1]) # left mat
+        self.setIntegration += np.sum(currParams[-1:]) # right mat
 
     def getFromParams(self, params = None):
         '''Function generates matrix from the list of params.
@@ -411,7 +463,7 @@ class SVDMZI(MZImesh):
         params = self.getParams() if params is None else params
         complexMat1 = psToRect(params[0], self.size)
         soaStage = Diagonalize(params[1])
-        complexMat2 = psToRect(params[0], self.size)
+        complexMat2 = psToRect(params[2], self.size)
         fullComplexMat = complexMat2 @ np.sqrt(soaStage) @ complexMat1
 
         return np.square(np.abs(fullComplexMat))
@@ -420,9 +472,19 @@ class SVDMZI(MZImesh):
         return [self.phaseShifters1, self.diagonals, self.phaseShifters2]
     
     def setParams(self, params):
-        self.phaseShifters1 = BoundTheta(params[0])
+        self.boundParams(params)        
+
+        self.DeviceUpdate(params) # TODO: Implement SOA udpates
+        self.phaseShifters1 = params[0]
         self.diagonals = params[1]
-        self.phaseShifters2 = BoundTheta(params[0])
+        self.phaseShifters2 = params[2]
+
+    def boundParams(self, params):
+        params[0] = BoundTheta(params[0])
+        params[1] = BoundGain(params[1])
+        params[2] = BoundTheta(params[2])
+
+        return params
         
 class phfbMesh(Mesh):
     '''A class for photonic feedback meshes based on the transpose of an MZI mesh.

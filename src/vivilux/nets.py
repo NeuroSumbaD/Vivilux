@@ -19,6 +19,7 @@ from .meshes import Mesh, TransposeMesh
 from .metrics import RMSE
 from .optimizers import Simple
 from .visualize import Monitor
+from .photonics.devices import Device
 
 
 
@@ -214,6 +215,7 @@ class Net:
                       sending: Layer, # closer to source
                       receiving: Layer, # further from source
                       meshConfig = None,
+                      device: Device = None,
                       ) -> Mesh:
         '''Adds a connection from the sending layer to the receiving layer.
         '''
@@ -223,18 +225,23 @@ class Net:
         meshArgs = meshConfig["meshArgs"]
         mesh = meshConfig["meshType"](size, sending, dtype=self.dtype, **meshArgs)
         receiving.addMesh(mesh)
+
+        if device is not None:
+            mesh.AttachDevice(device)
+
         return mesh
 
     def AddConnections(self,
                        sendings: list[Layer], # closer to source
                        receivings: list[Layer], # further from source
                        meshConfig = None,
+                       device: Device = None,
                        ) -> list[Mesh]:
         '''Helper function for generating multiple connections at once.
         '''
         meshes = []
         for receiving, sending in zip(receivings, sendings):
-            mesh = self.AddConnection(sending, receiving, meshConfig)
+            mesh = self.AddConnection(sending, receiving, meshConfig, device)
             meshes.append(mesh)
         return meshes
 
@@ -505,6 +512,14 @@ class Net:
                 if ffOnly: break
         return weights
     
+    def GetEnergy(self, synDevice = None) -> tuple[float, float]:
+        neuralEnergy = 0
+        meshEnergy = 0
+        for layer in self.layers:
+            nEn, mEn = layer.GetEnergy(synDevice=synDevice)
+            neuralEnergy += nEn
+            meshEnergy += mEn
+        return neuralEnergy, meshEnergy
     def printActivity(self):
         for layer in self.layers:
             "\n".join(layer.printActivity())

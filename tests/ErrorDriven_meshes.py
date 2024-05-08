@@ -11,6 +11,8 @@ from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
 from vivilux.photonics.ph_meshes import MZImesh, DiagMZI, SVDMZI
+from vivilux.photonics.devices import Volatile, phaseShift_GFThermal
+from vivilux.photonics.devices import Nonvolatile, phaseShift_PCM
 from vivilux.metrics import ThrMSE, ThrSSE
 
 import pandas as pd
@@ -29,7 +31,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-# numSamples = 80
 numEpochs = 50
 inputSize = 4
 hiddenSize = 4
@@ -42,6 +43,7 @@ patterns = patterns.drop(labels = "$Name", axis=1)
 patterns = patterns.to_numpy(dtype="float64")
 inputs = patterns[:,:inputSize]
 targets = patterns[:,inputSize:]
+numSamples = len(inputs)
 
 leabraRunConfig = {
     "DELTA_TIME": 0.001,
@@ -56,6 +58,15 @@ leabraRunConfig = {
     "Infer": ["minus"],
 }
 
+# Define device parameters
+thermDevice = Volatile(**phaseShift_GFThermal)
+pcmDevice = Nonvolatile(**phaseShift_PCM)
+
+fig, axs = plt.subplots(1,2, figsize=(20,12))
+
+names = []
+neuralEnergies = []
+synapticEnergies = []
 for meshtype in [MZImesh, DiagMZI, SVDMZI]:
     # Default Leabra net
     leabraNet = Net(name = "LEABRA_NET--" + meshtype.__name__,
@@ -74,17 +85,25 @@ for meshtype in [MZImesh, DiagMZI, SVDMZI]:
     # Add bidirectional connections
     ffMeshConfig = {"meshType": meshtype,
                     "meshArgs": {"AbsScale": 1,
-                                "RelScale": 1},
+                                 "RelScale": 1,
+                                 "rtol":1e-3,
+                                 "numSteps": 1000,
+                                 },
                     }
     ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:],
-                                        meshConfig=ffMeshConfig)
+                                        meshConfig=ffMeshConfig,
+                                        device=pcmDevice)
     # Add feedback connections
     fbMeshConfig = {"meshType": meshtype,
                     "meshArgs": {"AbsScale": 1,
-                                "RelScale": 0.3},
+                                 "RelScale": 0.3,
+                                 "rtol":1e-3,
+                                 "numSteps": 1000,
+                                 },
                     }
     fbMeshes = leabraNet.AddConnections(layerList[2:], layerList[1:2],
-                                        meshConfig=fbMeshConfig)
+                                        meshConfig=fbMeshConfig,
+                                        device=pcmDevice)
 
     result = leabraNet.Learn(input=inputs, target=targets,
                             numEpochs=numEpochs,
@@ -92,16 +111,46 @@ for meshtype in [MZImesh, DiagMZI, SVDMZI]:
                             shuffle = False,
                             EvaluateFirst=False,
                             )
-    plt.plot(result['AvgSSE'], label=meshtype.__name__)
+    
+    names.append(leabraNet.name)
+    neuralEnergy, synapticEnergy = leabraNet.GetEnergy()
+    neuralEnergies.append(neuralEnergy)
+    synapticEnergies.append(synapticEnergy)
+    
+    axs[0].plot(result['AvgSSE'], label=meshtype.__name__)
+    
+    numOverflows = 0
+    for layer in leabraNet.layers:
+        for mesh in layer.excMeshes:
+            numOverflows += mesh.numOverflows
+        
+        for mesh in layer.inhMeshes:
+            numOverflows += mesh.numOverflows
 
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry
-                    in np.random.uniform(size=(2000,len(targets),outputSize))])
-plt.axhline(y=baseline, color="b", linestyle="--", label="unformly distributed guessing")
+    maxOverflows = numSamples*numEpochs*(len(layerList[1:])+len(layerList[1:2]))
+    print(f"Total number of overflows for {leabraNet.name}: "
+          f"{numOverflows}/{maxOverflows}")
 
-plt.title("Small Photonic Mesh Training Example (4 -> 4 -> 2)")
-plt.ylabel("AvgSSE")
-plt.xlabel("Epoch")
-plt.legend()
+baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))),
+                           targets) for entry in 
+                           np.random.uniform(size=(2000,len(targets),
+                                                   outputSize)
+                                            )
+                    ])
+axs[0].axhline(y=baseline, color="b", linestyle="--", 
+               label="unformly distributed guessing")
+
+fig.suptitle("Small Photonic Mesh Training Example (4 -> 4 -> 2)")
+axs[0].set_ylabel("AvgSSE")
+axs[0].set_xlabel("Epoch")
+axs[0].legend()
+
+axs[1].bar(names, neuralEnergies, label="neural")
+axs[1].bar(names, synapticEnergies, bottom=neuralEnergies, label="synaptic")
+axs[1].set_ylabel("Energy Consumption (J)")
+axs[1].legend()
+
+print(f"Done.")
+
+
 plt.show()
-
-print("Done")

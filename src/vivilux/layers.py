@@ -18,6 +18,7 @@ from .activations import NoisyXX1
 from .learningRules import CHL
 from .optimizers import Simple
 from .visualize import Monitor
+from .photonics.neurons import Neuron, YunJhuModel
 
 class Layer:
     '''Base class for a layer that includes input matrices and activation
@@ -38,9 +39,14 @@ class Layer:
                 #  batchMode=False,
                  dtype = np.float64,
                  name = None,
+                 neuron: Neuron = YunJhuModel,
                  ):
         
         self.isFloating = True # Not attached to net
+        
+        # initialize energy accounting 
+        self.neuron = neuron
+        self.neuralEnergy = 0 # increment for each timestep
 
         self.modified = False 
         self.actFn = activation
@@ -191,6 +197,8 @@ class Layer:
         # Update layer activities
         self.Act[:] += self.DtParams["VmDt"] * (newAct - self.Act)
 
+        self.neuralEnergy += self.neuron(self.Act)
+
         self.EndStep(time, debugData=debugData)
 
     def Integrate(self):
@@ -328,20 +336,6 @@ class Layer:
         for mesh in self.excMeshes:
             if not mesh.trainable: continue
             mesh.Update(dwtLog=dwtLog)
-
-            ### <--- OLD IMPLEMENTATION ---> ###
-            # inLayer = mesh.inLayer # assume first mesh as input
-            # delta = self.rule(inLayer, self)
-            # self.snapshot["delta"] = delta
-            # if self.batchMode:
-            #     self.deltas.append(delta)
-            #     if batchComplete:
-            #         delta = np.mean(self.deltas, axis=0)
-            #         self.deltas = []
-            #     else:
-            #         return # exit without update for batching
-            # optDelta = self.optimizer(delta)
-            # mesh.Update(optDelta)
         
     def Debug(self, **kwargs):
         if "activityLog" in kwargs:
@@ -385,6 +379,18 @@ class Layer:
                 
                 allEqual[colName] = isEqual
 
+    def GetEnergy(self, synDevice = None) -> tuple[float, float]:
+        synapticEnergy = 0
+        for mesh in self.excMeshes:
+            total, hold, update = mesh.GetEnergy(device=synDevice)
+            synapticEnergy += total
+
+        for mesh in self.inhMeshes:
+            total, hold, update = mesh.GetEnergy(device=synDevice)
+            synapticEnergy += total
+
+        return np.sum(self.neuralEnergy), synapticEnergy
+    
     def SetDtype(self, dtype: np.dtype):
         self.dtype = dtype
         self.GeRaw = self.GeRaw.astype(dtype)

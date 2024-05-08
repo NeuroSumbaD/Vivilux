@@ -21,16 +21,20 @@ class Device:
         self.width = width # mm
         self.shiftDelay = shiftDelay  # ns
         self.setEnergy = setEnergy # pJ/radian or pJ/[param unit]
-        self.resetEnergy = resetEnergy # pJ
+        self.resetEnergy = resetEnergy # J
         self.opticalLoss = opticalLoss # dB
-        self.holdPower = holdPower # mW/radian or mW/[param unit]
+        self.holdPower = holdPower # W/radian or mW/[param unit]
+
+        self.holdintegration = 0
 
     def Hold(self, params: np.ndarray, DELTA_TIME: float):
         '''Calculates the energetic cost of holding the device at a set of 
-            parameters.
+            parameters. Alternatively, params can be the integrated parameter
+            values so that energy can be converted between devices
 
             Arguments:
-            - Array of parameter values
+            - Array of parameter values (or integrated parameter values)
+            - Hold time for each timestep (or total time that was integrated)
 
             Returns:
             - Sum of costs for holding the device at these parameter values
@@ -82,16 +86,7 @@ class Nonvolatile(Device):
                          opticalLoss = opticalLoss,
                          holdPower = holdPower,
                          )
-        self.holdPower = 0 # mW/rad
-
-    # def Hold(self, params: np.ndarray, DELTA_TIME: float):
-    #     return 0
-    
-    # def Set(self, params: np.ndarray):
-    #     return self.setEnergy
-    
-    # def Reset(self, params: np.ndarray):
-    #     return 0
+        self.holdPower = 0 # W/rad
 
 class Volatile(Device):
     '''Class representing devices which need constant power to maintain
@@ -114,73 +109,64 @@ class Volatile(Device):
         self.resetEnergy = 0
         self.setEnergy = 0
     
-    # def Hold(self, params: np.ndarray, DELTA_TIME: float):
-    #     return np.sum(self.holdPower * DELTA_TIME)
-    
-    # def Set(self, params: np.ndarray):
-    #     return 0
-    
-    # def Reset(self, params: np.ndarray):
-    #     return 0
-    
 ###<------ DEVICE TABLES ------>###
 
 phaseShift_ITO = {
-    "length": 0.0035, # mm
-    "width": np.inf, # mm (TODO: Find true value)
-    "shiftDelay": 0.3, # ns
-    "setEnergy": 77.6/np.pi, # pJ/radian
-    "resetEnergy": 0, # pJ (TODO: Find true value)
+    "length": 0.0035e-3, # m
+    "width": np.inf, # m (TODO: Find true value)
+    "shiftDelay": 0.3e-9, # s
+    "setEnergy": 77.6e-12/np.pi, # J/radian
+    "resetEnergy": 0, # J (TODO: Find true value)
     "opticalLoss": 5.6, # dB
-    "holdPower": 0, # mW/rad
+    "holdPower": 0, # W/rad
 }
 
 phaseShift_LN = {
-    "length": 2, # mm
-    "width": np.inf, # mm (TODO: Find true value)
-    "shiftDelay": 0.02, # ns
-    "setEnergy": 8.1/np.pi, # pJ/radian
-    "resetEnergy": 0, # pJ (TODO: Find true value)
+    "length": 2, # m
+    "width": np.inf, # m (TODO: Find true value)
+    "shiftDelay": 0.02e-9, # s
+    "setEnergy": 8.1e-12/np.pi, # J/radian
+    "resetEnergy": 0, # J (TODO: Find true value)
     "opticalLoss": 0.6, # dB
-    "holdPower": 0, # mW/rad
+    "holdPower": 0, # W/rad
 }
 
 phaseShift_LN_theoretical = {
-    "length": 2, # mm
-    "width": np.inf, # mm (TODO: Find true value)
-    "shiftDelay": 0.0035, # ns
-    "setEnergy": 8.1/np.pi, # pJ/radian
-    "resetEnergy": 0, # pJ (TODO: Find true value)
+    "length": 2, # m
+    "width": np.inf, # m (TODO: Find true value)
+    "shiftDelay": 0.0035e-9, # s
+    "setEnergy": 8.1e-12/np.pi, # J/radian
+    "resetEnergy": 0, # J (TODO: Find true value)
     "opticalLoss": 0.6, # dB
-    "holdPower": 0, # mW/rad
+    "holdPower": 0, # W/rad
 }
 
 phaseShift_LN_plasmonic = {
-    "length": 0.015, # mm
-    "width": np.inf, # mm (TODO: Find true value)
-    "shiftDelay": 0.035, # ns
-    "setEnergy": 38.6/np.pi, # pJ/radian
-    "resetEnergy": 0, # pJ (TODO: Find true value)
+    "length": 0.015e-3, # m
+    "width": np.inf, # m (TODO: Find true value)
+    "shiftDelay": 0.035e-9, # s
+    "setEnergy": 38.6e-12/np.pi, # J/radian
+    "resetEnergy": 0, # J (TODO: Find true value)
     "opticalLoss": 19.5, # dB
-    "holdPower": 0, # mW/rad
+    "holdPower": 0, # W/rad
 }
 
 phaseShift_PCM = {
-    "length": 0.011, # mm
-    "width": np.inf, # mm (TODO: Find true value)
-    "shiftDelay": 0.035, # ns
-    "setEnergy": 1e5/np.pi, # pJ/radian
-    "resetEnergy": 0, # pJ (TODO: Find true value)
+    "length": 0.011e-3, # m
+    "width": np.inf, # m (TODO: Find true value)
+    "shiftDelay": 0.035e-9, # s
+    "setEnergy": 1e5*1e-12/np.pi, # J/radian
+    "resetEnergy": 0, # J (TODO: Find true value)
     "opticalLoss": 0.33, # dB
-    "holdPower": 0, # mW/rad
+    "holdPower": 0, # W/rad
 }
 
 phaseShift_GFThermal = {
-    "length": np.isnan, # mm (TODO: Find true value)
-    "width": np.inf, # mm (TODO: Find true value)
+    "length": np.isnan, # m (TODO: Find true value)
+    "width": np.inf, # m (TODO: Find true value)
     "shiftDelay": np.isnan, # ns (TODO: Find true value)
-    "setEnergy": np.isnan, # pJ/radian
-    "resetEnergy": np.isnan, # pJ (TODO: Find true value)
+    "setEnergy": np.isnan, # J/radian
+    "resetEnergy": np.isnan, # J (TODO: Find true value)
     "opticalLoss": 0.05, # dB
-    "holdPower": 32/np.pi, # mW/rad
+    "holdPower": 32e-3/np.pi, # W/rad
 }

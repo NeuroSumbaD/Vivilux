@@ -14,12 +14,20 @@ def Diagonalize(vector):
         diag[i,i] = vector[i]
     return diag
 
-def BoundTheta(thetas):
+def BoundTheta(thetas: np.ndarray):
     '''Bounds the size of phase shifts between 1-2pi.
     '''
     thetas[thetas > (2*np.pi)] -= 2*np.pi
     thetas[thetas < 0] += 2*np.pi
     return thetas
+
+def BoundGain(gain: np.ndarray, lower=0, upper=np.inf):
+    '''Bounds multiplicative parameters like gain or attenuation.
+    '''
+    gain[gain < lower] = lower
+    gain[gain > upper] = upper
+    return gain
+
 
 def psToRect(phaseShifters, size):
     '''Calculates the implemented matrix of rectangular MZI from its phase 
