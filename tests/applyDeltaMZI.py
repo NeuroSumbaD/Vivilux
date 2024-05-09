@@ -3,6 +3,7 @@ from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
 import vivilux.photonics as px
 from vivilux.photonics.ph_meshes import MZImesh
+from vivilux.photonics.utils import psToRect
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,17 +12,19 @@ np.random.seed(seed=0)
 from copy import deepcopy
 from itertools import permutations
 
-dummyLayer = Layer(4, isInput=True, name="Input")
+matrixSize = 4
+
+dummyLayer = Layer(matrixSize, isInput=True, name="Input")
 dummyNet = Net(name = "LEABRA_NET")
 dummyNet.AddLayer(dummyLayer)
-mzi = MZImesh(4, dummyLayer)
+mzi = MZImesh(matrixSize, dummyLayer)
 
-rows = list(np.eye(4)) # list of rows for permutation matrix
+rows = list(np.eye(matrixSize)) # list of rows for permutation matrix
 records = [] # to store traces of magnitude for each permutation matrix
 plt.figure()
 for perm in permutations(rows):
     matrix = np.array(perm)
-    initMatrix = mzi.matrix
+    initMatrix = mzi.get()/mzi.Gscale
     initDelta = matrix - initMatrix
     magnitude, numSteps = mzi.set(matrix)
     print("Attempting to implement:")
