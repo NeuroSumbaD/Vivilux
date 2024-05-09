@@ -4,7 +4,7 @@ ViviLux is a package for simulating and testing neuromorphic learning rules on v
 
 Learning is based on the bioplausible [Leabra]{https://github.com/emer/leabra/} algorithm which is able to perform error-driven learning using local traces of activity in a temporal difference scheme. The heatmap below shows a small network learning a single pattern, where the minus phase is the intial output of the network and the plus phase shows the activity pattern to be learned (imposed on the last layer):
 
-![heatmap visualization](./tests/Figures/demoHeatmap.gif)
+![heatmap visualization](./tests/Figures/neural_network_activity.gif)
 
 The package is under active development and aims to provide the following features:
 - Error-driven learning simulations based on dynamics local to each synapse (or synaptic mesh)
