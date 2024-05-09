@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .nets import Net
     from .layers import Layer
-    from .photonics.devices import Device
 
+from .photonics.devices import Device, Generic
 from .processes import XCAL
 
 import numpy as np
@@ -38,7 +38,9 @@ class Mesh:
                  wbDec = 1,
                  WtBalInterval = 10,
                  softBound = True,
+                 device = Generic(),
                  **kwargs):
+        self.shape = (size, len(inLayer))
         self.size = size if size > len(inLayer) else len(inLayer)
         self.Off = Off
         self.Gain = Gain
@@ -71,8 +73,8 @@ class Mesh:
         self.Gscale = 1#/len(inLayer)
         self.inLayer = inLayer
         self.OptThreshParams = inLayer.OptThreshParams
-        self.lastAct = np.zeros(len(inLayer), dtype=self.dtype)
-        self.inAct = np.zeros(len(inLayer), dtype=self.dtype)
+        self.lastAct = np.zeros(self.size, dtype=self.dtype)
+        self.inAct = np.zeros(self.size, dtype=self.dtype)
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
         self.modified = False
@@ -88,6 +90,8 @@ class Mesh:
         self.AbsScale = AbsScale
         self.RelScale = RelScale
 
+        self.AttachDevice(device)
+
     def GetEnergy(self, device: Device = None):
         '''Returns integrated energy over the course of the simulation.
             If a device is provided, it calculates the energy from the given
@@ -100,7 +104,7 @@ class Mesh:
             holdEnergy = device.Hold(self.holdIntegration, self.holdTime)
             
             updateEnergy = device.Set(self.setIntegration)
-            updateEnergy += device.Rest(self.resetIntegration)
+            updateEnergy += device.Reset(self.resetIntegration)
 
             totalEnergy = holdEnergy + updateEnergy
             return totalEnergy, holdEnergy, updateEnergy
@@ -173,14 +177,13 @@ class Mesh:
         return self.Gscale * self.matrix
     
     def getInput(self):
-        return self.inLayer.getActivity()
+        act = self.inLayer.getActivity()
+        pad = self.size - act.size
+        return np.pad(act, pad_width=(0,pad))
 
     def apply(self):
         self.DeviceHold()
         data = self.getInput()
-        pad = self.size - len(data)
-        data = np.pad(data, pad_width=(0,pad))
-        data = data[:len(self.lastAct)] # TODO make self.shape to fix this ugliness
 
         # Implement delta-sender behavior (thresholds changes in conductance)
         ## NOTE: this does not reduce matrix multiplications like it does in Leabra
@@ -200,11 +203,11 @@ class Mesh:
 
         self.inAct[:] += delta
         
-        return self.applyTo(self.inAct)
+        return self.applyTo(self.inAct[:self.shape[1]])
             
     def applyTo(self, data):
         try:
-            return np.array(self.get() @ data).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
+            return np.array(self.get() @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
         except ValueError as ve:
             print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
                   f"of dimension: {self.get().shape}")
@@ -417,6 +420,7 @@ class TransposeMesh(Mesh):
                  RelScale: float = 0.2,
                  **kwargs) -> None:
         super().__init__(mesh.size, inLayer, AbsScale, RelScale, **kwargs)
+        self.shape = (self.shape[1], self.shape[0])
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
 
@@ -426,12 +430,12 @@ class TransposeMesh(Mesh):
         raise Exception("Feedback mesh has no 'set' method.")
 
     def get(self):
-        # sndActAvgP = np.mean(self.inLayer.phaseHist["plus"])
-        # self.setGscale()
-        return self.RelScale * self.mesh.get().T 
+        return self.Gscale * self.mesh.get().T 
     
     def getInput(self):
-        return self.mesh.inLayer.getActivity()
+        act = self.mesh.inLayer.getActivity()
+        pad = self.shape[1] - act.size
+        return np.pad(act, pad_width=(0,pad))
 
     def Update(self,
                debugDwt = None,

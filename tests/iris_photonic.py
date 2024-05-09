@@ -1,90 +1,115 @@
 '''Algorithm test using iris dataset classification task.
+
+    In this example, the regression is learned with photonic meshes.
 '''
-import vivilux as vl
 from vivilux import *
-from vivilux.photonics import ph_layers, ph_meshes
-from vivilux.learningRules import CHL, GeneRec
-from vivilux.metrics import HardmaxAccuracy
-from vivilux import FFFB
-from vivilux.learningRules import CHL, GeneRec, ByPass
-from vivilux.metrics import HardmaxAccuracy, RMSE
+from vivilux.nets import Net, layerConfig_std
+from vivilux.layers import Layer
+from vivilux.photonics.ph_meshes import SVDMZI
+from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
 import numpy as np    
 from sklearn import datasets
 import matplotlib.pyplot as plt
 
-np.random.seed(0)
+from copy import deepcopy
 
-# InhibMesh.FF = 0.25
-# InhibMesh.FB = 0.5
-# InhibMesh.FBTau = 0.4
-# InhibMesh.FF0 = 0.85
+np.random.seed(20)
 
-meshes.InhibMesh.FF = 0.1
-meshes.InhibMesh.FB = 0.5
-meshes.InhibMesh.FBTau = 0.25
-meshes.InhibMesh.FF0 = 0.8
+numEpochs = 50
+inputSize = 25
+hiddenSize = 49
+outputSize = 25
+patternSize = 6
+numSamples = 25
 
+targetPatterns = np.zeros((3, outputSize))
+targetPatterns[:,:patternSize] = 1
+targetPatterns = np.apply_along_axis(np.random.permutation, axis=1, arr=targetPatterns)
 
-netCHL = nets.RecurNet([
-    ph_layers.PhotonicLayer(4, isInput=True),
-    ph_layers.PhotonicLayer(4, learningRule=CHL),
-    ph_layers.PhotonicLayer(4, learningRule=CHL)
-    ],
-    ph_meshes.MZImesh,
-    FeedbackMesh=ph_meshes.phfbMesh,
-    metric=[HardmaxAccuracy, RMSE],
-    learningRate = 0.01)
+def sig(x):
+    return 1/(1+np.exp(-10*(x-0.5)))
 
-# netCHL_fffb = FFFB([
-#     ph_layers.PhotonicLayer(4, isInput=True),
-#     ph_layers.PhotonicLayer(4, learningRule=CHL),
-#     ph_layers.PhotonicLayer(4, learningRule=CHL)
-#     ],
-#     ph_meshes.MZImesh,
-#     FeedbackMesh=ph_meshes.phfbMesh,
-#     metric=[HardmaxAccuracy, RMSE],
-#     learningRate = 0.01)
-
-numSamples = 10
-numEpochs = 10
-
+def manyHot(arr, numHot):
+    maxIndices = np.argpartition(arr, kth=1, axis=0)[:,:numHot]
+    arr[:] = 0
+    arr[maxIndices] = 1
+    return arr
+    
 iris = datasets.load_iris()
 inputs = iris.data
 maxMagnitude = np.max(np.sqrt(np.sum(np.square(inputs), axis=1)))
 inputs = inputs/maxMagnitude # bound on (0,1]
-targets = np.zeros((len(inputs),4))
-targets[np.arange(len(inputs)), iris.target] = 1
+inputs = (np.random.rand(inputSize, 4) @ inputs.T).T # project from 4 dimensional input to inputSize
+inputs = manyHot(inputs, patternSize)
+# Assign targets to target pattern
+targets = np.array([targetPatterns[flower] for flower in iris.target])
 #shuffle both arrays in the same manner
 shuffle = np.random.permutation(len(inputs))
-inputs, targets = inputs[shuffle][:numSamples], targets[shuffle][:numSamples]
+trainInputs, trainTargets = inputs[shuffle][:numSamples], targets[shuffle][:numSamples]
+evalInputs, evalTargets = inputs[shuffle][numSamples:], targets[shuffle][numSamples:]
 
-resultCHL = netCHL.Learn(inputs, targets, numEpochs=numEpochs)
-# resultCHL_fffb = netCHL_fffb.Learn(inputs, targets, numEpochs=numEpochs)
+leabraRunConfig = {
+    "DELTA_TIME": 0.001,
+    "metrics": {
+        "AvgSSE": ThrMSE,
+        "SSE": ThrSSE,
+        "RMSE": RMSE
+    },
+    "outputLayers": {
+        "target": -1,
+    },
+    "Learn": ["minus", "plus"],
+    "Infer": ["minus"],
+}
 
-# Plot Accuracy
-# plt.figure()
-# plt.plot(resultCHL[0], label="CHL")
-# plt.plot(resultCHL_fffb[0], label="CHL w/ FFFB")
-# baseline = np.mean([HardmaxAccuracy(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,50,4))])
-# plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
+leabraNet = Net(name = "LEABRA_NET",
+                runConfig=leabraRunConfig) # Default Leabra net
+
+# Add layers
+layerList = [Layer(inputSize, isInput=True, name="Input"),
+             Layer(hiddenSize, name="Hidden1"),
+             Layer(hiddenSize, name="Hidden2"),
+             Layer(outputSize, isTarget=True, name="Output")]
+layConfig = deepcopy(layerConfig_std)
+# layConfig["FFFBparams"]["Gi"] = 1.4
+leabraNet.AddLayers(layerList[:-1], layerConfig=layConfig)
+outputConfig = deepcopy(layerConfig_std)
+outputConfig["FFFBparams"]["Gi"] = 1.4
+leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
+
+# Add feedforward connections
+fbMeshConfig = {"meshType": SVDMZI,
+                "meshArgs": {"AbsScale": 1,
+                             "RelScale": 1},
+                }
+ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:],
+                                    meshConfig=fbMeshConfig)
+# Add feedback connections
+fbMeshConfig = {"meshType": SVDMZI,
+                "meshArgs": {"AbsScale": 1,
+                             "RelScale": 0.2},
+                }
+fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
+                                    meshConfig=fbMeshConfig)
 
 
-# plt.title("Iris Dataset")
-# plt.ylabel("Accuracy")
-# plt.xlabel("Epoch")
-# plt.legend()
-# plt.show()
+result = leabraNet.Learn(input=trainInputs, target=trainTargets,
+                         numEpochs=numEpochs,
+                         reset=False,
+                         shuffle=False,
+                         EvaluateFirst=False,
+                         )
+time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
+plt.plot(time, result['AvgSSE'], label="Leabra Net")
 
-# Plot RMSE
-plt.figure()
-plt.plot(resultCHL[1], label="CHL")
-# plt.plot(resultCHL_fffb[1], label="CHL w/ FFFB")
-baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
+baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), trainTargets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
-plt.title("Iris Dataset")
+plt.title("Random Input/Output Matching")
 plt.ylabel("RMSE")
 plt.xlabel("Epoch")
 plt.legend()
 plt.show()
+
+print("Done")

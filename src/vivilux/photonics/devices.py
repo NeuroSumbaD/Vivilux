@@ -5,6 +5,7 @@
 '''
 
 import numpy as np
+from numpy import isnan
 
 class Device:
     def __init__(self,
@@ -67,6 +68,10 @@ class Device:
         '''
         flattenedParams = np.concatenate(params).flatten()
         return np.sum(self.resetEnergy * flattenedParams)
+    
+class Generic(Device):
+    def __init__(self) -> None:
+        super().__init__(1, 1, 1, 1, 1, 0, 1)
 
 class Nonvolatile(Device):
     '''Class representing devices that retain their state and therefore 

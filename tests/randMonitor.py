@@ -1,10 +1,7 @@
 from vivilux import *
 from vivilux.nets import Net
 from vivilux.layers import Layer
-from vivilux.meshes import AbsMesh
 from vivilux.metrics import RMSE
-from vivilux.learningRules import CHL, GeneRec
-from vivilux.optimizers import Decay
 from vivilux.visualize import Monitor, Multimonitor, StackedMonitor
 
 import numpy as np
@@ -25,7 +22,9 @@ inputs = np.abs(vecs/mags[...,np.newaxis])
 targets = np.random.rand(numSamples, 1)
 del vecs, mags
 
-leabraNet = Net(name = "LEABRA_NET") # Default Leabra net
+leabraNet = Net(name = "LEABRA_NET",
+                monitoring=True,
+                ) # Default Leabra net
 
 # Define layers
 inLayer = Layer(inputSize, isInput=True, name="Input")

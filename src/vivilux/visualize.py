@@ -18,10 +18,12 @@ class Monitor:
     '''
     def __init__(self, name: str, labels: list[str], 
                  limits: list[float], numLines: int = 0, 
-                 enable=True, target = "activity") -> None:
+                 enable = True, legend = True, resizeAxes = False,
+                 target = "activity") -> None:
         self.name = name
         self.enable = enable
         self.target = target
+        self.resizeAxes = resizeAxes
 
         self.xlabel = labels[0]
         self.ylabel = labels[1]
@@ -42,7 +44,8 @@ class Monitor:
         self.ax.set_xlabel(self.xlabel)
         self.ax.set_ylabel(self.ylabel)
         self.ax.set_ylim(0, self.ylim)
-        self.ax.legend(range(numLines))
+        if legend:
+            self.ax.legend(range(numLines))
 
     def update(self, newData: dict[str, np.array]):
         if self.enable:
@@ -50,6 +53,12 @@ class Monitor:
 
             for lineIndex, line in enumerate(self.lines):
                 line.set_ydata(self.data[:, lineIndex])
+                
+            if self.resizeAxes:
+                if self.index == 0:
+                    self.ymax = 1
+                self.ymax = np.max([self.ymax, np.max(self.data)])
+                self.ax.set_ylim(0, 1.2*self.ymax)
 
             self.index = self.index + 1 if self.index < self.xlim-1 else 0
 
@@ -60,17 +69,32 @@ class Monitor:
 class Magnitude(Monitor):
     def __init__(self, name: str, labels: list[str], 
                  limits: list[float], numLines: int = 0,
-                 enable=True, target = "activity") -> None:
-        super().__init__(name, labels, limits, numLines, enable, target)
+                 enable=True, target = "activity",
+                 legend = False, resizeAxes = True,
+                 **kwargs) -> None:
+        super().__init__(name,
+                         labels=labels,
+                         limits = limits,
+                         numLines = numLines,
+                         enable = enable, 
+                         target=target,
+                         legend=legend,
+                         resizeAxes=resizeAxes,
+                         **kwargs)
         mag = np.sqrt(np.sum(np.square(self.data), axis=1))
         self.magnitude = self.ax.plot(mag, "--")
-        self.ax.legend([*range(numLines), "magnitude"])
+        if legend:
+            self.ax.legend([*range(numLines), "magnitude"])
     
     def update(self, newData: dict[str, np.array]):
         if self.enable:
             super().update(newData)
             mag = np.sqrt(np.sum(np.square(self.data), axis=1))
             self.magnitude[0].set_ydata(mag)
+            
+            if self.resizeAxes:
+                self.ymax = np.max([self.ymax, np.max(mag)])
+                self.ax.set_ylim(0, 1.2*self.ymax)
 
             #update the plot
             self.fig.canvas.draw()
