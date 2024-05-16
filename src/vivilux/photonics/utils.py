@@ -21,7 +21,7 @@ def BoundTheta(thetas: np.ndarray) -> np.ndarray:
     thetas[thetas < 0] += 2*np.pi
     return thetas
 
-def BoundGain(gain: np.ndarray, lower=0, upper=np.inf) -> np.ndarray:
+def BoundGain(gain: np.ndarray, lower=1e-6, upper=np.inf) -> np.ndarray:
     '''Bounds multiplicative parameters like gain or attenuation.
     '''
     gain[gain < lower] = lower

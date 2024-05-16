@@ -14,6 +14,7 @@ class Unitary(Mesh):
 class MZImesh(Mesh):
     '''Base class for a single rectangular MZI used in incoherent mode.
     '''
+    NAME = "Rect_MZI"
     def __init__(self,
                  size: int,
                  inLayer: Layer,
@@ -135,7 +136,7 @@ class MZImesh(Mesh):
         
         return self.Gscale * self.matrix
     
-    def getParams(self):
+    def getParams(self) -> list[np.ndarray]:
         '''Returns a list of the parameters for the given mesh. 
         
             Overwrite for meshes with different parameter structures.
@@ -282,7 +283,7 @@ class MZImesh(Mesh):
         # assert(deltaMagnitude < 1e-2)
         return deltaMagnitude, step          
         
-    def matrixGradient(self, stepVector: np.ndarray = None):
+    def matrixGradient(self, stepVector: list[np.ndarray] = None):
         '''Calculates the gradient of the matrix with respect to the phase
             shifters in the MZI mesh. This gradient is with respect to the
             magnitude of an array of detectors that serves as neural input.
@@ -292,13 +293,13 @@ class MZImesh(Mesh):
         paramsList = self.getParams()
         # create a random step vector and set magnitude to self.updateMagnitude
         if stepVector is None:
-            stepVectors = [np.random.rand(*param.shape) for param in paramsList]
+            stepVectors = [2*np.random.rand(*param.shape)-1 for param in paramsList] # TODO: determine which range is better [0,1) or [-1,1)
             flatVectors = [stepVector.flatten() for stepVector in stepVectors]
             randMagnitude = np.sqrt(np.sum(np.square(np.concatenate(flatVectors))))
             stepVectors = [stepVector/randMagnitude for stepVector in stepVectors]
             stepVectors = [stepVector*self.updateMagnitude for stepVector in stepVectors]
         
-        derivativeMatrix = np.zeros(self.matrix.shape)
+        # derivativeMatrix = np.zeros(self.matrix.shape)
 
         #TODO: fix steps to be generic for any param structure (make flatten/shape function?)
         # Forward step
@@ -334,6 +335,7 @@ class DiagMZI(MZImesh):
     '''Class of MZI mesh followed by a set of amplifier/attenuators forming
         a unitary*diagonal matrix configuration.
     '''
+    NAME = "Diag_Mesh"
     def Initialize(self):
         '''Initializes internal variables for each set of parameter.
         '''
@@ -398,6 +400,8 @@ class DiagMZI(MZImesh):
         self.phaseShifters = params[0]
         self.diagonals = params[1]
 
+        self.modified = True
+
     def boundParams(self, params):
         params[0] = BoundTheta(params[0])
         params[1] = BoundGain(params[1])
@@ -409,6 +413,7 @@ class SVDMZI(MZImesh):
         two rectangular MZI meshes with a set of amplifier/attenuators in
         between creating a unitary*diagonal*unitary matrix configuration.
     '''
+    NAME = "SVD_Mesh"
     def Initialize(self):
         self.phaseShifters1 = np.random.rand(self.numUnits,2)*2*np.pi
         self.diagonals = np.random.rand(self.size)
@@ -478,6 +483,8 @@ class SVDMZI(MZImesh):
         self.phaseShifters1 = params[0]
         self.diagonals = params[1]
         self.phaseShifters2 = params[2]
+
+        self.modified = True
 
     def boundParams(self, params):
         params[0] = BoundTheta(params[0])
