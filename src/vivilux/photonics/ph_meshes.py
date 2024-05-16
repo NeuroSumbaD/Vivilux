@@ -79,6 +79,8 @@ class MZImesh(Mesh):
         '''
         self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
 
+        self.concavity = 1.5
+
     def DeviceHold(self):
         '''Calls the hold function for each device in the mesh according
             to the current parameters.
@@ -231,7 +233,8 @@ class MZImesh(Mesh):
         initDeltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
         self.record = -np.ones(self.numSteps+1)
         self.record[0] = initDeltaMagnitude
-        earlyStop = self.atol + self.rtol * initDeltaMagnitude
+        tol = self.atol + self.rtol * initDeltaMagnitude
+        errorTol = np.sqrt(tol/self.concavity)
         overflow = True
         if verbose:
             print(f"Initial delta magnitude: {initDeltaMagnitude}")
@@ -259,6 +262,11 @@ class MZImesh(Mesh):
                     V = V[:,:-1]
                     continue
             
+            # bound max step in `a`
+            maxComponent = np.max(np.abs(a))
+            if maxComponent > errorTol:
+                a = a*errorTol/maxComponent
+
             # Apply update to parameters
             linearCombination = V @ a
             updatedParams = [param + opt for param, opt in zip(self.getParams(), self.reshapeParams(linearCombination))]
@@ -269,7 +277,7 @@ class MZImesh(Mesh):
             deltaFlat -= trueDelta.flatten().reshape(-1,1)
             deltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
             self.record[step+1]=deltaMagnitude
-            if deltaMagnitude < earlyStop:
+            if deltaMagnitude < tol:
                 if verbose:
                     print(f"Break after {step+1} steps, delta magnitude: {deltaMagnitude}")
                 overflow = False
@@ -277,7 +285,7 @@ class MZImesh(Mesh):
         if verbose:
             print(f"Final delta magnitude: {deltaMagnitude}, success: {initDeltaMagnitude > deltaMagnitude}")
         
-        self.numOverflows += int(overflow) # always increments except during earlyStop
+        self.numOverflows += int(overflow) # always increments except when exceeding tol
 
         self.setFromParams()
         # assert(deltaMagnitude < 1e-2)
@@ -341,6 +349,8 @@ class DiagMZI(MZImesh):
         '''
         self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
         self.diagonals = np.random.rand(self.size)
+
+        self.concavity = 0.6
 
     def AttachDevice(self,
                      psDevice: Device,
@@ -418,6 +428,8 @@ class SVDMZI(MZImesh):
         self.phaseShifters1 = np.random.rand(self.numUnits,2)*2*np.pi
         self.diagonals = np.random.rand(self.size)
         self.phaseShifters2 = np.random.rand(self.numUnits,2)*2*np.pi
+
+        self.concavity  = 0.6
 
     def AttachDevice(self,
                      psDevice: Device,

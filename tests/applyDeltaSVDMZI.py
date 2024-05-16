@@ -13,22 +13,23 @@ from copy import deepcopy
 from itertools import permutations
 
 matrixSize = 4
+numIterations = 5
 
 dummyLayer = Layer(matrixSize, isInput=True, name="Input")
 dummyNet = Net(name = "LEABRA_NET")
 dummyNet.AddLayer(dummyLayer)
 mzi = SVDMZI(matrixSize, dummyLayer,
              numDirections=28,
-             numSteps=500,
+             numSteps=50000,
              rtol=5e-2,
-             updateMagnitude=0.01,
+             updateMagnitude=1e-6,
              )
 
 rows = list(np.eye(matrixSize)) # list of rows for permutation matrix
 records = [] # to store traces of magnitude for each permutation matrix
 plt.figure()
 print("--------STARTING TEST: Small parameter deviations--------")
-for index in range(20):
+for index in range(numIterations):
     matrix = mzi.getFromParams([np.random.rand(*param.shape) + param for param in mzi.getParams()])/mzi.Gscale
     initMatrix = mzi.get()/mzi.Gscale
     initDelta = matrix - initMatrix
@@ -63,7 +64,7 @@ plt.figure()
 print("--------STARTING TEST: Random Matrix on [0,1)--------")
 records = [] # to store traces of magnitude for each matrix
 numUnits = int(matrixSize*(matrixSize-1)/2)
-for index in range(20):
+for index in range(numIterations):
     initMatrix = mzi.get()/mzi.Gscale
     randMatrix = np.random.rand(4,4)
     initDelta = randMatrix - initMatrix

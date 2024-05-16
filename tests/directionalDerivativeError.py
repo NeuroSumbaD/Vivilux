@@ -5,6 +5,7 @@ import vivilux.photonics as px
 from vivilux.photonics.ph_meshes import MZImesh, DiagMZI, SVDMZI
 
 import numpy as np
+from scipy.stats import mode
 import matplotlib.pyplot as plt
 np.random.seed(seed=0)
 
@@ -58,9 +59,10 @@ for meshType in [MZImesh, DiagMZI, SVDMZI]:
             plt.plot(magnitudes, errors, label=str(iteration))
 
     record[meshType.NAME]["coeff"] = np.array(record[meshType.NAME]["coeff"])
-    maxConcavity = np.max(record[meshType.NAME]["coeff"][:,0])
-    mean = np.mean(record[meshType.NAME]["coeff"][:,0])
-    std = np.std(record[meshType.NAME]["coeff"][:,0])
+    concavities = record[meshType.NAME]["coeff"][:,0]
+    maxConcavity = np.max(concavities)
+    mean = np.mean(concavities)
+    std = np.std(concavities)
     print(f"Max concavity for [{meshType.NAME}]: {maxConcavity}")
     print(f"\tmean concavity: {mean}, std dev: {std}")
 
