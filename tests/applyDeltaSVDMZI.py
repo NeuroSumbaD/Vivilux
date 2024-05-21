@@ -19,10 +19,10 @@ dummyLayer = Layer(matrixSize, isInput=True, name="Input")
 dummyNet = Net(name = "LEABRA_NET")
 dummyNet.AddLayer(dummyLayer)
 mzi = SVDMZI(matrixSize, dummyLayer,
-             numDirections=28,
-             numSteps=50000,
+             numDirections=16,
+             numSteps=500,
              rtol=5e-2,
-             updateMagnitude=1e-6,
+             updateMagnitude=1e-4,
              )
 
 rows = list(np.eye(matrixSize)) # list of rows for permutation matrix
@@ -30,23 +30,23 @@ records = [] # to store traces of magnitude for each permutation matrix
 plt.figure()
 print("--------STARTING TEST: Small parameter deviations--------")
 for index in range(numIterations):
-    matrix = mzi.getFromParams([np.random.rand(*param.shape) + param for param in mzi.getParams()])/mzi.Gscale
+    matrix = mzi.getFromParams([0.2*np.random.rand(*param.shape)-0.1 + param for param in mzi.getParams()])/mzi.Gscale
     initMatrix = mzi.get()/mzi.Gscale
     initDelta = matrix - initMatrix
     magnitude, numSteps = mzi.set(matrix)
     print("Attempting to implement:")
-    print(matrix)
+    print(np.round(matrix,6))
     print("Initial matrix")
-    print(np.round(initMatrix, 2))
+    print(np.round(initMatrix, 6))
     print("Resulting matrix:")
-    print(np.round(mzi.matrix, 2))
+    print(np.round(mzi.matrix, 6))
     print("Initial magnitude:", np.sum(np.square(initDelta)))
     print("Final delta magnitude:", magnitude)
     print(f"Took {numSteps} steps.")
     records.append(mzi.record)
     plt.plot(mzi.record[mzi.record>=0])
 
-plt.title("Implementing Permutation Matrices")
+plt.title("Implementing Small parameter deviations")
 plt.ylabel("magnitude of difference vector")
 plt.xlabel("LAMM iteration")
 
@@ -55,10 +55,10 @@ dummyLayer = Layer(matrixSize, isInput=True, name="Input")
 dummyNet = Net(name = "LEABRA_NET")
 dummyNet.AddLayer(dummyLayer)
 mzi = SVDMZI(matrixSize, dummyLayer,
-              numDirections=8,
+              numDirections=16,
               numSteps=500,
               rtol=1e-2,
-              updateMagnitude=0.01,
+              updateMagnitude=1e-3,
               )
 plt.figure()
 print("--------STARTING TEST: Random Matrix on [0,1)--------")
@@ -70,11 +70,11 @@ for index in range(numIterations):
     initDelta = randMatrix - initMatrix
     magnitude, numSteps = mzi.set(matrix)
     print("Attempting to implement:")
-    print(matrix)
+    print(np.round(matrix,6))
     print("Initial matrix")
-    print(np.round(initMatrix, 2))
+    print(np.round(initMatrix, 6))
     print("Resulting matrix:")
-    print(np.round(mzi.matrix, 2))
+    print(np.round(mzi.matrix, 6))
     print("Initial magnitude:", np.sum(np.square(initDelta)))
     print("Final delta magnitude:", magnitude)
     print(f"Took {numSteps} steps.")
@@ -82,7 +82,7 @@ for index in range(numIterations):
     plt.plot(mzi.record[mzi.record>=0])
 
     magnitude, numSteps = mzi.set(randMatrix)
-plt.title("Implementing Random Unitary Matrices")
+plt.title("Implementing Random Matrices")
 plt.ylabel("magnitude of difference vector")
 plt.xlabel("LAMM iteration")
 plt.show()

@@ -1,5 +1,9 @@
 import numpy as np
 
+def Magnitude(vector: np.ndarray) -> float:
+    '''Euclidian magnitude of vector.'''
+    return np.sqrt(np.sum(np.square(vector)))
+
 def Detect(input: np.ndarray) -> np.ndarray:
     '''DC power detected (no cross terms)
     '''

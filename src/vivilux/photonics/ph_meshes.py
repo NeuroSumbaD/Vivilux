@@ -151,6 +151,7 @@ class MZImesh(Mesh):
             Overwrite for meshes with different parameter structures.
         '''
         self.boundParams(params)
+        self.checkNaN(params)
         
         self.DeviceUpdate(params)
         self.phaseShifters = params[0]
@@ -216,6 +217,10 @@ class MZImesh(Mesh):
         self.matrix = self.getFromParams()
         self.InvSigMatrix()
         self.modified = False
+
+    def checkNaN(self, params):
+        flatParams = np.concatenate([param.flatten() for param in params])
+        assert(np.any(np.isnan(flatParams))==False)
     
     def ApplyDelta(self, delta:np.ndarray, verbose=False):
         '''Uses directional derivatives to find the set of phase shifters which
@@ -231,10 +236,14 @@ class MZImesh(Mesh):
         thetaFlat = np.concatenate([param.flatten() for param in self.getParams()]).reshape(-1,1)
 
         initDeltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
+        deltaMagnitude = initDeltaMagnitude
+        updateMagnitude = self.updateMagnitude # save update magnitude
         self.record = -np.ones(self.numSteps+1)
         self.record[0] = initDeltaMagnitude
         tol = self.atol + self.rtol * initDeltaMagnitude
         errorTol = np.sqrt(tol/self.concavity)
+        coeff = 1
+        skipCount = 0
         overflow = True
         if verbose:
             print(f"Initial delta magnitude: {initDeltaMagnitude}")
@@ -256,27 +265,51 @@ class MZImesh(Mesh):
                 rank = np.linalg.matrix_rank(xtx)
                 if rank == len(xtx): # matrix will have an inverse
                     a = np.linalg.inv(xtx) @ X.T @ deltaFlat
+                    assert(np.any(np.isnan(a))==False)
                     break
+                elif rank == 0:
+                    self.updateMagnitude *= 1.2
+                    self.record[step+1] = -np.inf
                 else: # direction vectors cary redundant information use one less
                     X = X[:,:-1]
                     V = V[:,:-1]
                     continue
+            if rank == 0: 
+                continue
             
             # bound max step in `a`
-            maxComponent = np.max(np.abs(a))
-            if maxComponent > errorTol:
-                a = a*errorTol/maxComponent
+            a *= coeff
 
-            # Apply update to parameters
+            # calculate updated params
             linearCombination = V @ a
             updatedParams = [param + opt for param, opt in zip(self.getParams(), self.reshapeParams(linearCombination))]
-            self.setParams(updatedParams)
+            self.boundParams(updatedParams)
+
+            # test delta after step
+            newMat = self.getFromParams(updatedParams)
+            trueDelta = newMat - currMat
+            trueDelta = trueDelta.flatten().reshape(-1,1)
+            newMagnitude = Magnitude(deltaFlat - trueDelta)
+            stepCoeff = newMagnitude/deltaMagnitude
             
-            # Check difference vector after update
-            trueDelta = self.get()/self.Gscale - currMat
-            deltaFlat -= trueDelta.flatten().reshape(-1,1)
-            deltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
-            self.record[step+1]=deltaMagnitude
+            # update step scaling
+            if (stepCoeff > 1):
+                coeff *= 0.9
+                skipCount += 1
+                if skipCount > 10: # stop iterating if the delta isn't being implemented
+                    self.updateMagnitude *= 0.9 # take smaller steps
+                self.record[step+1] = -100
+                continue # do not apply step
+            elif (stepCoeff > 0.9):
+                coeff *= 1.1 # increases step size if updates are slow
+            # coeff = np.min([coeff, 1]) # coeff should always be less than 1
+            skipCount = 0 
+
+            # Apply update to parameters
+            self.setParams(updatedParams)
+            deltaFlat -= trueDelta
+            deltaMagnitude = Magnitude(deltaFlat)
+            self.record[step+1] = deltaMagnitude
             if deltaMagnitude < tol:
                 if verbose:
                     print(f"Break after {step+1} steps, delta magnitude: {deltaMagnitude}")
@@ -287,9 +320,10 @@ class MZImesh(Mesh):
         
         self.numOverflows += int(overflow) # always increments except when exceeding tol
 
+        self.updateMagnitude = updateMagnitude # restore original magnitude
+
         self.setFromParams()
-        # assert(deltaMagnitude < 1e-2)
-        return deltaMagnitude, step          
+        return deltaMagnitude, step
         
     def matrixGradient(self, stepVector: list[np.ndarray] = None):
         '''Calculates the gradient of the matrix with respect to the phase
@@ -303,7 +337,7 @@ class MZImesh(Mesh):
         if stepVector is None:
             stepVectors = [2*np.random.rand(*param.shape)-1 for param in paramsList] # TODO: determine which range is better [0,1) or [-1,1)
             flatVectors = [stepVector.flatten() for stepVector in stepVectors]
-            randMagnitude = np.sqrt(np.sum(np.square(np.concatenate(flatVectors))))
+            randMagnitude = Magnitude(np.concatenate(flatVectors))
             stepVectors = [stepVector/randMagnitude for stepVector in stepVectors]
             stepVectors = [stepVector*self.updateMagnitude for stepVector in stepVectors]
         
@@ -404,6 +438,7 @@ class DiagMZI(MZImesh):
     
     def setParams(self, params):
         self.boundParams(params)
+        self.checkNaN(params)
 
         self.DeviceUpdate(params) # TODO: Implement SOA udpates
         
@@ -489,7 +524,9 @@ class SVDMZI(MZImesh):
         return [self.phaseShifters1, self.diagonals, self.phaseShifters2]
     
     def setParams(self, params):
-        self.boundParams(params)        
+        self.boundParams(params)
+        self.checkNaN(params)
+        
 
         self.DeviceUpdate(params) # TODO: Implement SOA udpates
         self.phaseShifters1 = params[0]
