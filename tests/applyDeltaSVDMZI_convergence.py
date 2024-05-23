@@ -26,32 +26,33 @@ from copy import deepcopy
 from itertools import permutations
 
 matrixSize = 4
+numIterations = 50
 
-dummyLayer = Layer(matrixSize, isInput=True, name="Input")
-dummyNet = Net(name = "LEABRA_NET")
-dummyNet.AddLayer(dummyLayer)
-mzi = SVDMZI(matrixSize, dummyLayer,
-              numDirections=28,
-              numSteps=2000,
-              rtol=5e-2,
-              updateMagnitude=1,
-              )
-
-# Convergence test #1
+# Convergence test #3
+testName = "Small Parameter Deviations (+/- 5e-6)"
 plt.figure()
-print("--------STARTING CONVERGENCE TEST #1--------")
+print(f"--------STARTING CONVERGENCE TEST__{testName}--------")
 magnitudes = []
 steps = []
 numUnits = int(matrixSize*(matrixSize-1)/2)
-for index in range(50):
-    print(f"Convergence test #1: {index}...", end=" ")
+for index in range(numIterations):
+    dummyLayer = Layer(matrixSize, isInput=True, name="Input")
+    dummyNet = Net(name = "LEABRA_NET")
+    dummyNet.AddLayer(dummyLayer)
+    mzi = SVDMZI(matrixSize, dummyLayer,
+                numDirections=16,
+                numSteps=1000,
+                rtol=1e-3,
+                updateMagnitude=1e-4,
+                )
+    
+    print(f"Convergence test [{testName}]: {index}...", end=" ")
     initMatrix = mzi.get()/mzi.Gscale
 
     # Generate a randomn feasible matrix
-    ps1 = np.random.rand(numUnits,2)*2*np.pi
-    diag = np.random.rand(matrixSize)*5
-    ps2 = np.random.rand(numUnits,2)*2*np.pi
-    randMatrix = mzi.getFromParams([ps1, diag, ps2])
+    randCoeff = 5e-6*np.random.rand(1)
+    randMatrix = mzi.getFromParams([2*randCoeff*(np.random.rand(*param.shape)-0.5)+
+                                    param for param in mzi.getParams()])
 
     delta = randMatrix - initMatrix
     magDelta = np.sqrt(np.sum(np.square(delta.flatten())))
@@ -61,36 +62,129 @@ for index in range(50):
     steps.append(numSteps)
     print(f"Done. ({magDelta}, {numSteps})")
 plt.scatter(magnitudes, steps)
-plt.title("Convergence test #1")
+plt.title(f"Convergence test--{testName}")
 plt.ylabel("# of LAMM iterations")
 plt.xlabel("magnitude of difference vector")
 
 
-## Convergence test #2
+
+# Convergence test #3
 plt.figure()
-print("--------STARTING CONVERGENCE TEST #2--------")
+testName = "Sparse Changes"
+print(f"--------STARTING CONVERGENCE TEST__{testName}--------")
 magnitudes = []
 steps = []
-for index in range(50):
-    print(f"Convergence test #2: {index}...", end=" ")
+numSparseElements = 5 # out of 16
+numUnits = int(matrixSize*(matrixSize-1)/2)
+for index in range(numIterations):
+    dummyLayer = Layer(matrixSize, isInput=True, name="Input")
+    dummyNet = Net(name = "LEABRA_NET")
+    dummyNet.AddLayer(dummyLayer)
+    mzi = SVDMZI(matrixSize, dummyLayer,
+                numDirections=16,
+                numSteps=1000,
+                rtol=1e-3,
+                updateMagnitude=1e-4,
+                )
+    
+    print(f"Convergence test [{testName}]: {index}...", end=" ")
     initMatrix = mzi.get()/mzi.Gscale
-    delta = 2*np.random.rand(matrixSize, matrixSize)-1 # random values on [-1,1]
-    delta /= np.sqrt(np.sum(np.square(delta.flatten()))) # L2 normalize
-    delta *= 0.2*np.random.rand(1) # random L2 norm
-    for col in range(matrixSize): # columns should sum to zero
-        delta[:,col] -= np.sum(delta[:,col])/matrixSize
-    assert(np.sum(delta) < 1e-3)
 
+    randMatrix = np.copy(initMatrix)
+    randCoeff = 5e-4*np.random.rand(1)
+    indices = np.random.permutation(16)[:numSparseElements]
+    mask = np.zeros(16)
+    mask[indices] = 1
+    mask = mask.reshape(4,4).astype("bool")
+    randMatrix[mask] = 2 * (np.random.rand(numSparseElements) - 0.5)
+    randMatrix[mask] *= randCoeff
+
+    delta = randMatrix - initMatrix
     magDelta = np.sqrt(np.sum(np.square(delta.flatten())))
     magnitudes.append(magDelta)
 
-    _, numSteps = mzi.ApplyDelta(delta)
+    _, numSteps = mzi.set(randMatrix)
     steps.append(numSteps)
     print(f"Done. ({magDelta}, {numSteps})")
-    print(f"\tDelta: {delta}")
 plt.scatter(magnitudes, steps)
-plt.title("Convergence test #2")
+plt.title(f"Convergence test--{testName}")
 plt.ylabel("# of LAMM iterations")
 plt.xlabel("magnitude of difference vector")
+
+# # Convergence test #1
+# plt.figure()
+# print("--------STARTING CONVERGENCE TEST #1--------")
+# magnitudes = []
+# steps = []
+# numUnits = int(matrixSize*(matrixSize-1)/2)
+# for index in range(numIterations):
+#     dummyLayer = Layer(matrixSize, isInput=True, name="Input")
+#     dummyNet = Net(name = "LEABRA_NET")
+#     dummyNet.AddLayer(dummyLayer)
+#     mzi = SVDMZI(matrixSize, dummyLayer,
+#                 numDirections=16,
+#                 numSteps=1000,
+#                 rtol=5e-2,
+#                 updateMagnitude=1e-4,
+#                 )
+    
+#     print(f"Convergence test #1: {index}...", end=" ")
+#     initMatrix = mzi.get()/mzi.Gscale
+
+#     # Generate a randomn feasible matrix
+#     ps1 = np.random.rand(numUnits,2)*2*np.pi
+#     diag = np.random.rand(matrixSize)*5
+#     ps2 = np.random.rand(numUnits,2)*2*np.pi
+#     randMatrix = mzi.getFromParams([ps1, diag, ps2])
+
+#     delta = randMatrix - initMatrix
+#     magDelta = np.sqrt(np.sum(np.square(delta.flatten())))
+#     magnitudes.append(magDelta)
+
+#     _, numSteps = mzi.set(randMatrix)
+#     steps.append(numSteps)
+#     print(f"Done. ({magDelta}, {numSteps})")
+# plt.scatter(magnitudes, steps)
+# plt.title("Convergence test #1")
+# plt.ylabel("# of LAMM iterations")
+# plt.xlabel("magnitude of difference vector")
+
+
+# ## Convergence test #2
+# plt.figure()
+# print("--------STARTING CONVERGENCE TEST #2--------")
+# magnitudes = []
+# steps = []
+# for index in range(numIterations):
+#     dummyLayer = Layer(matrixSize, isInput=True, name="Input")
+#     dummyNet = Net(name = "LEABRA_NET")
+#     dummyNet.AddLayer(dummyLayer)
+#     mzi = SVDMZI(matrixSize, dummyLayer,
+#                 numDirections=16,
+#                 numSteps=1000,
+#                 rtol=5e-2,
+#                 updateMagnitude=1e-4,
+#                 )
+    
+#     print(f"Convergence test #2: {index}...", end=" ")
+#     initMatrix = mzi.get()/mzi.Gscale
+#     delta = 2*np.random.rand(matrixSize, matrixSize)-1 # random values on [-1,1]
+#     delta /= np.sqrt(np.sum(np.square(delta.flatten()))) # L2 normalize
+#     delta *= 0.2*np.random.rand(1) # random L2 norm
+#     for col in range(matrixSize): # columns should sum to zero
+#         delta[:,col] -= np.sum(delta[:,col])/matrixSize
+#     assert(np.sum(delta) < 1e-3)
+
+#     magDelta = np.sqrt(np.sum(np.square(delta.flatten())))
+#     magnitudes.append(magDelta)
+
+#     _, numSteps = mzi.ApplyDelta(delta)
+#     steps.append(numSteps)
+#     print(f"Done. ({magDelta}, {numSteps})")
+#     print(f"Delta: \n\t{str(np.round(delta, 4)).replace("\n", "\n\t")}")
+# plt.scatter(magnitudes, steps)
+# plt.title("Convergence test #2")
+# plt.ylabel("# of LAMM iterations")
+# plt.xlabel("magnitude of difference vector")
     
 plt.show()

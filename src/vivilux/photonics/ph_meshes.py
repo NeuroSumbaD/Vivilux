@@ -117,6 +117,7 @@ class MZImesh(Mesh):
             parameter structures.
         '''
         params = self.getParams() if params is None else params
+        self.boundParams(params)
         complexMat = psToRect(params[0], self.size)
         return np.square(np.abs(complexMat))
     
@@ -191,9 +192,9 @@ class MZImesh(Mesh):
         # TODO: Check for slowdown because of reshaping in super().applyTo()
         self.DeviceHold()
         matrixData = Diagonalize(data)
-        shape = matrixData.shape
+        dataShape = matrixData.shape
         result = super().applyTo(matrixData)
-        result = result.reshape(shape)
+        result = result.reshape(self.shape[0], dataShape[1])
         ## Take the sum across each wavelength
         return np.sum(result, axis=1)
     
@@ -296,8 +297,21 @@ class MZImesh(Mesh):
             if (stepCoeff > 1):
                 coeff *= 0.9
                 skipCount += 1
-                if skipCount > 10: # stop iterating if the delta isn't being implemented
-                    self.updateMagnitude *= 0.9 # take smaller steps
+                if skipCount > 25: # take a random big step
+                    randomParams = [3e-1*2*(np.random.rand(*param.shape)-0.5)+
+                                    param for param in self.getParams()]
+                    newMat = self.getFromParams(randomParams)
+                    trueDelta = newMat - currMat
+                    trueDelta = trueDelta.flatten().reshape(-1,1)
+                    deltaFlat -= trueDelta
+                    deltaMagnitude = Magnitude(deltaFlat)
+                    self.record[step+1] = deltaMagnitude
+                    self.setParams(randomParams)
+                    skipCount = 0 # reset skip count
+                    self.updateMagnitude = updateMagnitude # reset magnitude
+                    continue
+                elif skipCount > 10: # stop iterating if the delta isn't being implemented
+                    self.updateMagnitude *= 0.9 # take smaller test steps
                 self.record[step+1] = -100
                 continue # do not apply step
             elif (stepCoeff > 0.9):
@@ -429,6 +443,7 @@ class DiagMZI(MZImesh):
         '''Function generates matrix from the list of params.
         '''
         params = self.getParams() if params is None else params
+        self.boundParams(params)
         complexMat = psToRect(params[0], self.size)
         soaStage = Diagonalize(params[1])
         return soaStage @ np.square(np.abs(complexMat))
@@ -513,6 +528,7 @@ class SVDMZI(MZImesh):
         '''Function generates matrix from the list of params.
         '''
         params = self.getParams() if params is None else params
+        self.boundParams(params)
         complexMat1 = psToRect(params[0], self.size)
         soaStage = Diagonalize(params[1])
         complexMat2 = psToRect(params[2], self.size)

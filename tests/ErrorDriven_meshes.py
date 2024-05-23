@@ -67,7 +67,7 @@ fig, axs = plt.subplots(1,2, figsize=(20,12))
 names = []
 neuralEnergies = []
 synapticEnergies = []
-for meshtype in [MZImesh, DiagMZI, SVDMZI]:
+for meshtype in [SVDMZI]: #[MZImesh, DiagMZI, SVDMZI]:
     # Default Leabra net
     leabraNet = Net(name = "LEABRA_NET--" + meshtype.__name__,
                     monitoring= True,
@@ -86,8 +86,10 @@ for meshtype in [MZImesh, DiagMZI, SVDMZI]:
     ffMeshConfig = {"meshType": meshtype,
                     "meshArgs": {"AbsScale": 1,
                                  "RelScale": 1,
-                                 "rtol":1e-3,
+                                 "numDirections": 16,
+                                 "rtol":1e-2,
                                  "numSteps": 1000,
+                                 "updateMagnitude":1e-4,
                                  },
                     }
     ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:],
@@ -97,8 +99,10 @@ for meshtype in [MZImesh, DiagMZI, SVDMZI]:
     fbMeshConfig = {"meshType": meshtype,
                     "meshArgs": {"AbsScale": 1,
                                  "RelScale": 0.3,
-                                 "rtol":1e-3,
-                                 "numSteps": 1000,
+                                 "numDirections": 16,
+                                 "rtol":1e-2,
+                                 "numSteps": 500,
+                                 "updateMagnitude":1e-4,
                                  },
                     }
     fbMeshes = leabraNet.AddConnections(layerList[2:], layerList[1:2],

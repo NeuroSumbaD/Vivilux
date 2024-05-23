@@ -30,7 +30,7 @@ records = [] # to store traces of magnitude for each permutation matrix
 plt.figure()
 print("--------STARTING TEST: Small parameter deviations--------")
 for index in range(numIterations):
-    matrix = mzi.getFromParams([0.2*np.random.rand(*param.shape)-0.1 + param for param in mzi.getParams()])/mzi.Gscale
+    matrix = mzi.getFromParams([0.2*np.random.rand(*param.shape)-0.1 + param for param in mzi.getParams()])
     initMatrix = mzi.get()/mzi.Gscale
     initDelta = matrix - initMatrix
     magnitude, numSteps = mzi.set(matrix)

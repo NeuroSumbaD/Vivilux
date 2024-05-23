@@ -202,16 +202,17 @@ class Mesh:
         self.lastAct[mask2] = 0
 
         self.inAct[:] += delta
-        
+
         return self.applyTo(self.inAct[:self.shape[1]])
             
     def applyTo(self, data):
         try:
-            return np.array(self.get() @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
+            synapticWeights = self.get()[:self.shape[0], :self.shape[1]]
+            return np.array(synapticWeights @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
         except ValueError as ve:
-            print(f"Attempted to apply {data} (shape: {data.shape}) to mesh "
-                  f"of dimension: {self.get().shape}")
-            print(ve)
+            raise ValueError(f"Attempted to apply {data} (shape: {data.shape})"
+                             f" to mesh of dimension: {self.shape}")
+            # print(ve)
 
     def AttachLayer(self, rcvLayer: Layer):
         self.rcvLayer = rcvLayer
