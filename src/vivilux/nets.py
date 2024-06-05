@@ -59,14 +59,24 @@ layerConfig_std = {
         "AvgTau" : 200, # for integrating activation average (ActAvg), time constant in trials (roughly, how long it takes for value to change significantly) -- used mostly for visualization and tracking *hog* units
         
     },
-    "ActParams": {
+    "ActAvg": {
+        "Init": 0.15,
+        "Fixed": False,
         "SSTau": 2,
         "STau": 2,
         "MTau": 10,
         "Tau": 10,
+        "AvgL_Init": 0.4,
         "Gain": 2.5,
         "Min": 0.2,
         "LrnM": 0.1,
+        "ModMin": 0.01,
+        "LrnMax": 0.5,
+        "LrnMin": 0.0001,
+        "UseFirst": True,
+        # "ActPAvg_Init": 0.15,
+        "ActPAvg_Tau": 100,
+        "ActPAvg_Adjust": 1,
     },
     "OptThreshParams":{
         "Send": 0.1,
@@ -115,6 +125,11 @@ runConfig_std = {
     },
     "Learn": ["minus", "plus"],
     "Infer": ["minus"],
+    "End": {
+        "threshold": 0,
+        "isLower": True,
+        "numEpochs": 5,
+    }
 }
 
 
@@ -156,6 +171,9 @@ class Net:
         self.name =  f"NET_{Net.count}" if name == None else name
         self.epochIndex = 0
         Net.count += 1
+
+        # For early stopping learning process
+        self.lrnThresh = 0
 
     def PreallocateResultDict(self):
         '''Pre-allocate a dict to store the results
@@ -307,10 +325,32 @@ class Net:
             corresponding target in the dataset. The results are stored in a
             dictionary with keys representing names of each metric.
         '''
+        isFinished = False
+        first = True
         for metricName, metric in self.runConfig["metrics"].items():
             for dataName in self.layerDict["outputLayers"]:
                 result = metric(self.outputs[dataName], dataset[dataName])
                 self.results[metricName].append(result)
+
+                # Check the first metric for if it passes the end condition
+                if first: #TODO: optimize for execution time
+                    first = False
+                    if self.runConfig["End"]["isLower"]:
+                        if result <= self.runConfig["End"]["threshold"]:
+                            self.lrnThresh += 1
+                            if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
+                                isFinished = True
+                        else:
+                            self.lrnThresh = 0
+                    else:
+                        if result >= self.runConfig["End"]["threshold"]:
+                            self.lrnThresh += 1
+                            if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
+                                isFinished = True
+                        else:
+                            self.lrnThresh = 0
+
+        return isFinished
 
     def UpdateConductances(self):
         for layer in self.layers:
@@ -464,13 +504,16 @@ class Net:
             self.epochIndex = int(EvaluateFirst) + epochIndex
             numSamples = self.RunEpoch("Learn", verbosity, reset, shuffle,
                                        debugData=debugData, **dataset)
-            self.EvaluateMetrics(**dataset)
+            isFinished = self.EvaluateMetrics(**dataset)
             if verbosity > 0:
                 primaryMetric = [key for key in self.runConfig["metrics"]][0]
                 print(f"\rEpoch: {self.epochIndex}, "
                       f"sample: ({numSamples}/{numSamples}), "
                       f" metric[{primaryMetric}]"
                       f" = {self.results[primaryMetric][-1]}")
+                
+            if isFinished:
+                break
                 
         print(f"Finished training [{self.name}]")
         return self.results

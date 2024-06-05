@@ -54,6 +54,11 @@ leabraRunConfig = {
     },
     "Learn": ["minus", "plus"],
     "Infer": ["minus"],
+    "End": {
+        "threshold": 0,
+        "isLower": True,
+        "numEpochs": 5,
+    }
 }
 
 # Default Leabra net
@@ -68,6 +73,8 @@ layerList = [Layer(inputSize, isInput=True, name="Input"),
              Layer(outputSize, isTarget=True, name="Output")]
 smallLayConfig = deepcopy(layerConfig_std)
 smallLayConfig["FFFBparams"]["Gi"] = 1.3
+smallLayConfig["ActAvg"]["Init"] = 0.5
+smallLayConfig["ActAvg"]["Fixed"] = True
 leabraNet.AddLayers(layerList, layerConfig=smallLayConfig)
 
 # Add bidirectional connections

@@ -123,7 +123,7 @@ class Layer:
         self.OptThreshParams = layerConfig["OptThreshParams"]
 
         # Attach Averaging Process
-        self.ActAvg = ActAvg(self) # TODO add to std layerConfig and pass params here
+        self.ActAvg = ActAvg(self, **layerConfig["ActAvg"]) # TODO add to std layerConfig and pass params here
         self.phaseProcesses.append(self.ActAvg)
 
         # Attach FFFB process

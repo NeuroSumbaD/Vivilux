@@ -98,6 +98,7 @@ class ActAvg(PhasicProcess):
     def __init__(self,
                  layer: Layer,
                  Init = 0.15,
+                 Fixed = False,
                  SSTau = 2,
                  STau = 2,
                  MTau = 10,
@@ -112,11 +113,12 @@ class ActAvg(PhasicProcess):
                  LrnMin = 0.0001,
                  #ActPAvg plus phase averaging params
                  UseFirst = True,
-                 ActPAvg_Init = 0.15,
+                #  ActPAvg_Init = 0.15,
                  ActPAvg_Tau = 100,
                  ActPAvg_Adjust = 1,
                  ):
         self.Init = Init
+        self.Fixed = Fixed
         self.SSTau = SSTau
         self.STau = STau
         self.MTau = MTau
@@ -130,7 +132,7 @@ class ActAvg(PhasicProcess):
         self.LrnMax = LrnMax
         self.LrnMin = LrnMin
         self.UseFirst = UseFirst
-        self.ActPAvg_Init = ActPAvg_Init
+        # self.ActPAvg_Init = ActPAvg_Init
         self.ActPAvg_Tau = ActPAvg_Tau
         self.ActPAvg_Adjust = ActPAvg_Adjust
 
@@ -142,8 +144,8 @@ class ActAvg(PhasicProcess):
         self.LrnFact = (LrnMax - LrnMin) / (Gain - Min)
 
         self.layCosDiffAvg = 0
-        self.ActPAvg = self.ActPAvg_Init #TODO: compare with Leabra
-        self.ActPAvgEff = self.ActPAvg_Init
+        self.ActPAvg = self.Init #TODO: compare with Leabra
+        self.ActPAvgEff = self.Init
 
         self.AttachLayer(layer)
 
@@ -230,12 +232,12 @@ class ActAvg(PhasicProcess):
         Act = np.mean(self.pool.getActivity())
         if Act >= 0.0001:
             self.ActPAvg += 0.5 * (Act-self.ActPAvg) if self.UseFirst else self.ActPAvg_Dt * (Act-self.ActPAvg)
-        self.ActPAvgEff = self.ActPAvg_Adjust * self.ActPAvg
+        self.ActPAvgEff = self.ActPAvg_Adjust * self.ActPAvg if not self.Fixed else self.Init
 
     def Reset(self):
         self.InitAct()
-        self.ActPAvg = self.ActPAvg_Init
-        self.ActPAvgEff = self.ActPAvg_Init
+        self.ActPAvg = self.Init
+        self.ActPAvgEff = self.Init
         self.AvgLLrn[:] = 0
         self.layCosDiffAvg = 0
 
