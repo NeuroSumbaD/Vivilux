@@ -40,6 +40,7 @@ class MZImesh(Mesh):
                  numSteps = 200,
                  atol = 0, # absolute tolerance
                  rtol = 1e-2, # relative tolerance
+                 bitPrecision = None,
                  **kwargs):
         super().__init__(size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
                          Gain,dtype,wbOn,wbAvgThr,wbHiThr,wbHiGain,wbLoThr,
@@ -58,6 +59,8 @@ class MZImesh(Mesh):
         self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
         
         self.numUnits = int(self.size*(self.size-1)/2)
+        self.bitPrecision = bitPrecision
+        self.bitMask = int(2**bitPrecision - 1) if bitPrecision is not None else None
         self.Initialize()
         numParams = np.concatenate([param.flatten() for param in self.getParams()]).size
         # arbitrary guess for how many directions are needed
@@ -72,12 +75,22 @@ class MZImesh(Mesh):
 
         self.setFromParams()
 
+    def ApplyBitPrecision(self, params):
+        if self.bitPrecision is not None:
+            for index, param in enumerate(params):
+                param = (param*self.bitMask).astype("int")
+                param = param.astype("float")/self.bitMask
+                params[index] = param
+        return params
+    
     def Initialize(self):
         '''Initializes internal variables for each set of parameter.
 
             This function should be overwritten for each mesh type.
         '''
         self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
+
+        self.ApplyBitPrecision(self.getParams())
 
         self.concavity = 1.5
 
@@ -118,6 +131,7 @@ class MZImesh(Mesh):
         '''
         params = self.getParams() if params is None else params
         self.boundParams(params)
+        self.ApplyBitPrecision(params)
         complexMat = psToRect(params[0], self.size)
         return np.square(np.abs(complexMat))
     
@@ -152,6 +166,7 @@ class MZImesh(Mesh):
             Overwrite for meshes with different parameter structures.
         '''
         self.boundParams(params)
+        self.ApplyBitPrecision(params)
         self.checkNaN(params)
         
         self.DeviceUpdate(params)
