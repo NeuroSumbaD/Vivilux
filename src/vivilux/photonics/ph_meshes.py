@@ -604,3 +604,165 @@ class phfbMesh(Mesh):
     #     return np.sum(np.square(np.abs(self.applyTo(Diagonalize(data)))), axis=1)
 
 MZImesh.feedback = phfbMesh
+
+class Crossbar(Mesh):
+    def __init__(self,
+                 size: int,
+                 inLayer: Layer,
+                 AbsScale: float = 1,
+                 RelScale: float = 1,
+                 InitMean: float = 0.5,
+                 InitVar: float = 0.25,
+                 Off: float = 1,
+                 Gain: float = 6,
+                 dtype = np.float64,
+                 wbOn = True,
+                 wbAvgThr = 0.25,
+                 wbHiThr = 0.4,
+                 wbHiGain = 4,
+                 wbLoThr = 0.4,
+                 wbLoGain = 6,
+                 wbInc = 1,
+                 wbDec = 1,
+                 WtBalInterval = 10,
+                 softBound = True,
+                 coupling = None, # coupling of horizontal to vertical waveguide
+                 numDirections = None,
+                 updateMagnitude = 0.1,
+                 numSteps = 200,
+                 atol = 0, # absolute tolerance
+                 rtol = 1e-2, # relative tolerance
+                 bitPrecision = None,
+                 **kwargs):
+        '''This class represents a crossbar mesh that uses a set of couplers
+            and some form of attenuation or amplification to perform matrix
+            multiplication. It is expected that the couplers were designed to
+            properly couple the same absolute power to each vertical stage 
+            (versus coupling 5% to the first vertical crossing and 95% * 5% to
+            the next vertical crossing).
+
+            The `coupling` argument allows the user to specify a custom set
+            of coupling ratios. This allows for the simulation of fabrication
+            tolerances (e.g. a 5% coupler might actually be 4.9%).
+        '''
+        super().__init__(size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
+                         Gain,dtype,wbOn,wbAvgThr,wbHiThr,wbHiGain,wbLoThr,
+                         wbLoGain,wbInc,wbDec,WtBalInterval,softBound, **kwargs)
+        # pad initial matrix to square matrix
+        if size > len(self.inLayer): # expand variables appropriately
+            size = size
+            self.lastAct = np.zeros(size, dtype=self.dtype)
+            self.inAct = np.zeros(size, dtype=self.dtype)
+        else: 
+            size = len(self.inLayer)
+            
+        shape1 = self.linMatrix.shape
+        self.linMatrix = np.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
+        shape2 = self.matrix.shape
+        self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
+        
+        self.coupling = 1/size if coupling is None else coupling
+        self.bitPrecision = bitPrecision
+        self.bitMask = int(2**bitPrecision - 1) if bitPrecision is not None else None
+        self.Initialize()
+
+        # Variables for LAMM algorithm
+        numParams = np.concatenate([param.flatten() for param in self.getParams()]).size
+        ## arbitrary guess for how many directions are needed
+        self.numDirections = int(np.round(numParams/4)) if numDirections is None else numDirections
+        self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
+        self.numSteps = numSteps     
+        ## early stopping criteria for LAMM
+        self.atol = atol
+        self.rtol = rtol
+        self.numOverflows = 0 # counts each time LAMM reaches numSteps
+
+        self.setFromParams()
+
+    def ApplyBitPrecision(self, params):
+        if self.bitPrecision is not None:
+            for index, param in enumerate(params):
+                param = (param*self.bitMask).astype("int")
+                param = param.astype("float")/self.bitMask
+                params[index] = param
+        return params
+    
+    def Initialize(self):
+        '''Initializes internal variables for each set of parameter.
+        '''
+        self.attenuators = np.random.rand(self.size,self.size)
+
+    def getFromParams(self, params = None):
+        '''Function generates matrix from a list of params.
+
+            This function should be overwritten for meshes with different
+            parameter structures.
+        '''
+        params = self.getParams() if params is None else params
+        self.boundParams(params)
+        self.ApplyBitPrecision(params)
+        complexMat = np.multiply(self.attenuators, self.coupling)
+        return np.square(np.abs(complexMat))
+    
+    def set(self, matrix, verbose=False):
+        '''Function used to directly set the matrix implemented by the mesh
+            without knowledge of the parameters needed. 
+        '''
+        self.modified = True
+        delta = matrix - self.matrix
+        return self.ApplyDelta(delta=delta, verbose=verbose)
+    
+    def get(self):
+        '''Returns the current matrix representation multiplied by the Gscale.
+            This function is generic to any photonic mesh and should not be
+            overwritten.
+        '''
+        if (self.modified == True): # only recalculate matrix when modified
+            self.setFromParams()
+        
+        return self.Gscale * self.matrix
+    
+    def getParams(self) -> list[np.ndarray]:
+        '''Returns a list of the parameters for the given mesh. 
+        
+            Overwrite for meshes with different parameter structures.
+        '''
+        return [self.attenuators]
+    
+    def setParams(self, params):
+        ''' Stores the params in the appropriate internal variables.
+        
+            Overwrite for meshes with different parameter structures.
+        '''
+        self.boundParams(params)
+        self.ApplyBitPrecision(params)
+        # self.checkNaN(params)
+        
+        self.DeviceUpdate(params)
+        self.attenuators = params[0]
+        self.modified = True
+
+    def reshapeParams(self, flatParams):
+        '''Reshapes a flattened set of parameters to list format
+            accepted by getParams and setParams.
+        '''
+        startIndex = 0
+        reshapedParams = []
+        for param in self.getParams():
+            numElements = param.size
+            reshapedParams.append(flatParams[startIndex:startIndex+numElements].reshape(*param.shape))
+            startIndex += numElements
+        return reshapedParams
+    
+    def boundParams(self, params):
+        '''Bounds the parameters into their allowed ranges. Remember that lists
+            are passed by reference and changes are reflected outside the
+            function.
+        '''
+        params[0] = BoundGain(params[0], lower = 0, upper=1)
+
+        return params
+
+class CrossbarRings(Crossbar):
+    def Initialize(self):
+        self.through = np.random.rand(self.size,self.size)
