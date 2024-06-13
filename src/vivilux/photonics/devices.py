@@ -29,9 +29,9 @@ class Device:
         self.holdintegration = 0
 
     def Hold(self, params: np.ndarray, DELTA_TIME: float):
-        '''Calculates the energetic cost of holding the device at a set of 
-            parameters. Alternatively, params can be the integrated parameter
-            values so that energy can be converted between devices
+        '''Calculates the energetic cost of holding the control parameter at
+            the given value (intended for thermal phase shifters and PIN
+            modulators).
 
             Arguments:
             - Array of parameter values (or integrated parameter values)
@@ -44,8 +44,9 @@ class Device:
         return np.sum(self.holdPower * DELTA_TIME * flattenedParams)
     
     def Set(self, params: np.ndarray):
-        '''Calculates the energetic cost of holding the device at a set of
-            parameters.
+        '''Calculates the energetic cost of setting the control parameter
+            from its neutral state to the given value (intended for PCM and 
+            MOSCAP devices).
 
             Arguments:
             - Array of parameter values
@@ -57,8 +58,9 @@ class Device:
         return np.sum(self.setEnergy * flattenedParams)
 
     def Reset(self, params: np.ndarray):
-        '''Calculates the energetic cost of holding the device at a set of 
-            parameters.
+        '''Calculates the energetic cost of setting the control parameter from
+            its given value to its neutral state (intended for PCM and MOSCAP
+            devices).
 
             Arguments:
             - Array of parameter values

@@ -627,11 +627,14 @@ class Crossbar(Mesh):
                  WtBalInterval = 10,
                  softBound = True,
                  coupling = None, # coupling of horizontal to vertical waveguide
-                 numDirections = None,
-                 updateMagnitude = 0.1,
-                 numSteps = 200,
-                 atol = 0, # absolute tolerance
-                 rtol = 1e-2, # relative tolerance
+                 gain = None, # detector gain to account for signal loss
+                 attenLow = 0, # max extinction from attenuator
+                 attenHigh = 1, # min attenuation
+                #  numDirections = None,
+                #  updateMagnitude = 0.1,
+                #  numSteps = 200,
+                #  atol = 0, # absolute tolerance
+                #  rtol = 1e-2, # relative tolerance
                  bitPrecision = None,
                  **kwargs):
         '''This class represents a crossbar mesh that uses a set of couplers
@@ -662,20 +665,12 @@ class Crossbar(Mesh):
         self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
         
         self.coupling = 1/size if coupling is None else coupling
+        self.gain = size if gain is None else gain
+        self.attenLow = attenLow
+        self.attenHigh = attenHigh
         self.bitPrecision = bitPrecision
         self.bitMask = int(2**bitPrecision - 1) if bitPrecision is not None else None
         self.Initialize()
-
-        # Variables for LAMM algorithm
-        numParams = np.concatenate([param.flatten() for param in self.getParams()]).size
-        ## arbitrary guess for how many directions are needed
-        self.numDirections = int(np.round(numParams/4)) if numDirections is None else numDirections
-        self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
-        self.numSteps = numSteps     
-        ## early stopping criteria for LAMM
-        self.atol = atol
-        self.rtol = rtol
-        self.numOverflows = 0 # counts each time LAMM reaches numSteps
 
         self.setFromParams()
 
@@ -701,16 +696,17 @@ class Crossbar(Mesh):
         params = self.getParams() if params is None else params
         self.boundParams(params)
         self.ApplyBitPrecision(params)
-        complexMat = np.multiply(self.attenuators, self.coupling)
-        return np.square(np.abs(complexMat))
+        matrix = np.multiply(self.attenuators, self.coupling)
+        matrix = np.multiply(matrix, self.gain)
+        return matrix
     
     def set(self, matrix, verbose=False):
         '''Function used to directly set the matrix implemented by the mesh
             without knowledge of the parameters needed. 
         '''
         self.modified = True
-        delta = matrix - self.matrix
-        return self.ApplyDelta(delta=delta, verbose=verbose)
+        self.matrix = matrix
+        self.attenuators = np.divide(matrix, self.coupling)
     
     def get(self):
         '''Returns the current matrix representation multiplied by the Gscale.
@@ -759,10 +755,61 @@ class Crossbar(Mesh):
             are passed by reference and changes are reflected outside the
             function.
         '''
-        params[0] = BoundGain(params[0], lower = 0, upper=1)
+        params[0] = BoundGain(params[0], lower = self.attenLow,
+                              upper=self.attenHigh)
 
         return params
+    
+    def applyTo(self, data):
+        '''Applies the mesh matrix according to how it should physically be
+            interpretted. In this case, signals on each waveguide should be
+            incoherent with one another, so they are split into separate
+            channels and then summed together.
+            
+            This function should be overwritten for other meshes where the
+            matrix is not interpreteted the same way.
+        '''
+        # Split data into diagonal matrix where cols represent wavelength
+        # TODO: Check for slowdown because of reshaping in super().applyTo()
+        self.DeviceHold()
+        result = super().applyTo(data)
+        return result
+    
+    def ApplyUpdate(self, delta, m, n):
+        '''Applies the delta vector to the linear weights and calculates the 
+            corresponding contrast enhanced matrix. Since the MZI cannot 
+            implement this change directly, it calculates a new delta from the
+            ideal change, and then implements that change.
+        '''
+        self.linMatrix[:m, :n] += delta
+        self.ClipLinMatrix()
+        newMatrix = self.SigMatrix()
+        self.attenuators = np.divide(newMatrix, self.coupling)
 
+    def setFromParams(self):
+        '''Sets the current matrix from the phase shifter params.
+
+            Overwrite this function for other mesh types.
+        '''
+        self.matrix = self.getFromParams()
+        self.InvSigMatrix()
+        self.modified = False
+
+    def DeviceUpdate(self, updatedParams):
+        '''Calls the reset() and set() functions for each device in the mesh
+            according to the updated parameters
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        currParams = self.getParams()
+        self.updateEnergy += self.device.Reset(currParams)
+        self.updateEnergy += self.device.Set(updatedParams)
+
+        self.setIntegration += np.sum(currParams)
+        self.resetIntegration += np.sum(updatedParams)
+
+    
 class CrossbarRings(Crossbar):
     def Initialize(self):
         self.through = np.random.rand(self.size,self.size)

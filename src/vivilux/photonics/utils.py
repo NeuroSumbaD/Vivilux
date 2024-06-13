@@ -52,3 +52,28 @@ def psToRect(phaseShifters: np.ndarray, size: float) -> np.ndarray:
                                                      dtype=np.cdouble)
         fullMatrix[:] = stageMatrix @ fullMatrix
     return fullMatrix
+
+
+def crossbarCoupling(shape):
+    '''Calculates coupling coefficients which can be used to make a simple
+        crossbar, where each horizontal waveguide couples an even proportion of
+        its initial power to each vertical waveguide (followed by programmable
+        attenuators).
+    '''
+    numColumns = shape[1]
+    powerSplit = 1/numColumns
+    couplers = np.ones(shape)
+    for col in range(numColumns):
+        power = 1-col*powerSplit
+        couplers[:,col] *= powerSplit/power
+
+    return couplers
+
+def couplersToMatrix(couplers: np.ndarray):
+    shape = couplers.shape
+    fullMatrix = couplers.copy()
+
+    for col in range(shape[1]):
+        fullMatrix[:,col+1:] = np.multiply(fullMatrix[:,col+1:].T, 1-couplers[:,col]).T
+
+    return fullMatrix

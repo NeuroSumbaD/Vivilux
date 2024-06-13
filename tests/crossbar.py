@@ -1,7 +1,7 @@
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
-from vivilux.photonics.ph_meshes import MZImesh
+from vivilux.photonics.ph_meshes import Crossbar
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
 import numpy as np
@@ -59,16 +59,18 @@ outputConfig["FFFBparams"]["Gi"] = 1.4
 leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
 
 # Add feedforward connections
-ffMeshConfig = {"meshType": MZImesh,
+ffMeshConfig = {"meshType": Crossbar,
                 "meshArgs": {"AbsScale": 1,
-                             "RelScale": 1},
+                             "RelScale": 1,
+                             "BitPrecision": 8},
                 }
 ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:],
                                     meshConfig=ffMeshConfig)
 # Add feedback connections
-fbMeshConfig = {"meshType": MZImesh,
+fbMeshConfig = {"meshType": Crossbar,
                 "meshArgs": {"AbsScale": 1,
-                             "RelScale": 0.2},
+                             "RelScale": 0.2,
+                             "BitPrecision": 8},
                 }
 fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
                                     meshConfig=fbMeshConfig)
