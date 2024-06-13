@@ -686,6 +686,8 @@ class Crossbar(Mesh):
         '''Initializes internal variables for each set of parameter.
         '''
         self.attenuators = np.random.rand(self.size,self.size)
+        self.attenuators = self.ApplyBitPrecision([self.attenuators])[0]
+        self.attenuatorsDB = 10*np.log10(self.attenuators)
 
     def getFromParams(self, params = None):
         '''Function generates matrix from a list of params.
@@ -696,7 +698,7 @@ class Crossbar(Mesh):
         params = self.getParams() if params is None else params
         self.boundParams(params)
         self.ApplyBitPrecision(params)
-        matrix = np.multiply(self.attenuators, self.coupling)
+        matrix = np.multiply(params[0], self.coupling)
         matrix = np.multiply(matrix, self.gain)
         return matrix
     
@@ -706,7 +708,7 @@ class Crossbar(Mesh):
         '''
         self.modified = True
         self.matrix = matrix
-        self.attenuators = np.divide(matrix, self.coupling)
+        self.setParams([np.divide(matrix, self.coupling)])
     
     def get(self):
         '''Returns the current matrix representation multiplied by the Gscale.
@@ -734,8 +736,9 @@ class Crossbar(Mesh):
         self.ApplyBitPrecision(params)
         # self.checkNaN(params)
         
-        self.DeviceUpdate(params)
         self.attenuators = params[0]
+        self.attenuatorsDB = 10*np.log10(self.attenuators)
+        self.DeviceUpdate([-self.attenuatorsDB])
         self.modified = True
 
     def reshapeParams(self, flatParams):
@@ -784,7 +787,7 @@ class Crossbar(Mesh):
         self.linMatrix[:m, :n] += delta
         self.ClipLinMatrix()
         newMatrix = self.SigMatrix()
-        self.attenuators = np.divide(newMatrix, self.coupling)
+        self.setParams([np.divide(newMatrix, self.coupling)])
 
     def setFromParams(self):
         '''Sets the current matrix from the phase shifter params.
