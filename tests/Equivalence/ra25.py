@@ -26,8 +26,6 @@ import json
 import warnings
 warnings.filterwarnings("ignore")
 
-
-# numSamples = 80
 numEpochs = 50
 inputSize = 5*5
 hiddenSize = 7*7
@@ -52,107 +50,101 @@ dwtLog = pd.read_csv(path.join(directory, "ra25_dwtLog.csv"))
 with open(path.join(directory, "ra25_weights.json")) as weightsFile:
     weights = json.load(weightsFile)
 
-leabraRunConfig = {
-    "DELTA_TIME": 0.001,
-    "metrics": {
-        "AvgSSE": ThrMSE,
-        "SSE": ThrSSE,
-    },
-    "outputLayers": {
-        "target": -1,
-    },
-    "Learn": ["minus", "plus"],
-    "Infer": ["minus"],
-}
-
-# Default Leabra net
-leabraNet = Net(name = "LEABRA_NET",
-                monitoring= True,
-                runConfig=leabraRunConfig,
-                )
-
-# Add layers
-layerList = [Layer(inputSize, isInput=True, name="Input"),
-             Layer(hiddenSize, name="Hidden1"),
-             Layer(hiddenSize, name="Hidden2"),
-             Layer(outputSize, isTarget=True, name="Output")]
-leabraNet.AddLayers(layerList[:-1])
-outputConfig = deepcopy(layerConfig_std)
-outputConfig["FFFBparams"]["Gi"] = 1.4
-leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
-
-# plt.ion()
-# # Add monitors
-# for layer in layerList:
-#     layer.AddMonitor(StackedMonitor(
-#         layer.name,
-#         labels = ["time step", "activity"],
-#         limits=[100, 2],
-#         layout=[2, 1],
-#         numLines=len(layer),
-#         targets=["activity", "Ge"],
-#         legendVisibility=False
-#         )
-#     )
-
-# Add bidirectional connections from leabra example
-for layer in weights["Layers"]:
-    netLayer = leabraNet.layerDict[layer["Layer"]]
-    if layer["Prjns"] is None: continue
-    for prjn in layer["Prjns"]:
-        sndLayer = leabraNet.layerDict[prjn["From"]]
-        gscale = int(prjn["MetaData"]["GScale"])
-        sndIndex = leabraNet.layers.index(sndLayer)
-        rcvIndex = leabraNet.layers.index(netLayer)
-        isFeedback = sndIndex > rcvIndex
-        meshConfig = {
-            "meshType": Mesh,
-            "meshArgs": {"AbsScale": gscale,
-                         "RelScale": 0.2 if isFeedback else 1},
+def ra25_init(error_threshold=0, numEpochs=1):
+    leabraRunConfig = {
+        "DELTA_TIME": 0.001,
+        "metrics": {
+            "AvgSSE": ThrMSE,
+            "SSE": ThrSSE,
+        },
+        "outputLayers": {
+            "target": -1,
+        },
+        "Learn": ["minus", "plus"],
+        "Infer": ["minus"],
+        "End": {
+            "threshold": error_threshold,
+            "isLower": True,
+            "numEpochs": numEpochs,
         }
-        mesh = leabraNet.AddConnection(sndLayer, netLayer, meshConfig)
-        for rs in prjn["Rs"]:
-            recvIndex = rs["Ri"]
-            sndIndices = rs["Si"]
-            mesh.matrix[recvIndex, sndIndices] = rs["Wt"]
-        mesh.InvSigMatrix()
+    }
+    # Default Leabra net
+    leabraNet = Net(name = "LEABRA_NET",
+                    monitoring= True,
+                    runConfig=leabraRunConfig,
+                    )
+    # Add layers
+    layerList = [Layer(inputSize, isInput=True, name="Input"),
+                Layer(hiddenSize, name="Hidden1"),
+                Layer(hiddenSize, name="Hidden2"),
+                Layer(outputSize, isTarget=True, name="Output")]
+    leabraNet.AddLayers(layerList[:-1])
+    outputConfig = deepcopy(layerConfig_std)
+    outputConfig["FFFBparams"]["Gi"] = 1.4
+    leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
 
-debugData = {"activityLog": activityLog,
-             "dwtLog": dwtLog,}
-result = leabraNet.Learn(input=inputs, target=targets,
-                         numEpochs=numEpochs,
-                         reset=False,
-                         shuffle = False,
-                         EvaluateFirst=False,
-                        #  debugData=debugData
-                         )
-plt.plot(result['AvgSSE'], label="Leabra Net")
+    # Add bidirectional connections from leabra example
+    for layer in weights["Layers"]:
+        netLayer = leabraNet.layerDict[layer["Layer"]]
+        if layer["Prjns"] is None: continue
+        for prjn in layer["Prjns"]:
+            sndLayer = leabraNet.layerDict[prjn["From"]]
+            gscale = int(prjn["MetaData"]["GScale"])
+            sndIndex = leabraNet.layers.index(sndLayer)
+            rcvIndex = leabraNet.layers.index(netLayer)
+            isFeedback = sndIndex > rcvIndex
+            meshConfig = {
+                "meshType": Mesh,
+                "meshArgs": {"AbsScale": gscale,
+                            "RelScale": 0.2 if isFeedback else 1},
+            }
+            mesh = leabraNet.AddConnection(sndLayer, netLayer, meshConfig)
+            for rs in prjn["Rs"]:
+                recvIndex = rs["Ri"]
+                sndIndices = rs["Si"]
+                mesh.matrix[recvIndex, sndIndices] = rs["Wt"]
+            mesh.InvSigMatrix()
+    return leabraNet
 
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry
-                    in np.random.uniform(size=(2000,len(targets),outputSize))])
-plt.axhline(y=baseline, color="b", linestyle="--", label="unformly distributed guessing")
+if __name__ == "__main__":
+    debugData = {"activityLog": activityLog,
+                "dwtLog": dwtLog,}
+    leabraNet = ra25_init(error_threshold=0.1, numEpochs=numEpochs)
+    result = leabraNet.Learn(input=inputs, target=targets,
+                            numEpochs=numEpochs,
+                            reset=False,
+                            shuffle = False,
+                            EvaluateFirst=False,
+                            #  debugData=debugData
+                            )
+    print(result)
+    plt.plot(result['AvgSSE'], label="Leabra Net")
 
-plt.title("Random Associator 25")
-plt.ylabel("AvgSSE")
-plt.xlabel("Epoch")
-plt.legend()
-plt.show()
+    baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry
+                        in np.random.uniform(size=(2000,len(targets),outputSize))])
+    plt.axhline(y=baseline, color="b", linestyle="--", label="unformly distributed guessing")
 
-print("Done")
-
-# Visualize output pattern vs target
-predictions = leabraNet.outputs["target"]
-
-for index in range(len(targets)):
-    inp = inputs[index].reshape(5,5)
-    prediction = predictions[index].reshape(5,5)
-    target = targets[index].reshape(5,5)
-    fig = plt.figure()
-    ax = fig.subplots(1,3)
-    ax[0].imshow(inp)
-    ax[0].set_title("Input")
-    ax[1].imshow(prediction)
-    ax[1].set_title("Prediction")
-    ax[2].imshow(target)
-    ax[2].set_title("Target")
+    plt.title("Random Associator 25")
+    plt.ylabel("AvgSSE")
+    plt.xlabel("Epoch")
+    plt.legend()
     plt.show()
+
+    print("Done")
+
+    # Visualize output pattern vs target
+    predictions = leabraNet.outputs["target"]
+
+    for index in range(len(targets)):
+        inp = inputs[index].reshape(5,5)
+        prediction = predictions[index].reshape(5,5)
+        target = targets[index].reshape(5,5)
+        fig = plt.figure()
+        ax = fig.subplots(1,3)
+        ax[0].imshow(inp)
+        ax[0].set_title("Input")
+        ax[1].imshow(prediction)
+        ax[1].set_title("Prediction")
+        ax[2].imshow(target)
+        ax[2].set_title("Target")
+        plt.show()
