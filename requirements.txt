@@ -1,0 +1,9 @@
+matplotlib==3.8.2
+mcculw==1.0.0
+networkx==3.2.1
+nidaqmx==1.0.0
+numpy==1.26.2
+pandas==2.2.2
+pytest==8.2.2
+pytest-benchmark==4.0.0
+pyvisa==1.14.1
