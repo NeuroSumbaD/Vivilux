@@ -111,3 +111,15 @@ Using $y_l$ as the dynamic threshold in the XCAL function results in *self-organ
 ## Optimizers
 
 ## Activations
+
+## Benchmarks
+
+Benchmarks are written in the `tests/benchmarks` directory using the `pytest-benchmark` framework.
+
+To run all benchmarks:
+```
+pip install -r requirements.txt
+pytest --log-cli-level=INFO
+```
+
+See useful [commandline options](https://pytest-benchmark.readthedocs.io/en/latest/usage.html#commandline-options) from the `pytest-benchmark` documentation.

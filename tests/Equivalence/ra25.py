@@ -50,7 +50,7 @@ dwtLog = pd.read_csv(path.join(directory, "ra25_dwtLog.csv"))
 with open(path.join(directory, "ra25_weights.json")) as weightsFile:
     weights = json.load(weightsFile)
 
-def ra25_init(error_threshold=0, numEpochs=1):
+def ra25_init(numHiddenLayers=2, errorThreshold=0, numEpochs=1):
     leabraRunConfig = {
         "DELTA_TIME": 0.001,
         "metrics": {
@@ -63,7 +63,7 @@ def ra25_init(error_threshold=0, numEpochs=1):
         "Learn": ["minus", "plus"],
         "Infer": ["minus"],
         "End": {
-            "threshold": error_threshold,
+            "threshold": errorThreshold,
             "isLower": True,
             "numEpochs": numEpochs,
         }
@@ -74,10 +74,11 @@ def ra25_init(error_threshold=0, numEpochs=1):
                     runConfig=leabraRunConfig,
                     )
     # Add layers
-    layerList = [Layer(inputSize, isInput=True, name="Input"),
-                Layer(hiddenSize, name="Hidden1"),
-                Layer(hiddenSize, name="Hidden2"),
-                Layer(outputSize, isTarget=True, name="Output")]
+    layerList = [Layer(inputSize, isInput=True, name="Input")]
+    for i in range(numHiddenLayers):
+        layerList.append(Layer(hiddenSize, name=f"Hidden{i+1}"))
+    layerList.append(Layer(outputSize, isTarget=True, name="Output"))
+    
     leabraNet.AddLayers(layerList[:-1])
     outputConfig = deepcopy(layerConfig_std)
     outputConfig["FFFBparams"]["Gi"] = 1.4
@@ -109,7 +110,7 @@ def ra25_init(error_threshold=0, numEpochs=1):
 if __name__ == "__main__":
     debugData = {"activityLog": activityLog,
                 "dwtLog": dwtLog,}
-    leabraNet = ra25_init(error_threshold=0.1, numEpochs=numEpochs)
+    leabraNet = ra25_init(num_hidden_layers=2, error_threshold=0, numEpochs=numEpochs)
     result = leabraNet.Learn(input=inputs, target=targets,
                             numEpochs=numEpochs,
                             reset=False,
