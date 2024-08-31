@@ -1,6 +1,6 @@
 from typing import Any
 from .meshes import Mesh
-from .photonics.ph_meshes import MZImesh
+from .photonics.meshes import MZImesh
 
 import numpy as np
 import nidaqmx

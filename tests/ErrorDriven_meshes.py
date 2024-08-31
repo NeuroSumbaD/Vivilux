@@ -10,7 +10,7 @@
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
-from vivilux.photonics.ph_meshes import MZImesh, DiagMZI, SVDMZI
+from vivilux.photonics.meshes import MZImesh, DiagMZI, SVDMZI
 from vivilux.photonics.devices import Volatile, phaseShift_GFThermal
 from vivilux.photonics.devices import Nonvolatile, phaseShift_PCM
 from vivilux.metrics import ThrMSE, ThrSSE

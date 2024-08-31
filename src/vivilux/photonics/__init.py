@@ -1,13 +1,12 @@
-from . import ph_layers
-from . import ph_meshes
+from . import meshes
 from . import utils
 
 import numpy as np
 
 
-__all__ = ["ph_layers", "ph_meshes"]
+__all__ = ["meshes"]
 
 ffMZIMeshConfig = {
-    "meshType": ph_meshes.MZImesh,
+    "meshType": meshes.MZImesh,
     "meshArgs": {},
 }

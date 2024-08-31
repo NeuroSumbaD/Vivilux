@@ -1,7 +1,7 @@
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
-from vivilux.photonics.ph_meshes import MZImesh
+from vivilux.photonics.meshes import MZImesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
 import numpy as np

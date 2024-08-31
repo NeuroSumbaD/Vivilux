@@ -2,7 +2,7 @@ from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
 import vivilux.photonics as px
-from vivilux.photonics.ph_meshes import MZImesh
+from vivilux.photonics.meshes import MZImesh
 from vivilux.photonics.utils import psToRect
 
 import numpy as np
