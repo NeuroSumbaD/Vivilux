@@ -15,7 +15,7 @@ from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
 import vivilux.photonics as px
-from vivilux.photonics.meshes import SVDMZI
+from vivilux.photonics.paths import SVDMZI
 from vivilux.photonics.utils import psToRect
 
 import numpy as np

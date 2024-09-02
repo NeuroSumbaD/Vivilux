@@ -1,7 +1,7 @@
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
-from vivilux.meshes import Mesh
+from vivilux.paths import Path
 from vivilux.metrics import ThrMSE, ThrSSE
 from vivilux.visualize import StackedMonitor
 

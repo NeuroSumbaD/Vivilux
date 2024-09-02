@@ -1,4 +1,4 @@
-from . import Layer, Mesh, Net, DELTA_TIME
+from . import Layer, Path, Net, DELTA_TIME
 from vivilux.activations import ReLu
 from vivilux.learningRules import CHL
 from vivilux.visualize import Monitor
@@ -9,7 +9,7 @@ class IsingNet(Net):
     '''Ising machine class which has one recurrent Layer of some neuron type
         with bistable output.
     '''
-    def __init__(self, layers: list[Layer], meshType: Mesh, name=None, meshArgs={}, numTimeSteps=50, monitoring=False, defMonitor=Monitor, **kwargs):
+    def __init__(self, layers: list[Layer], meshType: Path, name=None, meshArgs={}, numTimeSteps=50, monitoring=False, defMonitor=Monitor, **kwargs):
         '''Instantiates the mesh with a single layer as input and output.
         '''
         self.DELTA_TIME = DELTA_TIME
@@ -79,8 +79,8 @@ class RingOscillator(Layer):
         self.counter = np.array(self.offset) # counts steps since last flip
         self.modified = True
         # Empty initial excitatory and inhibitory meshes
-        self.excMeshes: list[Mesh] = []
-        self.inhMeshes: list[Mesh] = []
+        self.excMeshes: list[Path] = []
+        self.inhMeshes: list[Path] = []
         self.EXT = np.ones(length).astype(bool)
         
         self.freeze = False

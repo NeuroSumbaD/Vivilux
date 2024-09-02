@@ -1,6 +1,6 @@
 from typing import Any
-from .meshes import Mesh
-from .photonics.meshes import MZImesh
+from .paths import Path
+from .photonics.paths import MZImesh
 
 import numpy as np
 import nidaqmx
@@ -154,7 +154,7 @@ class HardMZI(MZImesh):
     def __init__(self, *args, updateMagnitude=0.01, mziMapping=[], barMZI = [],
                  inChannels=[12,8,9,10], outChannels=None,
                  **kwargs):
-        Mesh.__init__(self, *args, **kwargs)
+        Path.__init__(self, *args, **kwargs)
 
         self.numUnits = int(self.size*(self.size-1)/2)
         if len(mziMapping) == 0:

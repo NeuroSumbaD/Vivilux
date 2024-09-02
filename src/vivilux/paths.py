@@ -8,19 +8,22 @@ if TYPE_CHECKING:
     from .nets import Net
     from .layers import Layer
 
-from .photonics.devices import Device, Generic
+# from .photonics.devices import Device, Generic
 from .processes import XCAL
+from .signals import Data
 
 import numpy as np
 
 
-class Mesh:
-    '''Base class for meshes of synaptic elements.
+class Path:
+    '''Base class for a collection of synaptic elements.
     '''
     count = 0
+    SignalType = Data
     def __init__(self, 
-                 size: int,
-                 inLayer: Layer,
+                 sendLayer: Layer,
+                 recvLayer: Layer,
+                 # below are generic leabra kwargs
                  AbsScale: float = 1,
                  RelScale: float = 1,
                  InitMean: float = 0.5,
@@ -38,10 +41,11 @@ class Mesh:
                  wbDec = 1,
                  WtBalInterval = 10,
                  softBound = True,
-                 device = Generic(),
-                 **kwargs):
-        self.shape = (size, len(inLayer))
-        self.size = size if size > len(inLayer) else len(inLayer)
+                #  device = Generic(),
+                 **kwargs):  # kwargs is catchall for extra keyword args meant for child classes
+        self.shape = (len(recvLayer), len(sendLayer))
+        self.AttachLayer(recvLayer)
+        self.size = np.max([len(recvLayer), len(sendLayer)])
         self.Off = Off
         self.Gain = Gain
         self.dtype = dtype
@@ -65,94 +69,95 @@ class Mesh:
         # Generate from uniform distribution
         low = InitMean - InitVar
         high = InitMean + InitVar
-        self.matrix = np.random.uniform(low, high, size=(size, len(inLayer)))
+        self.matrix = np.random.uniform(low, high, size=(self.size, len(sendLayer)))
         self.linMatrix = np.copy(self.matrix) # initialize linear weight
         self.InvSigMatrix() # correct linear weight
 
         # Other initializations
         self.Gscale = 1#/len(inLayer)
-        self.inLayer = inLayer
-        self.OptThreshParams = inLayer.OptThreshParams
+        self.sendLayer = sendLayer
+        self.OptThreshParams = sendLayer.OptThreshParams
         self.lastAct = np.zeros(self.size, dtype=self.dtype)
         self.inAct = np.zeros(self.size, dtype=self.dtype)
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
         self.modified = False
 
-        self.name = f"MESH_{Mesh.count}"
-        Mesh.count += 1
+        self.name = f"MESH_{Path.count}"
+        Path.count += 1
 
         self.trainable = True
-        self.sndActAvg = inLayer.ActAvg
+        self.sndActAvg = sendLayer.ActAvg
         self.rcvActAvg = None
 
         # external matrix scaling parameters (constant synaptic gain)
         self.AbsScale = AbsScale
         self.RelScale = RelScale
 
-        self.AttachDevice(device)
+        # self.AttachDevice(device)
 
-    def GetEnergy(self, device: Device = None):
+    def CalcEnergy(self):
         '''Returns integrated energy over the course of the simulation.
             If a device is provided, it calculates the energy from the given
             device, otherwise it uses device parameters previously set.
         '''
-        if device is None:
-            self.totalEnergy = self.holdEnergy + self.updateEnergy
-            return self.totalEnergy, self.holdEnergy, self.updateEnergy
-        else:
-            holdEnergy = device.Hold(self.holdIntegration, self.holdTime)
+        raise NotImplementedError(f"{type(self)} does not implement CalcEnergy().")
+        # if device is None:
+        #     self.totalEnergy = self.holdEnergy + self.updateEnergy
+        #     return self.totalEnergy, self.holdEnergy, self.updateEnergy
+        # else:
+        #     holdEnergy = device.Hold(self.holdIntegration, self.holdTime)
             
-            updateEnergy = device.Set(self.setIntegration)
-            updateEnergy += device.Reset(self.resetIntegration)
+        #     updateEnergy = device.Set(self.setIntegration)
+        #     updateEnergy += device.Reset(self.resetIntegration)
 
-            totalEnergy = holdEnergy + updateEnergy
-            return totalEnergy, holdEnergy, updateEnergy
+        #     totalEnergy = holdEnergy + updateEnergy
+        #     return totalEnergy, holdEnergy, updateEnergy
     
-    def AttachDevice(self, device: Device):
-        '''Stores a copy of the device definition for use in updating.
+    # # def AttachDevice(self, device: Device):
+    # #     '''Stores a copy of the device definition for use in updating.
 
-            This function should be overwritten for meshses with different
-            parameter structures.
-        '''
-        self.device = device
-        self.holdEnergy = 0
-        self.updateEnergy = 0
+    # #         This function should be overwritten for meshses with different
+    # #         parameter structures.
+    # #     '''
+    # #     self.device = device
+    # #     self.holdEnergy = 0
+    # #     self.updateEnergy = 0
 
-        # integration variables for calculating energy of other devices
-        self.holdIntegration = 0
-        self.holdTime = 0
-        self.setIntegration = 0
-        self.resetIntegration = 0
+    # #     # integration variables for calculating energy of other devices
+    # #     self.holdIntegration = 0
+    # #     self.holdTime = 0
+    # #     self.setIntegration = 0
+    # #     self.resetIntegration = 0
 
-    def DeviceHold(self):
-        '''Calls the hold function for each device in the mesh according
-            to the current parameters.
+    # def DeviceHold(self):
+    #     '''Calls the hold function for each device in the mesh according
+    #         to the current parameters.
 
-            This function should be overwritten for meshses with different
-            parameter structures.
-        '''
-        DT = self.inLayer.net.DELTA_TIME
-        self.holdEnergy += self.device.Hold(self.matrix, DT)
+    #         This function should be overwritten for meshses with different
+    #         parameter structures.
+    #     '''
+    #     DT = self.inLayer.net.DELTA_TIME
+    #     self.holdEnergy += self.device.Hold(self.matrix, DT)
 
-        self.holdIntegration += np.sum(self.matrix)
-        self.holdTime += DT
+    #     self.holdIntegration += np.sum(self.matrix)
+    #     self.holdTime += DT
 
 
-    def DeviceUpdate(self, delta):
-        '''Calls the reset() and set() functions for each device in the mesh
-            according to the updated parameters
+    # def DeviceUpdate(self, delta):
+    #     '''Calls the reset() and set() functions for each device in the mesh
+    #         according to the updated parameters
 
-            This function should be overwritten for meshses with different
-            parameter structures.
-        '''
-        currMat = self.matrix
-        newMat = self.sigmoid(self.linMatrix + delta)
-        self.updateEnergy += self.device.Reset(currMat)
-        self.updateEnergy += self.device.Set(newMat)
+    #         This function should be overwritten for meshses with different
+    #         parameter structures.
+    #     '''
+    #     currMat = self.matrix
+    #     newMat = self.sigmoid(self.linMatrix + delta)
+    #     self.updateEnergy += self.device.Reset(currMat)
+    #     self.updateEnergy += self.device.Set(newMat)
 
-        self.setIntegration += np.sum(currMat)
-        self.resetIntegration += np.sum(newMat)
+    #     self.setIntegration += np.sum(currMat)
+    #     self.resetIntegration += np.sum(newMat)
     
     def set(self, matrix):
         self.modified = True
@@ -161,15 +166,15 @@ class Mesh:
 
     def setGscale(self):
         # TODO: handle case for inhibitory mesh
-        totalRel = np.sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes], dtype=self.dtype)
+        totalRel = np.sum([mesh.RelScale for mesh in self.recvLayer.excMeshes], dtype=self.dtype)
         self.Gscale = self.AbsScale * self.RelScale 
         self.Gscale /= totalRel if totalRel > 0 else 1
 
         # calculate average from input layer on last trial
-        self.avgActP = self.inLayer.ActAvg.ActPAvg
+        self.avgActP = self.sendLayer.ActAvg.ActPAvg
 
         #calculate average number of active neurons in sending layer
-        sendLayActN = np.maximum(np.round(self.avgActP*len(self.inLayer)), 1, dtype=self.dtype)
+        sendLayActN = np.maximum(np.round(self.avgActP*len(self.sendLayer)), 1, dtype=self.dtype)
         sc = 1/sendLayActN # TODO: implement relative importance
         self.Gscale *= sc
 
@@ -177,12 +182,12 @@ class Mesh:
         return self.Gscale * self.matrix
     
     def getInput(self):
-        act = self.inLayer.getActivity()
+        act = self.sendLayer.getActivity()
         pad = self.size - act.size
         return np.pad(act, pad_width=(0,pad))
 
     def apply(self):
-        self.DeviceHold()
+        # self.DeviceHold()
         data = self.getInput()
 
         # Implement delta-sender behavior (thresholds changes in conductance)
@@ -205,7 +210,9 @@ class Mesh:
 
         return self.applyTo(self.inAct[:self.shape[1]])
             
-    def applyTo(self, data):
+    def applyTo(self, data: Data):
+        if not isinstance(data, self.SignalType):
+            raise TypeError(f"Error in mesh[{self.name}]: Attempted to apply to type {type(data)} for path that accepts {self.SignalType}")
         try:
             synapticWeights = self.get()[:self.shape[0], :self.shape[1]]
             return np.array(synapticWeights @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
@@ -214,10 +221,10 @@ class Mesh:
                              f" to mesh of dimension: {self.shape}")
             # print(ve)
 
-    def AttachLayer(self, rcvLayer: Layer):
-        self.rcvLayer = rcvLayer
+    def AttachLayer(self, recvLayer: Layer):
+        self.recvLayer = recvLayer
         self.XCAL = XCAL() #TODO pass params from layer or mesh config
-        self.XCAL.AttachLayer(self.inLayer, rcvLayer)
+        self.XCAL.AttachLayer(self.sendLayer, recvLayer)
 
     def WtBalance(self):
         '''Updates the weight balancing factors used by XCAL.
@@ -299,7 +306,6 @@ class Mesh:
             This function should apply to all meshes.
         '''
         delta, m, n = self.CalculateUpdate(dwtLog=dwtLog)
-        self.DeviceUpdate(delta)
         self.ApplyUpdate(delta, m, n)
         self.WtBalance()
 
@@ -314,7 +320,7 @@ class Mesh:
         #TODO: This function is very messy, truncate if possible
         if "dwtLog" not in kwargs: return
         if kwargs["dwtLog"] is None: return #empty data
-        net = self.inLayer.net
+        net = self.sendLayer.net
         time = net.time
 
         viviluxData = {}
@@ -326,7 +332,7 @@ class Mesh:
 
         # isolate frame of important data from log
         dwtLog = kwargs["dwtLog"]
-        frame = dwtLog[dwtLog["sName"] == self.inLayer.name][dwtLog["rName"] == self.rcvLayer.name]
+        frame = dwtLog[dwtLog["sName"] == self.sendLayer.name][dwtLog["rName"] == self.recvLayer.name]
         frame = frame[frame["time"].round(3) == np.round(time, 3)]
         frame = frame.drop(["time", "rName", "sName"], axis=1)
         if len(frame) == 0: return
@@ -353,7 +359,7 @@ class Mesh:
         for key in leabraData:
             if key not in viviluxData: continue #skip missing columns
             vlDatum = viviluxData[key]
-            shape = (len(self.rcvLayer), len(self.inLayer))
+            shape = (len(self.recvLayer), len(self.sendLayer))
             vlDatum = vlDatum[:shape[0],:shape[1]]
             lbDatum = leabraData[key]
             percentError = 100 * (vlDatum - lbDatum) / lbDatum
@@ -410,18 +416,18 @@ class Mesh:
         return self.size
 
     def __str__(self):
-        return f"\n\t\t{self.name.upper()} ({self.size} <={self.inLayer.name}) = {self.get()}"
+        return f"\n\t\t{self.name.upper()} ({self.size} <={self.sendLayer.name}) = {self.get()}"
 
-class TransposeMesh(Mesh):
+class TransposeMesh(Path):
     '''A class for feedback meshes based on the transpose of another mesh.
     '''
-    def __init__(self, mesh: Mesh,
-                 inLayer: Layer,
+    def __init__(self, mesh: Path,
+                 sendLayer: Layer,
                  AbsScale: float = 1,
                  RelScale: float = 0.2,
                  **kwargs) -> None:
-        super().__init__(mesh.size, inLayer, AbsScale, RelScale, **kwargs)
-        self.shape = (self.shape[1], self.shape[0])
+        # super().__init__(sendLayer, mesh.recvLayer, AbsScale, RelScale, **kwargs)
+        self.shape = mesh.shape[::-1]
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
 
@@ -434,7 +440,7 @@ class TransposeMesh(Mesh):
         return self.Gscale * self.mesh.get().T 
     
     def getInput(self):
-        act = self.mesh.inLayer.getActivity()
+        act = self.mesh.sendLayer.getActivity()
         pad = self.shape[1] - act.size
         return np.pad(act, pad_width=(0,pad))
 

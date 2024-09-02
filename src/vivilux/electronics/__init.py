@@ -1,6 +1,6 @@
-from . import meshes
+from . import paths
 
 import numpy as np
 
 
-__all__ = ["meshes", "materials", "signals"]
+__all__ = ["paths", "materials", "signals"]

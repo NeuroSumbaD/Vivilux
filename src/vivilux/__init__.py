@@ -32,12 +32,12 @@ np.random.seed(seed=0)
 
 from .nets import *
 from .layers import *
-from .meshes import *
+from .paths import *
 from . import photonics
 
 __all__ = ['nets', 
            'layers',
-           'meshes',
+           'paths',
            'activations',
            'metrics',
            'optimizers',

@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .layers import Layer
-    from .meshes import Mesh
+    from .paths import Path
 
 from collections.abc import Iterator
 import math
@@ -15,7 +15,7 @@ import math
 import numpy as np
 
 # import defaults
-from .meshes import Mesh, TransposeMesh
+from .paths import Path, TransposeMesh
 from .metrics import RMSE
 from .optimizers import Simple
 from .visualize import Monitor
@@ -26,7 +26,7 @@ from .photonics.devices import Device
 ###<------ DEFAULT CONFIGURATIONS ------>###
 
 ffMeshConfig_std = {
-    "meshType": Mesh,
+    "meshType": Path,
     "meshArgs": {},
 }
 
@@ -234,14 +234,14 @@ class Net:
                       receiving: Layer, # further from source
                       meshConfig = None,
                       device: Device = None,
-                      ) -> Mesh:
+                      ) -> Path:
         '''Adds a connection from the sending layer to the receiving layer.
         '''
         # Use default ffMeshConfig if None is provided
         meshConfig = self.layerConfig["ffMeshConfig"] if meshConfig is None else meshConfig
         size = len(receiving)
         meshArgs = meshConfig["meshArgs"]
-        mesh = meshConfig["meshType"](size, sending, dtype=self.dtype, **meshArgs)
+        mesh = meshConfig["meshType"](sending, receiving, dtype=self.dtype, **meshArgs)
         receiving.addMesh(mesh)
 
         if device is not None:
@@ -254,7 +254,7 @@ class Net:
                        receivings: list[Layer], # further from source
                        meshConfig = None,
                        device: Device = None,
-                       ) -> list[Mesh]:
+                       ) -> list[Path]:
         '''Helper function for generating multiple connections at once.
         '''
         meshes = []
@@ -268,7 +268,7 @@ class Net:
                       receiving: Layer, # further from source
                       ffMeshConfig = None,
                       fbMeshConfig = None,
-                      ) -> Mesh:
+                      ) -> Path:
         '''Adds a set of bidirectional connections from the sending layer to
             the receiving layer. The feedback mesh is assumed to be a transpose
             of the feedforward mesh.
@@ -280,7 +280,7 @@ class Net:
         # feedforward connection
         size = len(sending)
         meshArgs = ffMeshConfig["meshArgs"]
-        ffMesh = ffMeshConfig["meshType"](size, sending, **meshArgs)
+        ffMesh = ffMeshConfig["meshType"](sending, receiving, **meshArgs)
         receiving.addMesh(ffMesh)
 
         # feedback connection
@@ -295,7 +295,7 @@ class Net:
                        sendings: list[Layer], # closer to source
                        receivings: list[Layer], # further from source
                        meshConfig = None,
-                       ) -> list[Mesh]:
+                       ) -> list[Path]:
         '''Helper function for generating multiple bidirectional connections 
             at once.
         '''

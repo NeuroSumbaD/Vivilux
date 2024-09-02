@@ -7,7 +7,7 @@ from vivilux import *
 from vivilux.learningRules import CHL
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
-from vivilux.meshes import Mesh, AbsMesh
+from vivilux.paths import Path, AbsMesh
 from vivilux.metrics import RMSE
 from vivilux.activations import NoisyXX1
 

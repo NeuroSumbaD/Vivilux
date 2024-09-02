@@ -1,12 +1,12 @@
-from . import meshes
+from . import paths
 from . import utils
 
 import numpy as np
 
 
-__all__ = ["meshes"]
+__all__ = ["paths"]
 
 ffMZIMeshConfig = {
-    "meshType": meshes.MZImesh,
+    "meshType": paths.MZImesh,
     "meshArgs": {},
 }

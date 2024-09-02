@@ -7,12 +7,19 @@ import numpy as np
 
 from abc import ABC, abstractmethod
 
+from .signals import Control
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .materials import Material
+
 class ParameterSet(ABC):
     @abstractmethod
     def __init__(self, shape: tuple[int, int], 
                  values: np.ndarray = None,
-                 period: tuple[float, float] = (None,None),
+                #  period: tuple[float, float] = (None,None),
                  limits: tuple[float,float] = (None,None),
+                 materials: dict[str, Material] = {},
                  ) -> None:
         '''Randomly initializes the parameter values from the defined shape.
         '''
@@ -20,7 +27,7 @@ class ParameterSet(ABC):
         self.shape = shape
         self.numElements = np.prod(shape)
         self.setValues(values)
-        self.period = period
+        # self.period = period
         self.limits = limits
         self.records = []
 
@@ -70,10 +77,10 @@ class ParameterSet(ABC):
     def clip(self, values: np.ndarray):
         lowerLimit = self.limits[0]
         upperLimit = self.limits[1]
-        if lowerLimit is not None:
-            values[values < lowerLimit] = lowerLimit
-        if upperLimit is not None:
-            values[values > upperLimit] = upperLimit
+        # if lowerLimit is not None:
+        values[values < lowerLimit] = lowerLimit
+        # if upperLimit is not None:
+        values[values > upperLimit] = upperLimit
         return values
 
     def clipPeriod(self, values: np.ndarray):
@@ -122,7 +129,7 @@ class Attenuations(ParameterSet):
 
 class Gains(ParameterSet):
     def __init__(self, shape: tuple[int,int], values = None ) -> None:
-        super().__init__(shape, limits=(1,None), values = values)
+        super().__init__(shape, limits=(1,np.inf), values = values)
 
     def Initialize(self, shape: tuple[int, int]) -> np.ndarray:
         return np.ones(shape)

@@ -1,7 +1,7 @@
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
-from vivilux.meshes import Mesh
+from vivilux.paths import Path
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 from vivilux.visualize import Magnitude
 
@@ -44,7 +44,7 @@ leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
 # Add feedforward connections
 ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:])
 # Add feedback connections
-fbMeshConfig = {"meshType": Mesh,
+fbMeshConfig = {"meshType": Path,
                 "meshArgs": {"AbsScale": 1,
                              "RelScale": 0.2},
                 }

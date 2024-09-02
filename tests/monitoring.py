@@ -1,6 +1,6 @@
 import vivilux as vl
 import vivilux.photonics
-from vivilux import FFFB, Layer, Mesh, InhibMesh
+from vivilux import FFFB, Layer, Path, InhibMesh
 from vivilux.learningRules import CHL, GeneRec, ByPass
 from vivilux.optimizers import Adam
 

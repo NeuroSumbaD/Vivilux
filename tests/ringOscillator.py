@@ -13,7 +13,7 @@ isingMachine = ising.IsingNet([
     ringOscillator,
     ],
     # meshType=photonics.MZImesh,
-    meshType=vl.Mesh,
+    meshType=vl.Path,
     name="Ising Machine")
 
 mesh = isingMachine.layers[0].excMeshes[0]

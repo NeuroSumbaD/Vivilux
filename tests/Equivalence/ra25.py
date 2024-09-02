@@ -7,7 +7,7 @@
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
-from vivilux.meshes import Mesh
+from vivilux.paths import Path
 from vivilux.metrics import ThrMSE, ThrSSE
 from vivilux.visualize import StackedMonitor
 
@@ -94,7 +94,7 @@ def ra25_init(error_threshold=0, numEpochs=1):
             rcvIndex = leabraNet.layers.index(netLayer)
             isFeedback = sndIndex > rcvIndex
             meshConfig = {
-                "meshType": Mesh,
+                "meshType": Path,
                 "meshArgs": {"AbsScale": gscale,
                             "RelScale": 0.2 if isFeedback else 1},
             }

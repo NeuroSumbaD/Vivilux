@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .nets import Net
-    from .meshes import Mesh
+    from .paths import Path
     from .processes import Process, NeuralProcess, PhasicProcess
 
 from .processes import ActAvg, FFFB
@@ -76,8 +76,8 @@ class Layer:
         self.Vm = np.zeros(length, dtype=self.dtype)
 
         # Empty initial excitatory and inhibitory meshes
-        self.excMeshes: list[Mesh] = []
-        self.inhMeshes: list[Mesh] = []
+        self.excMeshes: list[Path] = []
+        self.inhMeshes: list[Path] = []
         self.neuralProcesses: list[NeuralProcess]  = []
         self.phaseProcesses: list[PhasicProcess] = []
         self.phaseHist = {}
@@ -401,8 +401,8 @@ class Layer:
     def Unfreeze(self):
         self.freeze = False
     
-    def addMesh(self, mesh: Mesh, excitatory = True):
-        mesh.AttachLayer(self)
+    def addMesh(self, mesh: Path, excitatory = True):
+        # mesh.AttachLayer(self)
         if excitatory:
             self.excMeshes.append(mesh)
         else:

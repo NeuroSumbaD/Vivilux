@@ -1,4 +1,4 @@
-from ..meshes import Mesh
+from ..paths import Path
 from ..layers import Layer
 from .utils import *
 from .devices import Device
@@ -6,12 +6,12 @@ from .devices import Device
 import numpy as np
 from scipy.stats import ortho_group
 
-class Unitary(Mesh):
+class Unitary(Path):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.set(ortho_group.rvs(len(self)))
 
-class MZImesh(Mesh):
+class MZImesh(Path):
     '''Base class for a single rectangular MZI used in incoherent mode.
     '''
     NAME = "Rect_MZI"
@@ -47,12 +47,12 @@ class MZImesh(Mesh):
                          wbLoGain,wbInc,wbDec,WtBalInterval,softBound, **kwargs)
 
         # pad initial matrix to square matrix
-        if size > len(self.inLayer): # expand variables appropriately
+        if size > len(self.sendLayer): # expand variables appropriately
             size = size
             self.lastAct = np.zeros(size, dtype=self.dtype)
             self.inAct = np.zeros(size, dtype=self.dtype)
         else: 
-            size = len(self.inLayer)
+            size = len(self.sendLayer)
         shape1 = self.linMatrix.shape
         self.linMatrix = np.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
         shape2 = self.matrix.shape
@@ -101,7 +101,7 @@ class MZImesh(Mesh):
             This function should be overwritten for meshses with different
             parameter structures.
         '''
-        DT = self.inLayer.net.DELTA_TIME
+        DT = self.sendLayer.net.DELTA_TIME
         params = self.getParams()
         self.holdEnergy += self.device.Hold(params, DT)
 
@@ -431,7 +431,7 @@ class DiagMZI(MZImesh):
         self.resetIntegration = 0
 
     def DeviceHold(self):
-        DT = self.inLayer.net.DELTA_TIME
+        DT = self.sendLayer.net.DELTA_TIME
         currParams = self.getParams()
         self.holdEnergy += self.psDevice.Hold(currParams[:1], DT)
         # TODO implement SOA
@@ -512,7 +512,7 @@ class SVDMZI(MZImesh):
         self.resetIntegration = 0
 
     def DeviceHold(self):
-        DT = self.inLayer.net.DELTA_TIME
+        DT = self.sendLayer.net.DELTA_TIME
         currParams = self.getParams()
         self.holdEnergy += self.psDevice.Hold(currParams[:1], DT)
         # TODO implement SOA
@@ -573,10 +573,10 @@ class SVDMZI(MZImesh):
 
         return params
         
-class phfbMesh(Mesh):
+class phfbMesh(Path):
     '''A class for photonic feedback meshes based on the transpose of an MZI mesh.
     '''
-    def __init__(self, mesh: Mesh, inLayer: Layer, fbScale = 0.2) -> None:
+    def __init__(self, mesh: Path, inLayer: Layer, fbScale = 0.2) -> None:
         super().__init__(mesh.size, inLayer)
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
@@ -592,7 +592,7 @@ class phfbMesh(Mesh):
         return self.fbScale * self.mesh.Gscale * self.mesh.get().T
     
     def getInput(self):
-        return self.mesh.inLayer.outAct
+        return self.mesh.sendLayer.outAct
 
     def Update(self, delta):
         return None
@@ -605,7 +605,7 @@ class phfbMesh(Mesh):
 
 MZImesh.feedback = phfbMesh
 
-class Crossbar(Mesh):
+class Crossbar(Path):
     def __init__(self,
                  size: int,
                  inLayer: Layer,
@@ -652,12 +652,12 @@ class Crossbar(Mesh):
                          Gain,dtype,wbOn,wbAvgThr,wbHiThr,wbHiGain,wbLoThr,
                          wbLoGain,wbInc,wbDec,WtBalInterval,softBound, **kwargs)
         # pad initial matrix to square matrix
-        if size > len(self.inLayer): # expand variables appropriately
+        if size > len(self.sendLayer): # expand variables appropriately
             size = size
             self.lastAct = np.zeros(size, dtype=self.dtype)
             self.inAct = np.zeros(size, dtype=self.dtype)
         else: 
-            size = len(self.inLayer)
+            size = len(self.sendLayer)
             
         shape1 = self.linMatrix.shape
         self.linMatrix = np.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
