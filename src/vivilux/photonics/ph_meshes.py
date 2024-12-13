@@ -277,7 +277,7 @@ class MZImesh(Mesh):
 
             # Solve least square regression for update
             for iteration in range(self.numDirections):
-                xtx = X.T @ X
+                xtx = X.T @ X # add L2 regularizer (equivalent to imposing gaussian prior or rewriting optimization as y - Xa + epsilon*I)
                 rank = np.linalg.matrix_rank(xtx)
                 if rank == len(xtx): # matrix will have an inverse
                     a = np.linalg.inv(xtx) @ X.T @ deltaFlat
