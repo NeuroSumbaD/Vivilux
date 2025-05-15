@@ -10,7 +10,7 @@
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
-from vivilux.photonics.ph_meshes import MZImesh, DiagMZI, SVDMZI, OversizedMZI
+from vivilux.meshes import Mesh
 from vivilux.photonics.devices import Volatile, phaseShift_GFThermal
 from vivilux.photonics.devices import Nonvolatile, phaseShift_PCM
 from vivilux.metrics import ThrMSE, ThrSSE
@@ -31,7 +31,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-numEpochs = 14
+numEpochs = 50
 inputSize = 4
 hiddenSize = 4
 outputSize = 2
@@ -72,7 +72,7 @@ fig, axs = plt.subplots(1,2, figsize=(20,12))
 names = []
 neuralEnergies = []
 synapticEnergies = []
-for meshtype in [OversizedMZI]: #[MZImesh, DiagMZI, SVDMZI]:
+for meshtype in [Mesh]: #[MZImesh, DiagMZI, SVDMZI]:
     # Default Leabra net
     leabraNet = Net(name = "LEABRA_NET--" + meshtype.__name__,
                     monitoring= True,
@@ -127,18 +127,6 @@ for meshtype in [OversizedMZI]: #[MZImesh, DiagMZI, SVDMZI]:
     synapticEnergies.append(synapticEnergy)
     
     axs[0].plot(result['AvgSSE'], label=meshtype.__name__)
-    
-    numOverflows = 0
-    for layer in leabraNet.layers:
-        for mesh in layer.excMeshes:
-            numOverflows += mesh.numOverflows
-        
-        for mesh in layer.inhMeshes:
-            numOverflows += mesh.numOverflows
-
-    maxOverflows = numSamples*numEpochs*(len(layerList[1:])+len(layerList[1:2]))
-    print(f"Total number of overflows for {leabraNet.name}: "
-          f"{numOverflows}/{maxOverflows}")
 
 baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))),
                            targets) for entry in 
@@ -161,10 +149,12 @@ axs[1].legend()
 
 print(f"Done.")
 
+
 print("Weights for each layer:")
 for layer in leabraNet.layers:
     for mesh in layer.excMeshes:
         print(f"Layer '{layer.name}' {mesh.name}:\n{mesh.matrix}")
+
 
 W1ff = leabraNet.layers[1].excMeshes[0].matrix
 W1fb = leabraNet.layers[1].excMeshes[1].matrix

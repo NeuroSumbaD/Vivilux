@@ -605,6 +605,148 @@ class phfbMesh(Mesh):
 
 MZImesh.feedback = phfbMesh
 
+class OversizedMZI(MZImesh):
+    def __init__(self,
+                 size: int,
+                 inLayer: Layer,
+                 aux_in: int = 1,
+                 aux_out: int = 1,
+                 AbsScale: float = 1,
+                 RelScale: float = 1,
+                 InitMean: float = 0.5,
+                 InitVar: float = 0.25,
+                 Off: float = 1,
+                 Gain: float = 6,
+                 dtype = np.float64,
+                 wbOn = True,
+                 wbAvgThr = 0.25,
+                 wbHiThr = 0.4,
+                 wbHiGain = 4,
+                 wbLoThr = 0.4,
+                 wbLoGain = 6,
+                 wbInc = 1,
+                 wbDec = 1,
+                 WtBalInterval = 10,
+                 softBound = True,
+                 numDirections = None,
+                 updateMagnitude = 0.1,
+                 numSteps = 200,
+                 atol = 0, # absolute tolerance
+                 rtol = 1e-2, # relative tolerance
+                 bitPrecision = None,
+                 **kwargs):
+        self.aux_in = aux_in
+        self.aux_out = aux_out
+        Mesh.__init__(self,size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
+                      Gain,dtype,wbOn,wbAvgThr,wbHiThr,wbHiGain,wbLoThr,
+                      wbLoGain,wbInc,wbDec,WtBalInterval,softBound, **kwargs)
+        
+        # pad initial matrix to square matrix
+        if size > len(self.inLayer): # expand variables appropriately
+            size = size
+            self.lastAct = np.zeros(size, dtype=self.dtype)
+            self.inAct = np.zeros(size, dtype=self.dtype)
+        else: 
+            size = len(self.inLayer)
+        shape1 = self.linMatrix.shape
+        self.linMatrix = np.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
+        shape2 = self.matrix.shape
+        self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
+        
+        self.mesh_size = max(size + aux_in, size + aux_out)
+        self.amplifiers = np.ones(self.mesh_size)
+        self.numUnits = int(self.mesh_size*(self.mesh_size-1)/2)
+        self.bitPrecision = bitPrecision
+        self.bitMask = int(2**bitPrecision - 1) if bitPrecision is not None else None
+        self.Initialize()
+        numParams = np.concatenate([param.flatten() for param in self.getParams()]).size
+        # arbitrary guess for how many directions are needed
+        self.numDirections = int(np.round(numParams/4)) if numDirections is None else numDirections
+        self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
+        self.numSteps = numSteps
+        
+        # early stopping criteria for LAMM
+        self.atol = atol
+        self.rtol = rtol
+        self.numOverflows = 0 # counts each time LAMM reaches numSteps
+
+        self.setFromParams()
+
+    def getFromParams(self, params=None):
+        params = self.getParams() if params is None else params
+        self.boundParams(params)
+        self.ApplyBitPrecision(params)
+        complexMat = psToRect(params[0], self.mesh_size)
+        oversizedMat = np.square(np.abs(complexMat))
+
+        # apply multipliers to each row
+        oversizedMat = Diagonalize(params[1]) @ oversizedMat
+
+        N = self.mesh_size
+        num_aux_in = self.aux_in
+        num_aux_out = self.aux_out
+        real_matrix = oversizedMat[1:(N-(num_aux_out-1)), :-num_aux_in]
+        return real_matrix
+
+    def getParams(self):
+        return [self.phaseShifters, self.amplifiers]
+    
+    def setParams(self, params):
+        self.boundParams(params)
+        self.checkNaN(params)
+        
+
+        self.DeviceUpdate(params) # TODO: Implement SOA udpates
+        self.phaseShifters = params[0]
+        self.amplifiers = params[1]
+
+        self.modified = True
+    
+    def boundParams(self, params):
+        params[0] = BoundTheta(params[0])
+        params[1] = BoundGain(params[1], lower=1, upper=10)
+
+        return params
+    
+    def AttachDevice(self,
+                     psDevice: Device,
+                    #  soaDevice: Device, #TODO Implement SOA
+                     ):
+        self.psDevice = psDevice
+        # self.soaDevice = soaDevice
+        self.holdEnergy = 0
+        self.updateEnergy = 0
+
+        # integration variables for calculating energy of other devices
+        self.holdIntegration = 0
+        self.holdTime = 0
+        self.setIntegration = 0
+        self.resetIntegration = 0
+    
+    def DeviceHold(self):
+        DT = self.inLayer.net.DELTA_TIME
+        currParams = self.getParams()
+        self.holdEnergy += self.psDevice.Hold(currParams[:1], DT)
+        # TODO implement SOA
+
+        self.holdIntegration += np.sum(currParams[:1])
+        self.holdTime += DT
+
+    def DeviceUpdate(self, updatedParams):
+        '''Calls the reset() and set() functions for each device in the mesh
+            according to the updated parameters
+
+            This function should be overwritten for meshses with different
+            parameter structures.
+        '''
+        currParams = self.getParams()
+        self.updateEnergy += self.psDevice.Reset(currParams[:1])
+        self.updateEnergy += self.psDevice.Set(updatedParams[:1])
+        
+        # TODO implement SOA
+        self.setIntegration += np.sum(currParams[:1])
+        self.resetIntegration += np.sum(updatedParams[:1])
+
 class Crossbar(Mesh):
     def __init__(self,
                  size: int,
