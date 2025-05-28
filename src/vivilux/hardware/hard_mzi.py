@@ -1,151 +1,20 @@
-from typing import Any
-from .meshes import Mesh
-from .photonics.ph_meshes import MZImesh
-
-import numpy as np
-import nidaqmx
-import nidaqmx.system
-from mcculw import ul
-from mcculw.device_info import DaqDeviceInfo
-from mcculw.enums import InterfaceType
-import pyvisa as visa
+'''Module providing interface for hardware MZI mesh.
+'''
 
 from time import sleep
 
+import numpy as np
+import nidaqmx
+from mcculw import ul
+
+from ..meshes import Mesh
+from ..photonics.ph_meshes import MZImesh
+from vivilux.hardware.utils import L1norm, magnitude, correlate
+from vivilux.hardware.lasers import InputGenerator
+import vivilux.hardware.mcc as mcc
+
 SLEEP = 0.5 # seconds
 LONG_SLEEP = 0.5 # seconds
-
-    
-def config_first_detected_device(board_num, dev_id_list=None):
-    """Adds the first available device to the UL.  If a types_list is specified,
-    the first available device in the types list will be add to the UL.
-
-    Parameters
-    ----------
-    board_num : int
-        The board number to assign to the board when configuring the device.
-
-    dev_id_list : list[int], optional
-        A list of product IDs used to filter the results. Default is None.
-        See UL documentation for device IDs.
-    """
-    ul.ignore_instacal()
-    devices = ul.get_daq_device_inventory(InterfaceType.ANY)
-    if not devices:
-        raise Exception('Error: No DAQ devices found')
-
-    print('Found', len(devices), 'DAQ device(s):')
-    for device in devices:
-        print('  ', device.product_name, ' (', device.unique_id, ') - ',
-              'Device ID = ', device.product_id, sep='')
-
-    device = devices[0]
-    if dev_id_list:
-        device = next((device for device in devices
-                       if device.product_id in dev_id_list), None)
-        if not device:
-            err_str = 'Error: No DAQ device found in device ID list: '
-            err_str += ','.join(str(dev_id) for dev_id in dev_id_list)
-            raise Exception(err_str)
-            
-            
-
-    # Add the first DAQ device to the UL with the specified board number
-    ul.create_daq_device(0, devices[0])
-    ul.create_daq_device(1, devices[1])
-    ul.create_daq_device(2, devices[2])
-    #ul.create_daq_device(3, devices[3])
-    
-# DAC initialization
-def DAC_Init():
-    use_device_detection = True
-    dev_id_list = []
-    board_num = 0
-     
-    try:
-        if use_device_detection:
-            config_first_detected_device(board_num, dev_id_list)
-    
-        daq_dev_info = DaqDeviceInfo(board_num)
-        if not daq_dev_info.supports_analog_output:
-            raise Exception('Error: The DAQ device does not support '
-                            'analog output')
-    
-        print('\nActive DAQ device: ', daq_dev_info.product_name, ' (',
-              daq_dev_info.unique_id, ')\n', sep='')
-    
-        ao_info = daq_dev_info.get_ao_info()
-        ao_range = ao_info.supported_ranges[0]
-        return ao_range
-    except Exception as e:
-        print('\n', e)
-
-ao_range = DAC_Init()
-    
-# ADC initialization
-system = nidaqmx.system.System.local()
-print("Driver version: ", system.driver_version)
-for device in system.devices:
-    print("Device:\n", device) 
-
-
-
-def correlate(a, b):
-    magA = np.sqrt(np.sum(np.square(a)))
-    magB = np.sqrt(np.sum(np.square(b)))
-    return np.dot(a,b)/(magA*magB)
-
-def magnitude(a):
-    return np.sqrt(np.sum(np.square(a)))
-
-def L1norm(a):
-    return np.sum(np.abs(a))
-    
-class Agilent8164():
-    def __init__(self, port='GPIB0::20::INSTR'):
-        #self.wss = visa.SerialInstrument('COM1')
-        self.rm = visa.ResourceManager()
-        self.main = self.rm.open_resource(port)
-        #self.main.baud_rate = 115200
-        self.id = self.main.query('*IDN?')
-        print(self.id)
-        
-    def readpow(self,slot=2,channel=1):
-        outpt = self.main.query('fetch'+str(slot) +':chan'+str(channel)+':pow?')
-        return float(outpt)*1e9 #nW
-
-    def write(self,str):
-        self.main.write(str)
-        
-    def query(self,str):
-        result = self.main.query(str)
-        return result
-    
-    def readpowall4(self):
-        pow_list = []
-        slot_list = [2,4]
-        for k in slot_list:
-            for kk in range(2):
-                pow_list.append(self.readpow(slot=k,channel=kk+1))
-        return pow_list
-    
-    def readpowall2(self):
-        pow_list = []
-        pow_list.append(self.readpow(slot=4,channel=1))
-        pow_list.append(self.readpow(slot=4,channel=2))
-        return pow_list
-    
-    def laserpower(self,inpt):
-        self.main.write('sour0:pow '+str(inpt[0])+'uW')
-        self.main.write('sour1:pow '+str(inpt[1])+'uW')
-        self.main.write('sour3:pow '+str(inpt[2])+'uW')
-        self.main.write('sour4:pow '+str(inpt[3])+'uW')
-        
-    def lasers_on(self,inpt=[1,1,1,1]):
-        self.main.write('sour0:pow:stat '+str(inpt[0]))
-        self.main.write('sour1:pow:stat '+str(inpt[1]))
-        self.main.write('sour3:pow:stat '+str(inpt[2]))
-        self.main.write('sour4:pow:stat '+str(inpt[3]))
 
 class HardMZI(MZImesh):
     upperThreshold = 5.5
@@ -188,7 +57,7 @@ class HardMZI(MZImesh):
         '''Takes a list of MZI->device mappingss and sets each MZI to the bar state.
         '''
         for device, chan, value in mzis:
-            ul.v_out(device, chan, ao_range, value)
+            ul.v_out(device, chan, mcc.ao_range, value)
 
 
     def setParams(self, params):
@@ -204,7 +73,7 @@ class HardMZI(MZImesh):
         '''Sets the current matrix from the phase shifter params.
         '''
         for (dev, chan), volt in zip(self.mziMapping, self.voltages.flatten()):
-            ul.v_out(dev, chan, ao_range, volt)
+            ul.v_out(dev, chan, mcc.ao_range, volt)
 
     def testParams(self, params):
         '''Temporarily set the params'''
@@ -212,7 +81,7 @@ class HardMZI(MZImesh):
         assert params.max() <= self.upperLimit and params.min() >= 0, f"Error params out of bounds: {params}"
         for (dev, chan), volt in zip(self.mziMapping, params.flatten()):
             assert volt >= 0 and volt <= self.upperLimit, f"ERROR voltage out of bounds: {params}"
-            ul.v_out(dev, chan, ao_range, volt)
+            ul.v_out(dev, chan, mcc.ao_range, volt)
 
         powerMatrix = np.zeros((self.size, self.size)) # for pass by reference
         powerMatrix = self.measureMatrix(powerMatrix)
@@ -221,7 +90,7 @@ class HardMZI(MZImesh):
 
     def resetParams(self):
         for (dev, chan), volt in zip(self.mziMapping, self.voltages.flatten()):
-            ul.v_out(dev, chan, ao_range, volt)
+            ul.v_out(dev, chan, mcc.ao_range, volt)
     
     def getParams(self):
         return [self.voltages]
@@ -428,131 +297,3 @@ class HardMZI(MZImesh):
 
     # def Update(self, delta: np.ndarray):
     #     self.records.append(self.stepGradient(delta))
-class InputGenerator:
-    def __init__(self, size=4, detectors = [12,8,9,10], limits=[160,350], verbose=False) -> None:
-        self.size = size
-        self.agilent = Agilent8164()
-        self.agilent.lasers_on()
-        self.detectors = detectors
-        self.limits=limits
-        self.maxMagnitude = limits[1]-limits[0]
-        self.lowerLimit = limits[0]
-        self.chanScalingTable = np.ones((20, size)) #initialize scaling table
-        self.calibrated = False
-        # self.calibratePower()
-        self.readDetectors()
-        sleep(SLEEP)
-        self.calculateScatter()
-        
-    def calculateScatter(self):
-        print("Calculating the scatter matrix...")
-        Y = np.zeros((self.size,self.size))
-        Xinv = np.zeros((self.size,self.size))
-        for chan in range(self.size):
-            oneHot = np.zeros(self.size)
-            oneHot[chan] = 1
-            print("\tOne-hot: ", oneHot)
-            self.agilent.lasers_on(oneHot.astype(int))
-            sleep(LONG_SLEEP)
-            self.agilent.laserpower(oneHot*350)
-            sleep(LONG_SLEEP)
-            Y[:,chan] = self.readDetectors()
-            Xinv[:,chan] = oneHot/350
-            sleep(LONG_SLEEP)
-        # print("Detector outputs:\n", Y)
-        self.scatter = Y @ Xinv
-        # print("Scatter matrix:\n", self.scatter)
-        self.invScatter = np.linalg.inv(self.scatter)
-        print("Inverse scatter matrix:\n", self.invScatter)
-        # maxS = np.max(self.invScatter)
-        # minS = np.min(self.invScatter)
-        # self.a = 250/(maxS-minS)
-        # self.b = 350 - self.a*maxS
-        self.a = 350-100
-        self.b = 100
-        
-            
-
-    # def calibratePower(self):
-    #     '''Create a table for the scaling factors between power setting and the
-    #         true measured values detected on chip.
-    #     '''
-    #     print("Calibrating power...")
-    #     self.powers = np.linspace(0,1,20)
-
-    #     for index, power in enumerate(self.powers):
-    #         vector = np.ones(self.size) * power
-    #         self.__call__(vector)
-    #         detectors = self.readDetectors()
-    #         # print(f"\tDetector values: {detectors}")
-    #         self.chanScalingTable[index,:] = np.min(detectors)/detectors # scaling factors
-    #     print("Scaling table:")
-    #     print(self.chanScalingTable)
-    #     self.calibrated = True
-
-    # def chanScaling(self, vector):
-    #     '''Accounts for differing coupling factors when putting an input into
-    #         the MZI mesh. The scaling table must first be generated by running 
-    #         `calibratePower()`.
-    #     '''
-    #     scaleFactors = np.ones(self.size)
-    #     for chan in range(self.size):
-    #         intendedPower = vector[chan]
-    #         scaling = self.chanScalingTable[:, chan]
-    #         # Find index for sorted insertion
-    #         tableIndex = np.searchsorted(self.powers, intendedPower)
-    #         if tableIndex == 0 or tableIndex==len(self.powers):
-    #             scaleFactors[chan] = scaling[tableIndex] if tableIndex == 0 else scaling[tableIndex-1]
-    #         else:
-    #             lowerPower = self.powers[tableIndex-1] 
-    #             upperPower = self.powers[tableIndex] 
-    #             lowerFactor = scaling[tableIndex-1] 
-    #             upperFactor = scaling[tableIndex]
-    #             linInterpolation = (intendedPower-lowerPower)/(upperPower-lowerPower)
-    #             scaleFactors[chan] = (linInterpolation)*upperFactor + (1-linInterpolation)*lowerFactor
-    #     return np.multiply(vector, scaleFactors)
-
-    def scalePower(self, vector):
-        '''Takes in a vector with values on the range [0,1] and scales
-            according to the max and min of the lasers and the attenuation
-            factors between channels.
-        '''
-        # scaledVector = self.a * (self.invScatter @ vector)
-        scaledVector = self.a * vector
-        # if self.calibrated:
-        #     scaledVector = self.chanScaling(scaledVector)
-        return scaledVector + self.b
-    
-    def readDetectors(self):
-        if not hasattr(self, "offset"):
-            self.agilent.lasers_on(np.zeros(self.size))
-            sleep(LONG_SLEEP)
-            with nidaqmx.Task() as task:
-                for chan in self.detectors:
-                    task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
-                    max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-                data = np.array(task.read(number_of_samples_per_channel=100))
-                data = np.mean(data[:,10:],axis=1)
-            self.offset = data
-            self.agilent.lasers_on(np.ones(self.size))
-            sleep(LONG_SLEEP)
-        with nidaqmx.Task() as task:
-            for chan in self.detectors:
-                task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
-                max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-            data = np.array(task.read(number_of_samples_per_channel=100))
-            data = np.mean(data[:,10:],axis=1)
-        return np.maximum((self.offset - data),0)/220*1e3
-
-    def __call__(self, vector, verbose=False, scale=1, **kwds: Any) -> Any:
-        '''Sets the lasers powers according to the desired vector
-        '''
-
-        vector = self.scalePower(vector)
-        vector *= scale
-        if verbose: print(f"Inputting power: {vector}")
-        self.agilent.laserpower(vector)
-        sleep(SLEEP)
-        if verbose:
-            reading = self.readDetectors()
-            print(f"Input detectors: {reading}, normalized: {reading/magnitude(reading)}")
