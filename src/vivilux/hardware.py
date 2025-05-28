@@ -10,6 +10,8 @@ from mcculw.device_info import DaqDeviceInfo
 from mcculw.enums import InterfaceType
 import pyvisa as visa
 
+import matplotlib.pyplot as plt
+
 from time import sleep
 
 SLEEP = 0.5 # seconds
@@ -146,6 +148,77 @@ class Agilent8164():
         self.main.write('sour1:pow:stat '+str(inpt[1]))
         self.main.write('sour3:pow:stat '+str(inpt[2]))
         self.main.write('sour4:pow:stat '+str(inpt[3]))
+        
+        
+class MZImonitor:
+    def __init__(self, size, numLines = 20, numSteps = 30):
+        self.numLines = numLines
+        self.numSteps = numSteps
+        # initialize figure
+        self.fig = plt.figure(figsize=(8,6))
+        self.gs =  self.fig.add_gridspec(2,2)
+        self.currMat = self.fig.add_subplot(self.gs[0, 0])
+        self.currMat.set_title("Current Matrix")
+        self.targetMat = self.fig.add_subplot(self.gs[0, 1])
+        self.targetMat.set_title("Delta Matrix")
+        self.deltaMagnitude = self.fig.add_subplot(self.gs[1, :])
+        self.deltaMagnitude.set_title("Delta Magnitude")
+        
+        #add traces
+        self.curr = np.zeros((size,size))
+        self.target = np.zeros((size,size))
+        self.deltas = np.zeros((numSteps, numLines)) - 1
+        
+        self.lineNum = 0 # line number in delta magnitude
+        self.index = 0 # index number for algorithmic step
+        
+        self.currLine = self.currMat.imshow(self.curr, cmap='jet', vmin=0, vmax=1)
+        self.fig.colorbar(self.currLine, ax=self.currMat) 
+        self.targetLine = self.targetMat.imshow(self.target, cmap='jet', vmin=0.3, vmax=0.3)
+        self.fig.colorbar(self.targetLine, ax=self.targetMat)
+        # self.X = np.array([np.arange(numSteps)]*numLines)
+        self.deltaLines = self.deltaMagnitude.plot(self.deltas, ms=5, marker="o")
+        self.deltaMagnitude.axhline(y=8e-2, color="r", linestyle="--")
+
+        self.deltaMagnitude.set_ylabel("Magnitude of Target Delta")
+        self.deltaMagnitude.set_xlabel("Algorithmic Step")
+        self.deltaMagnitude.set_ylim(0, 0.3)
+
+
+    def updateDelta(self, newData: float):
+        self.deltas[self.index][self.lineNum] = newData
+        
+        self.index += 1
+        
+        for lineIndex, line in enumerate(self.deltaLines):
+            line.set_ydata(self.deltas[:, lineIndex])
+        
+        # self.deltaLines.set_array(self.X, self.deltas)
+
+        #update the plot
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+        
+    def updateCurr(self, newData: np.array):
+        self.curr = newData
+
+        self.currLine.set_data(self.curr)
+
+        #update the plot
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+        
+    def updateTarget(self, newData: np.array, updateLim=True):
+        self.target = newData
+        tarMax = self.target.max()
+        tarMin = self.target.min()
+        self.targetLine.set_data(self.target)
+        if updateLim:
+            self.targetLine.set_clim([tarMin, tarMax])
+
+        #update the plot
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
 
 class HardMZI(MZImesh):
     upperThreshold = 5.5
@@ -155,6 +228,7 @@ class HardMZI(MZImesh):
                  inChannels=[12,8,9,10], outChannels=None,
                  **kwargs):
         Mesh.__init__(self, *args, **kwargs)
+        self.monitor = MZImonitor(self.size)
 
         self.numUnits = int(self.size*(self.size-1)/2)
         if len(mziMapping) == 0:
@@ -261,6 +335,11 @@ class HardMZI(MZImesh):
         
         return self.Gscale * powerMatrix
     
+    def set(self, matrix):
+        self.modified = True
+        self.matrix = matrix
+        self.monitor.updateCurr(self.matrix)
+    
     def applyTo(self, data):
         self.inGen(np.zeros(self.size))
         offset = self.readOut()
@@ -268,6 +347,12 @@ class HardMZI(MZImesh):
         outData = self.readOut() - offset # subtract min laser power
         outData /= magnitude(outData)
         return outData
+    
+    def apply(self):
+        data = self.getInput()
+         # guarantee that data can be multiplied by the mesh
+        data = np.pad(data[:self.size], (0, self.size - len(data)))
+        return self.applyTo(data)
     
     def readOut(self):
         if not hasattr(self, "detectorOffset"):
@@ -305,7 +390,7 @@ class HardMZI(MZImesh):
             randomReInit = 2*(np.random.rand(numParams)-0.5) + (self.upperThreshold/2)
             params[0][paramsToReset] = randomReInit
             self.resetDelta = self.get(params) - matrix
-            print("Reset delta:", self.resetDelta, ", magnitude: ", magnitude(self.resetDelta))
+            print("\nWARN: Reset delta:", self.resetDelta, ", magnitude: ", magnitude(self.resetDelta), "\n")
 
         return params
     
@@ -380,9 +465,10 @@ class HardMZI(MZImesh):
             Updates self.matrix and returns the difference vector between target
             and implemented delta.
         '''
-
+        self.monitor.updateTarget(delta.reshape((self.size,self.size)))
         deltaFlat = delta.copy().flatten().reshape(-1,1)
         self.record = [magnitude(deltaFlat)]
+        self.monitor.updateDelta(magnitude(deltaFlat))
         params=[]
         matrices = []
 
@@ -419,11 +505,19 @@ class HardMZI(MZImesh):
             deltaFlat -= trueDelta.flatten().reshape(-1,1) # substract update
             deltaFlat -= self.resetDelta.flatten().reshape(-1,1) # subtract any delta due to voltage reset
             self.resetDelta = np.zeros((self.size, self.size)) # reset the reset delta
-            self.record.append(magnitude(deltaFlat))
+            magDelta = magnitude(deltaFlat)
+            self.record.append(magDelta)
+            self.monitor.updateDelta(magnitude(deltaFlat)) # UPDATE MONITOR
+            self.monitor.updateTarget(deltaFlat.reshape((self.size,self.size)), updateLim=False)
             if verbose: print(f"Magnitude of delta: {magnitude(deltaFlat)}")
             if magnitude(deltaFlat) < earlyStop:
-                print(f"Break after {step} steps, magnitude of delta: {magnitude(deltaFlat)}")
+                print(f"\nBreak after {step} steps, magnitude of delta: {magnitude(deltaFlat)}\n")
                 break
+        
+        # update line number of delta monitor for each new delta
+        self.monitor.lineNum = self.monitor.lineNum + 1 if self.monitor.lineNum < self.monitor.numLines-1 else 0
+        self.monitor.index = 0
+        
         return self.record, params, matrices
 
     # def Update(self, delta: np.ndarray):
@@ -438,11 +532,13 @@ class InputGenerator:
         self.maxMagnitude = limits[1]-limits[0]
         self.lowerLimit = limits[0]
         self.chanScalingTable = np.ones((20, size)) #initialize scaling table
-        self.calibrated = False
+        #self.calibrated = False
         # self.calibratePower()
         self.readDetectors()
         sleep(SLEEP)
-        self.calculateScatter()
+        self.a = 350-100
+        self.b = 100
+        # self.calculateScatter()
         
     def calculateScatter(self):
         print("Calculating the scatter matrix...")
