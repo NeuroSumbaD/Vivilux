@@ -5,6 +5,27 @@ from mcculw import ul
 from mcculw.device_info import DaqDeviceInfo
 from mcculw.enums import InterfaceType
 
+from vivilux.logger import log
+
+class BoardInfo:
+    def __init__(self, board_num: int, daq_dev_info: ul.DaqDeviceDescriptor):
+        self.board_num = board_num
+        self.daq_dev_info = daq_dev_info
+
+    def __repr__(self):
+        return f'BoardInfo(board_num={self.board_num}, ' \
+               f'daq_dev_info={self.daq_dev_info.product_name} ({self.daq_dev_info.unique_id}))'
+
+class BoardConfig:
+    def __init__(self):
+        self.boards: dict[str, BoardInfo] = {}
+
+    def add_board(self, board_num: int, daq_dev_info: ul.DaqDeviceDescriptor):
+        """Adds a board to the UL with the specified board number and device info."""
+        ul.create_daq_device(board_num, daq_dev_info)
+        print(f'Board {board_num} configured with device: {daq_dev_info.product_name} ({daq_dev_info.unique_id})')
+
+
 def config_first_detected_device(board_num, dev_id_list=None):
     """Adds the first available device to the UL.  If a types_list is specified,
     the first available device in the types list will be add to the UL.
@@ -44,6 +65,52 @@ def config_first_detected_device(board_num, dev_id_list=None):
     ul.create_daq_device(1, devices[1])
     ul.create_daq_device(2, devices[2])
     #ul.create_daq_device(3, devices[3])
+
+def config_detected_devices(device_ids: list[str],
+                            verbose: bool=True,
+                            ) -> dict[str, int]:
+    '''Search the connected DAQ devices and add them to the UL with an assigned
+        board number based on their position in the device_ids list.
+
+        Parameters
+        ----------
+        device_ids : list[str]
+            A list of unique IDs corresponding to the ID under the physical board.add()
+        verbose : bool, optional
+            If True, prints the found devices and their IDs, else . Default is True.
+
+        Returns
+        -------
+        dict[str, BoardConfig]
+            A dictionary mapping unique device IDs to their BoardConfig objects.
+
+        TODO: implement logger (logger submodule should initialize logger and provide global access to it?)
+    '''
+    
+    ul.ignore_instacal()
+    devices = ul.get_daq_device_inventory(InterfaceType.ANY)
+    if not devices:
+        raise Exception('Error: No DAQ devices found')
+    
+    board_nums: dict[str, BoardConfig] = {}
+    
+    if verbose:
+        print('Found', len(devices), 'DAQ device(s):')
+        for device in devices:
+            print(f'Name: {device.product_name} ({device.unique_id}) - '
+                  f'Device ID = {device.product_id}')
+            if device.unique_id in device_ids:
+                index = device_ids.index(device.unique_id)
+                ul.create_daq_device(index, device)
+                board_nums[device.unique_id] = BoardConfig(index, device)
+    else:
+        for device in devices:
+            if device.unique_id in device_ids:
+                index = device_ids.index(device.unique_id)
+                ul.create_daq_device(index, device)
+                board_nums[device.unique_id] = BoardConfig(index, device)
+
+    return board_nums
     
 # DAC initialization
 def DAC_Init():
@@ -76,29 +143,6 @@ import mcculw.ul as ul
 from mcculw.device_info import DaqDeviceInfo
 from mcculw.enums import (AnalogInputMode, DigitalPortType, DigitalIODirection)
 
-import logging
-import os
-import __main__
-
-# Set up logging
-def setup_logger():
-    filename = os.path.basename(__main__.__file__)
-    filename = filename.replace('.py', '.log')
-    logger = logging.getLogger(filename)
-    logger.setLevel(logging.DEBUG)
-    
-    # Check if handler already exists to avoid duplicates
-    if not logger.handlers:
-        # Create file handler and set formatter
-        file_handler = logging.FileHandler(filename)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-        
-    return logger
-
-# initialize logger
-logger = setup_logger()
 
 # Fetch boards and their IDs
 ul.ignore_instacal()
@@ -122,6 +166,15 @@ def devFromList(devData):
         return devsIDsList.index(board_names[devData])
     return devsIDsList.index(devData)
 
+class PIN_DIRECTION:
+    INPUT = 'I'
+    OUTPUT = 'O'
+    IO = 'IO'  # Input/Output, used for digital pins
+
+class PIN_TYPE:
+    ANALOG = 'A'  # Analog pin, used for analog pins
+    DIGITAL = 'D'  # Digital pin, used for digital pins
+
 class PIN:
     def __init__(self, dev, chnl, digital=True, type='IO'):
         self.dev = dev
@@ -139,36 +192,31 @@ class PIN:
         elif "B" in self.chnl:
             port = DigitalPortType.FIRSTPORTB
         else:
-            logger.error(f"Invalid channel {self.chnl}")
+            log.error(f"Invalid channel {self.chnl}")
             raise Exception(f"Invalid channel {self.chnl}")
         return port, int(self.chnl[1:])
     
-# channelMap = {
-#               # Digital IO pins
-#               "IN_G1_L": PIN('21E8230', 39, digital=True, type='IO'),
-#               "IN_G2_L": PIN('21E8230', 38, digital=True, type='IO'),
-#               "IN_G3_L": PIN('21E8230', 37, digital=True, type='IO'),
-#               "IN_G4_L": PIN('21ED703', 39, digital=True, type='IO'),
-#               "IN_G5_L": PIN('21E8245', 39, digital=True, type='IO'),
-#               "IN_G6_L": PIN('21E8245', 38, digital=True, type='IO'),
-#               "IN_G7_L": PIN('21ED703', 38, digital=True, type='IO'),
-#               "IN_G8_L": PIN('21E8245', 37, digital=True, type='IO'),
-#               "IN_G9_L": PIN('21E8245', 36, digital=True, type='IO'),
-#               "IN_S": PIN('21E8230', 36, digital=True, type='IO'),
-#               "GND_S": PIN('21ED703', 37, digital=True, type='IO'),
-#               # Analog Write
-#               "V1_W_1": PIN('21E8230', 14, digital=False, type='O'),
-#               "V2_W_1": PIN('21ED703', 14, digital=False, type='O'),
-#               "V3_W_1": PIN('21E8245', 14, digital=False, type='O'),
-#               "V1_R_1": PIN('21E8230', 13, digital=False, type='O'),
-#               "V2_R_1": PIN('21ED703', 13, digital=False, type='O'),
-#               "V3_R_1": PIN('21E8245', 13, digital=False, type='O'),
-#               # Analog Read
-#               "Y1_1": PIN('21E8245', 11, digital=False, type='I'),
-#               "Y2_1": PIN('21E8245', 10, digital=False, type='I'),
-#               "Z1_1": PIN('21E8245', 8, digital=False, type='I'),
-#               }
 
+class DIOPIN(PIN):
+    direction = PIN_DIRECTION.IO
+    type = PIN_TYPE.DIGITAL
+
+    def __init__(self, dev, chnl, digital=True, type='IO'):
+        super().__init__(dev, chnl, digital, type)
+        if not self.digital:
+            log.error(f"Digital pin {self.chnl} cannot be used as an analog pin")
+            raise Exception(f"Digital pin {self.chnl} cannot be used as an analog pin")
+        
+class AOPIN(PIN):
+    direction = PIN_DIRECTION.OUTPUT
+    type = PIN_TYPE.ANALOG
+
+    def __init__(self, dev, chnl, digital=False, type='O'):
+        super().__init__(dev, chnl, digital, type)
+        if self.digital:
+            log.error(f"Analog pin {self.chnl} cannot be used as a digital pin")
+            raise Exception(f"Analog pin {self.chnl} cannot be used as a digital pin")
+   
 channelMap = {
               # Digital IO pins
               "IN_G1_L": PIN('21E8230', "B7", digital=True, type='IO'),
@@ -200,10 +248,10 @@ channelMap = {
 
 ##
 # Continue initialization
-logger.info("New session started.")
-logger.info(f'Found {len(devices)} DAQ device(s):')
+log.info("New session started.")
+log.info(f'Found {len(devices)} DAQ device(s):')
 for board_num, device in enumerate(devices):
-    logger.info(f'  {device.product_name} ({device.unique_id}) - '
+    log.info(f'  {device.product_name} ({device.unique_id}) - '
         f'Device ID = {device.product_id}')
     ul.create_daq_device(board_num, device)
     if device.product_name == "USB-1208FS-Plus":
@@ -225,7 +273,7 @@ for pinName, pin in channelMap.items():
 
 def getPin(pinName:str):
     if pinName not in channelMap:
-        logger.error(f"Pin {pinName} not found in the channel map")
+        log.error(f"Pin {pinName} not found in the channel map")
         raise Exception(f"Pin {pinName} not found in the channel map")
     return channelMap[pinName]
 
@@ -240,14 +288,14 @@ def vout(pinName:str, voltage:float): # this function is all you need now. just 
     pin = getPin(pinName)
     
     if "O" not in pin.type.upper():
-        logger.error(f"Pin {pinName} is not an output pin")
+        log.error(f"Pin {pinName} is not an output pin")
         raise Exception(f"Pin {pinName} is not an output pin")
     
     if pin.digital:
-        logger.error(f"Pin {pinName} is a digital pin")
+        log.error(f"Pin {pinName} is a digital pin")
         raise Exception(f"Pin {pinName} is a digital pin")
     
-    logger.debug(f"Set pin {pinName} to {voltage}V")
+    log.debug(f"Set pin {pinName} to {voltage}V")
     ul.v_out(pin.devNum, pin.chnl, ao_range, voltage)
     return
 
@@ -260,11 +308,11 @@ def vin(pinName:str):
     pin = getPin(pinName)
     
     if "I" not in pin.type.upper():
-        logger.error(f"Pin {pinName} is not an input pin")
+        log.error(f"Pin {pinName} is not an input pin")
         raise Exception(f"Pin {pinName} is not an input pin")
     
     if pin.digital:
-        logger.error(f"Pin {pinName} is a digital pin")
+        log.error(f"Pin {pinName} is a digital pin")
         raise Exception(f"Pin {pinName} is a digital pin")
     
     return ul.v_in(pin.devNum, pin.chnl, ai_range)
@@ -279,11 +327,11 @@ def dout(pinName:str, value:bool):
     pin = getPin(pinName)
     
     if "O" not in pin.type.upper():
-        logger.error(f"Pin {pinName} is not an output pin")
+        log.error(f"Pin {pinName} is not an output pin")
         raise Exception(f"Pin {pinName} is not an output pin")
     
     if not pin.digital:
-        logger.error(f"Pin {pinName} is an analog pin")
+        log.error(f"Pin {pinName} is an analog pin")
         raise Exception(f"Pin {pinName} is an analog pin")
     
     port, channel = pin.DIO_chan()
@@ -297,7 +345,7 @@ def dout(pinName:str, value:bool):
     x = (x & ~(1 << channel)) | ((value & 1) << channel)
     board_digital_ports[pin.dev][pin.chnl[0]] = x
     
-    logger.debug(f"Set pin {pinName} to {value} by writing "
+    log.debug(f"Set pin {pinName} to {value} by writing "
                  f"{format(x, "08b")} to port {pin.chnl[0]}")
     ul.d_out(pin.devNum, port, board_digital_ports[pin.dev][pin.chnl[0]])
     # ul.d_bit_out(pin.devNum, port, channel, int(value)) # NOT BIT ADDRESSIBLE (DOESN'T WORK)
