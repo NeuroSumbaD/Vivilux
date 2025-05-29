@@ -120,9 +120,46 @@ class HardMZI(MZImesh):
         '''Returns full mesh matrix.
         '''
         powerMatrix = np.zeros((self.size, self.size))
+        # Stached change
+        if params is not None: # calculate matrix using params
+            # return self.Gscale * self.psToMat(params[0])
+            # print(f'Get params={params}')
+            assert(params[0].size ==self.numUnits), f"Error: {params[0].size} != {self.numUnits}, params[0]"
+            assert params[0].max() <= self.upperLimit and params[0].min() >= 0, f"Error params out of bounds: {params}"
+            self.testParams(params[0])
+            # for chan in range(self.size):
+            #     oneHot = np.zeros(self.size)
+            #     oneHot[int(chan)] = 1
+            #     scale = 1#350/np.max(self.inGen.scalePower(oneHot))
+            #     # first offset min laser power
+            #     self.inGen(np.zeros(self.size), scale=scale)
+            #     offset = self.readOut()
+            #     offset /= L1norm(self.inGen.readDetectors()) 
+            #     # print(f"Offset readout: {offset}")
+            #     # print(f"Offset readout: {np.sum(offset)}")
+            #     # now offset input vector and normalize result
+            #     self.inGen(oneHot, scale=scale)
+            #     columnReadout = self.readOut()
+            #     columnReadout /= L1norm(self.inGen.readDetectors()) 
+            #     # print(f"Column readout: {columnReadout}")
+            #     # print(f"Column readout: {np.sum(columnReadout)}")
+
+            #     # column = np.maximum(columnReadout - offset, -0.05)
+            #     column = np.maximum(columnReadout - offset, 0) # assume negative values are noise
+            #     norm = np.sum(np.abs(column)) #L1 norm
+            #     assert norm != 0, f"ERROR: Zero norm on chan={chan} with scale={scale}. Column readout:\n{columnReadout}\nOffset:\n{offset}"
+            #     print(params)
+            #     # column /= norm
+            #     # assert(np.any(np.isnan(column))), f"Error: column readout: {columnReadout}, column: {column}"
+            #     # column /= magnitude(column) #L2 norm
+            #     powerMatrix[:,chan] = column
+            # powerMatrix = powerMatrix @ self.inGen.invScatter
+            powerMatrix = self.measureMatrix(powerMatrix)
+            self.resetParams()
+            return powerMatrix
         
         if (self.modified == True): # only recalculate matrix when modified
-            self.setFromParams
+            self.setFromParams()
             powerMatrix = self.measureMatrix(powerMatrix)
             self.modified = False
         else:
