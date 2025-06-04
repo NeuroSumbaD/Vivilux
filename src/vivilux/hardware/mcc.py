@@ -231,10 +231,20 @@ class DIO_BUS_PIN(daq.PIN):
 
         log.debug(f"Set pin {self.net_name} to {value} by writing "
                   f"{format(x, "08b")} to port {self.chnl[0].upper()}")
+
+        log.debug(f"Writing digital output for pin {self.net_name} "
+                  f"on port {port} with value {value} ")
         ul.d_out(self.board.board_num,
                  port,
                  value
                  )
+        
+    def reset(self):
+        '''
+        Resets the digital output pin to its default state (0).
+        '''
+        log.debug(f"Resetting digital output for pin {self.net_name} to 0")
+        self.dout(False)
 
 class AOPIN(daq.PIN):
     direction = daq.PIN_DIRECTION.OUTPUT
@@ -256,8 +266,16 @@ class AOPIN(daq.PIN):
             log.error(f"Analog output range not set for board {self.board.board_name}.")
             raise ValueError(f"Analog output range not set for board {self.board.board_name}.")
         
+        log.debug(f"Setting analog output voltage for pin {self.net_name} "
+                  f"to {voltage}V on channel {self.chnl} with range {self.board.ao_range}")
         ul.v_out(self.board.board_num, self.chnl, self.board.ao_range, voltage)
 
+    def reset(self):
+        '''
+        Resets the analog output pin to its default state (0V).
+        '''
+        log.debug(f"Resetting analog output for pin {self.net_name} to 0V")
+        self.vout(0.0)
         
 
 class AIPIN(daq.PIN):
@@ -273,4 +291,10 @@ class AIPIN(daq.PIN):
             log.error(f"Analog input range not set for board {self.board.board_name}.")
             raise ValueError(f"Analog input range not set for board {self.board.board_name}.")
 
+        log.debug(f"Reading analog input voltage for pin {self.net_name} "
+                  f"on channel {self.chnl} with range {self.board.ai_range}")
         return ul.v_in(self.board.board_num, self.chnl, self.board.ai_range)
+    
+
+    def reset(self):
+        return
