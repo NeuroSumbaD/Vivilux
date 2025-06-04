@@ -69,8 +69,9 @@ def config_detected_devices(boards: list[Board],
 
         Parameters
         ----------
-        device_ids : list[str]
-            A list of unique IDs corresponding to the ID under the physical board.add()
+        boards : list[Board]
+            A list of Board objects to be configured with the detected devices.
+            Each board should have a unique ID that matches the device's serial number.
         verbose : bool, optional
             If True, prints the found devices and their IDs, else . Default is True.
 
