@@ -24,7 +24,7 @@ ni_boards =[
 ]
 
 mcc_boards = [
-    mcc.USB_1208FS_PLUS("ADC FE", "",
+    mcc.USB_1208FS_PLUS("ADC FE", "21E81FE",
         mcc.AIPIN("PD_3_4", 0), # Pin 1
         mcc.AIPIN("PD_3_5", 1), # Pin 2
         mcc.AIPIN("PD_4_0", 2), # Pin 4
@@ -34,7 +34,7 @@ mcc_boards = [
         mcc.AIPIN("PD_4_4", 6), # Pin 10
         mcc.AIPIN("PD_4_5", 7), # Pin 11
     ),
-    mcc.USB_1208FS_PLUS("ADC BD", "",
+    mcc.USB_1208FS_PLUS("ADC BD", "21E81BD",
         mcc.AIPIN("PD_5_0", 0), # Pin 1
         mcc.AIPIN("PD_5_1", 1), # Pin 2
         mcc.AIPIN("PD_5_2", 2), # Pin 4
@@ -44,7 +44,7 @@ mcc_boards = [
         mcc.AIPIN("PD_6_0", 6), # Pin 10
         mcc.AIPIN("PD_6_1", 7), # Pin 11
     ),
-    mcc.USB_1208FS_PLUS("ADC 32", "",
+    mcc.USB_1208FS_PLUS("ADC 32", "21E8232",
         mcc.AIPIN("PD_6_2", 0), # Pin 1
         mcc.AIPIN("PD_6_3", 1), # Pin 2
         mcc.AIPIN("PD_6_4", 2), # Pin 4
