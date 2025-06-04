@@ -2,11 +2,11 @@
     components in a Vivilux simulation.
 '''
 
-from vivilux.hardware.hard_mzi import HardMZI
+# from vivilux.hardware.hard_mzi import HardMZI
 from vivilux.hardware.utils import *
 
 all = [
-    'HardMZI',
+    # 'HardMZI',
     'correlate',
     'magnitude',
     'L1norm',

@@ -7,3 +7,6 @@ pandas==2.2.2
 pytest==8.2.2
 pytest-benchmark==4.0.0
 pyvisa==1.14.1
+pillow==11.2.1
+imageio==2.37.0
+scipy==1.15.3

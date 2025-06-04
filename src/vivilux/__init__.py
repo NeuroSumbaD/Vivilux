@@ -30,10 +30,14 @@ import math
 import numpy as np
 np.random.seed(seed=0)
 
-from .nets import *
-from .layers import *
-from .meshes import *
-from . import photonics
+# from .nets import *
+# from .layers import *
+# from .meshes import *
+# from . import photonics
+# from . import nets
+# from . import layers
+# from . import meshes
+# from . import photonics
 
 __all__ = ['nets', 
            'layers',
