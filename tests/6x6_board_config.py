@@ -5,7 +5,6 @@ import vivilux.hardware.nidaq as ni
 ni_boards =[
     ni.USB_6210("NI", 33703915,
         ni.AIPIN("PD_1_0", "A0"),
-        ni.AIPIN("PD_1_0", "A0"),
         ni.AIPIN("PD_1_1", "A1"),
         ni.AIPIN("PD_1_2", "A2"),
         ni.AIPIN("PD_1_3", "A3"),
@@ -70,3 +69,21 @@ mcc_boards = [
 ]
 
 netlist = daq.Netlist(*ni_boards, *mcc_boards)
+
+if __name__ == "__main__":
+    from time import sleep
+    from vivilux.hardware.visualization import HeatmapVisualizer
+
+    detector_nets = ["PD_1_0", "PD_2_0", "PD_3_0",] # may need to rewire for "PD_4_0", "PD_5_0", "PD_6_0",] in one board
+    detectors_state = HeatmapVisualizer(shape=(3, 1), vmin=0, vmax=2,
+                                        xlabel="Detector Column",
+                                        ylabel="Detector Row",
+                                        clabel="Voltage")
+    
+    # Test streaming data from the NI board
+    with netlist:
+        while True:
+            data = netlist.group_vin(detector_nets)
+            print(data)
+            detectors_state.update(data.reshape((3, 1)))
+            sleep(0.5)
