@@ -2,6 +2,7 @@ from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
 import vivilux.hardware
+import vivilux.hardware.mcc as mcc
 from vivilux.learningRules import CHL
 from vivilux.optimizers import Simple
 
@@ -58,7 +59,7 @@ ffMeshes = netMZI.AddConnection(layerList[0], layerList[1],
                                 meshConfig=ffMeshConfig)
 
 # handles for convenience
-mesh = netMZI.layers[1].excMeshes[0]
+mesh: vivilux.hardware.HardMZI = netMZI.layers[1].excMeshes[0]
 inGen = mesh.inGen
 magnitude = vivilux.hardware.magnitude
 L1norm = vivilux.hardware.L1norm
@@ -128,13 +129,6 @@ for iteration in range(50):
         print(f"\t\tFinal voltages: {strVoltages3}")
     except AssertionError as msg:
         print(msg)
-        # record = -np.ones((4,4))
-        # results = pd.concat([results, {"initMag": magDelta,
-        #                            "iteration": iteration,
-        #                            "numIter": -1,
-        #                            "finalMag": -1,
-        #                            "success": False,
-        #                            "record": record}])
         finalMatrices.append(False)
         successes.append(False)
         RECORDS.append(-np.ones(31))
@@ -151,7 +145,7 @@ for iteration in range(50):
 
     
     
-vivilux.hardware.DAC_Init()
+mcc.DAC_Init()
 inGen.agilent.lasers_on([0,0,0,0])
 print("\n\nSUCCESSFULLY FINISHED. PLEASE MAKE SURE LASER AND TEMPERATURE CONTROL ARE OFF.")
 
