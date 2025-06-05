@@ -18,7 +18,32 @@ class Board(daq.Board):
     def __init__(self, name: str, dev_serial_num: int, *pins: list[daq.PIN]):
         super().__init__(name, *pins)
         self.unique_id = dev_serial_num
+        
+    def group_vin(self, pin_names):
+        '''Groups the voltage inputs from the specified pins into a single array.
+        
+        Parameters
+        ----------
+        pin_names : list[str]
+            A list of pin names to read the voltage inputs from.
 
+        Returns
+        -------
+        np.ndarray
+            An array containing the voltage inputs from the specified pins.
+        '''
+        with nidaqmx.Task() as task:
+            for pin_name in pin_names:
+                pin = self.pins[pin_name]
+                if not isinstance(pin, AIPIN):
+                    raise TypeError(f"Pin {pin_name} is not an AIPIN.")
+                task.ai_channels.add_ai_voltage_chan(f"{self.board_num}/ai{pin.chnl}",
+                                                     min_val=-0.0,
+                                                     max_val=2.0,
+                                                     terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
+            data = np.array(task.read(number_of_samples_per_channel=100))
+            data = np.mean(data[:, 10:], axis=1)
+        return data
 
 def get_driver_version() -> namedtuple:
     system = nidaqmx.system.System.local()
@@ -73,7 +98,7 @@ def config_detected_devices(boards: list[Board],
                 boards[index].board_num = device.name
                 num_initialized += 1
     else:
-        log.info('Found', len(system.devices), 'NI DAQ device(s):')
+        log.info(f'Found {len(system.devices)} NI DAQ device(s):')
         for device in system.devices:
             log.info(f'Name: {device.product_type} ({device.dev_serial_num}) - '
                      f'Device ID = {device.product_num}') 

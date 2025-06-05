@@ -103,7 +103,7 @@ def config_detected_devices(boards: list[Board],
                 boards[index].initialize_ports()
                 num_initialized += 1
     else:
-        log.info('Found', len(devices), 'MCC DAQ device(s):')
+        log.info(f'Found {len(devices)} MCC DAQ device(s):')
         for device in devices:
             log.info(f'Name: {device.product_name} ({device.unique_id}) - '
                   f'Device ID = {device.product_id}')
