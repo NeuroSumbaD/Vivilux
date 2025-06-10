@@ -1,3 +1,8 @@
+'''This module defines the netlist for the current board configuration for the
+    6x6 MZI mesh on the AIM 2020 tapeout. Running this script by itself will
+    initialize the netlist and start streaming data from the NI board, which can
+    be used to calibrate the polarization controllers for the laser.
+'''
 import vivilux.hardware.daq as daq
 import vivilux.hardware.mcc as mcc
 import vivilux.hardware.nidaq as ni

@@ -6,28 +6,167 @@ from time import sleep
 
 import numpy as np
 import nidaqmx
-import nidaqmx.system
-from mcculw import ul
-from mcculw.device_info import DaqDeviceInfo
-from mcculw.enums import InterfaceType
 import pyvisa as visa
 
 from vivilux.hardware.utils import magnitude
+from vivilux.logger import log
+import vivilux.hardware.daq as daq
 
 SLEEP = 0.5 # seconds
 LONG_SLEEP = 0.5 # seconds
 
 class LaserArray:
-    pass
+    '''Base class for interface with laser arrays for MZI input.
+        Assumes that the DAQ voltage output controls the laser power
+        (requires voltage controlled current controller circuit).
+    '''
+    def __init__(self,
+                 size: int, # Number of channels in the laser array
+                 control_nets: list[str],  # List of control net names to write to
+                 detector_nets: list[str],  # List of detector net names to read from
+                 limits: tuple[float, float], # (min, max) control signal limits
+                 netlist: daq.Netlist,
+                 transimpedance: float = 220e3, # transimpedance of the detectors in ohms (default: 220k ohms)
+                ):
+        if not netlist.in_context:
+            log.error("Attempted to initialize LaserArray outside a daq.Netlist context.")
+            raise ValueError("LaserArray must be initialized in a netlist context. "
+                             "Use `with netlist: \n\t[Network definition and training]` ")
 
-class AgilentLasers(LaserArray):
-    pass
+        self.size = size
+        self.control_nets = control_nets
+        self.detector_nets = detector_nets
+        self.limits = limits
+        self.netlist = netlist
 
-class DACLasers(LaserArray):
-    pass
+
+        self.transimpedance = transimpedance
+
+        # guarantee control nets are set to 0V
+        for net in self.control_nets:
+            netlist[net].vout(0.0)
+
+        # Measure offsets for detector readings
+        self.initialized_offsets = False
+        self.offsets = np.zeros(self.size)
+        self.readPhotocurrent()  # Initialize offsets by reading the detectors
+
+        self.optical_power_scale = None # Scales from power to control signal units (must be calibrated)
+        self.calibrate_power_scale()
+
+    def reset(self):
+        for net in self.control_nets:
+            self.netlist[net].reset()  # Reset control nets to default state (0 V)
+
+    def clip(self, vector: np.ndarray) -> np.ndarray:
+        '''Ensures that the input vector is within the power limits.
+        '''
+        if not isinstance(vector, np.ndarray):
+            vector = np.array(vector)
+        return np.clip(vector, self.limits[0], self.limits[1])
+    
+    def normalize(self, vector: np.ndarray) -> np.ndarray:
+        '''Normalizes the input vector to the range [0, 1].
+        '''
+        if not isinstance(vector, np.ndarray):
+            vector = np.array(vector)
+        return (vector - self.limits[0]) / (self.limits[1] - self.limits[0])
+    
+    def denormalize(self, vector: np.ndarray) -> np.ndarray:
+        '''Denormalizes the input vector from the range [0, 1] to the control
+            unit limits (usually voltage).
+        '''
+        if not isinstance(vector, np.ndarray):
+            vector = np.array(vector)
+        return vector * (self.limits[1] - self.limits[0]) + self.limits[0]
+    
+    def calibrate_power_scale(self) -> None:
+        '''Calibrates the power scale from control signal to optical power.
+            This is a placeholder method and should be implemented in subclasses.
+        '''
+        if self.optical_power_scale is None:
+            # Default scale factor, can be overridden in subclasses
+            self.optical_power_scale = np.zeros_like(self.control_nets, dtype=float)
+            for index, net in enumerate(self.control_nets):
+                self.netlist[net].vout(self.limits[1]) # set to max power
+                # TODO: add sleep if necessary for turn-on time
+                # calculate and store a scaling factor 
+                self.optical_power_scale[index] = self.readPhotocurrent()[index] / self.limits[1]
+            log.debug(f"Optical power scale set to: {self.optical_power_scale}")
+
+        else:
+            log.warning(f"Optical power scale already set to: {self.optical_power_scale}")
+
+    def readPhotocurrent(self) -> np.ndarray:
+        '''Reads from the detector nets and returns the photocurrent as a numpy array.
+        '''
+        values = np.zeros(self.size)
+        for i, net in enumerate(self.detector_nets):
+            values[i] = self.netlist[net].vin()
+
+        # TODO: refactor to get rid of the if statement (separate offset initialization)
+        if not self.initialized_offsets:
+            # Initialize offsets if not already done
+            self.offsets = values
+            self.initialized_offsets = True
+            log.debug(f"Initialized offsets: {self.offsets}")
+
+        reading = self.offsets - values  # Subtract offsets to get actual readings
+        reading /= self.transimpedance  # Convert to photocurrent (proportional to power)
+        # NOTE: most c-band detectors have around 0.9 A/W so photocurrent is
+        # pretty close to power in Watts
+        return reading
+    
+    def setControl(self, control_vector: np.ndarray) -> None:
+        '''Sets the laser powers according to the input vector in terms
+            of control signals (usually voltage).
+            The input vector should be in the range of self.limits=[min, max]
+        '''
+        if not isinstance(control_vector, np.ndarray):
+            control_vector = np.array(control_vector)
+        # control_vector = control_vector / self.optical_power_scale
+
+        log.debug(f"Setting laser powers to: {control_vector*self.optical_power_scale} (Watts) "
+                  f"with control signals: {control_vector} (Volts)")
+
+        for i, net in enumerate(self.control_nets):
+            self.netlist[net].vout(control_vector[i])
+
+        # TODO: add sleep if necessary for stable turn-on time
+
+    def setNormalized(self, vector: np.ndarray) -> None:
+        '''Sets the laser powers from a normalized input vector.
+        '''
+        if not isinstance(vector, np.ndarray):
+            vector = np.array(vector)
+        # Calculate the denormalized vector and set the power
+        self.setControl(self.denormalize(vector))
+
+    def display_power_vs_control(self, num_points=100) -> None:
+        '''Displays a plot of the power vs control signal for each channel.
+            This is useful for visualizing the calibration of the laser array.
+        '''
+        import matplotlib.pyplot as plt
+
+        control_signals = self.denormalize(np.linspace(0, 1, num_points))
+        control_signals = np.tile(control_signals, (self.size, 1)).T  # Repeat for each channel
+
+        power_readings = np.zeros((num_points, self.size))
+
+        for i, control_vector in enumerate(control_signals):
+
+            self.setControl(control_vector)
+            power_readings[i] = self.readPhotocurrent()
+
 
 
 class Agilent8164():
+    '''Outdated class for controlling the Agilent 8164 laser array.
+        This class uses the PyVISA library to communicate with the laser
+        controller over GPIB or serial connection.
+
+        TODO: Update to be compliant with the new LaserArray interface.
+    '''
     def __init__(self, port='GPIB0::20::INSTR'):
         #self.wss = visa.SerialInstrument('COM1')
         self.rm = visa.ResourceManager()
@@ -202,3 +341,9 @@ class InputGenerator:
         if verbose:
             reading = self.readDetectors()
             print(f"Input detectors: {reading}, normalized: {reading/magnitude(reading)}")
+
+
+if __name__ == "__main__":
+    # Example usage of LaserArray
+    from vivilux.hardware.daq import Netlist
+    control_nets = ["laser_1", "laser_2"]
