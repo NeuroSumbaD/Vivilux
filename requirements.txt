@@ -10,3 +10,4 @@ pyvisa==1.14.1
 pillow==11.2.1
 imageio==2.37.0
 scipy==1.15.3
+jax==0.6.1
