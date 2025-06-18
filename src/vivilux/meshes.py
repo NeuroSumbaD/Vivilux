@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from .nets import Net
     from .layers import Layer
 
-from .photonics.devices import Device, Generic
+from .devices import Device, Generic
 from .processes import XCAL
 
 import numpy as np
