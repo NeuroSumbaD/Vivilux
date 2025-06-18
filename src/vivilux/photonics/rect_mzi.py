@@ -170,12 +170,14 @@ def call_RectMZI(inputs: jax.Array,
         # TODO: check if it makes sense to use the square root of the input
         # to model the phasor domain of EM signal amplitude (since it gets
         # squared when converted to back to power by conjugate multiplication)
-        output = jnp.sum(phasorMatrix @ jnp.sqrt(inputs), axis=1)
-        return jnp.multiply(output, output.conj()).astype("float32")
+        return mzi.coherent_multiply(inputs, phasorMatrix)
+        # output = jnp.sum(phasorMatrix @ jnp.sqrt(inputs), axis=1)
+        # return jnp.multiply(output, output.conj()).astype("float32")
     # TODO: Implement check for partially filtered "beating" frequencies
     # for incoherent source at close wavelengths with high-speed detectors
-    incoherentMatrix = jnp.multiply(phasorMatrix, phasorMatrix.conj()).astype("float32")
-    return jnp.sum(incoherentMatrix @ inputs, axis=1)
+    # incoherentMatrix = jnp.multiply(phasorMatrix, phasorMatrix.conj()).astype("float32")
+    # return jnp.sum(incoherentMatrix @ inputs, axis=1)
+    return mzi.incoherent_multiply(inputs, phasorMatrix)
 
 class RectMZI(nnx.Module):
     '''A generalized block for a single rectangular MZI mesh, with some
@@ -251,7 +253,7 @@ class RectMZI(nnx.Module):
 
         # TODO: add wavelength sensitivity modeling to PHIs, THETAs, and DCs
     
-    def getPhasorMatrix(self):
+    def getPhasorMatrix(self) -> jax.Array:
         '''Returns the phasor domain transfer matrix for inspection or
             custom usage.
         '''
@@ -259,10 +261,10 @@ class RectMZI(nnx.Module):
                                        self.mesh_size, self.num_aux_in,
                                        self.num_aux_out)
     
-    def getMatrix(self,):
+    def getMatrix(self,) -> jax.Array:
         '''Returns the transfer matrix for inspection or custom usage.
         '''
-        phasorMatrix = phasor_matrix(self.PHIs, self.DCs, self.THETAs,
+        phasorMatrix: jax.Array = phasor_matrix(self.PHIs, self.DCs, self.THETAs,
                                                self.mesh_size, self.num_aux_in,
                                                self.num_aux_out)
         if self.coherent:
