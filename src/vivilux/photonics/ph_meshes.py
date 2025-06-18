@@ -637,7 +637,7 @@ class OversizedMZI(MZImesh):
                  **kwargs):
         # TODO: Allow scaleFactor to adjust dynamically
         # self.scaleFactor = 1+size
-        self.scaleFactor = 1 
+        self.scaleFactor = np.array([1])
         self.aux_in = aux_in
         self.aux_out = aux_out
         Mesh.__init__(self,size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
@@ -700,12 +700,15 @@ class OversizedMZI(MZImesh):
         complexMat = psToRect(params[0], self.mesh_size)
         oversizedMat = np.square(np.abs(complexMat))
 
+        oversizedMat *= self.scaleFactor
+
         return oversizedMat
 
 
     def getParams(self) -> list[np.ndarray]:
         # return [self.phaseShifters, self.amplifiers]
-        return [self.phaseShifters]
+        # return [self.phaseShifters]
+        return [self.phaseShifters, self.scaleFactor]
     
     def setParams(self, params: list[np.ndarray]):
         self.boundParams(params)
@@ -744,8 +747,8 @@ class OversizedMZI(MZImesh):
         # fill first row and last column to maintain column and row sums
         oversizedDelta[0, :] = -np.sum(oversizedDelta, axis=0)
         oversizedDelta[:, -1] = -np.sum(oversizedDelta, axis=1)
-        # fill top right corner with 0
-        oversizedDelta[0, -1] = 0
+        # fill top right corner to make total sum zero
+        oversizedDelta[0, -1] = -np.sum(oversizedDelta)
 
         delta = oversizedDelta
 
@@ -806,7 +809,7 @@ class OversizedMZI(MZImesh):
             # test delta after step
             newMat = self.getOversizedFromParams(updatedParams)
             trueDelta = newMat - currMat
-            trueDelta[0, -1] = 0 # remove top right corner (irrelevant)
+            # trueDelta[0, -1] = 0 # remove top right corner (irrelevant)
             trueDelta = trueDelta.flatten().reshape(-1,1)
             newMagnitude = Magnitude(deltaFlat - trueDelta)
             stepCoeff = newMagnitude/deltaMagnitude
@@ -820,7 +823,7 @@ class OversizedMZI(MZImesh):
                                     param for param in self.getParams()]
                     newMat = self.getOversizedFromParams(randomParams)
                     trueDelta = newMat - currMat
-                    trueDelta[0, -1] = 0 # remove top right corner (irrelevant)
+                    # trueDelta[0, -1] = 0 # remove top right corner (irrelevant)
                     trueDelta = trueDelta.flatten().reshape(-1,1)
                     deltaFlat -= trueDelta
                     deltaMagnitude = Magnitude(deltaFlat)
@@ -833,7 +836,8 @@ class OversizedMZI(MZImesh):
                     self.updateMagnitude *= 0.9 # take smaller test steps
                 self.record[step+1] = -100
                 continue # do not apply step
-            elif (stepCoeff > 0.9) and coeff < 1:
+            # elif (stepCoeff > 0.9) and coeff < 1:
+            elif (stepCoeff > 0.9):
                 coeff *= 1.1 # increases step size if updates are slow
             # coeff = np.min([coeff, 1]) # coeff should always be less than 1
             skipCount = 0 
@@ -889,7 +893,7 @@ class OversizedMZI(MZImesh):
         # minusMatrix = np.square(np.abs(psToRect(minusVectors[0], self.size)))
 
         differenceMatrix = plusMatrix - minusMatrix
-        differenceMatrix[0, -1] = 0 # remove top right corner (irrelevant)
+        # differenceMatrix[0, -1] = 0 # remove top right corner (irrelevant)
         derivativeMatrix = differenceMatrix/self.updateMagnitude
 
         return derivativeMatrix, stepVectors

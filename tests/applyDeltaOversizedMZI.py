@@ -16,7 +16,9 @@ from itertools import permutations
 
 matrixSize = 4
 numIterations = 10
-updateMagnitude = 5e-3 # update magnitude for LAMM
+updateMagnitude = 1e-3 # update magnitude for LAMM
+numDirections = 5 # number of directional vectors for LAMM
+numSteps = 1000 # number of steps for LAMM
 
 dummyLayer = Layer(matrixSize, isInput=True, name="Input")
 dummyNet = Net(name = "LEABRA_NET")
@@ -28,8 +30,8 @@ fig1 = plt.figure()
 print("--------STARTING TEST: Small parameter deviations--------")
 for index in range(numIterations):
     mzi = OversizedMZI(matrixSize, dummyLayer,
-              numDirections=16,
-              numSteps=500,
+              numDirections=numDirections,
+              numSteps=numSteps,
               rtol=1e-2,
               updateMagnitude=updateMagnitude,
               )
@@ -52,6 +54,7 @@ for index in range(numIterations):
 plt.title("Implementing Small parameter deviations")
 plt.ylabel("magnitude of difference vector")
 plt.xlabel("LAMM iteration")
+fig1.savefig("applyDeltaOversizedMZI_smallDeviations.png")
 
 # Random Matrix
 dummyLayer = Layer(matrixSize, isInput=True, name="Input")
@@ -63,8 +66,8 @@ records = [] # to store traces of magnitude for each matrix
 numUnits = int(matrixSize*(matrixSize-1)/2)
 for index in range(numIterations):
     mzi = OversizedMZI(matrixSize, dummyLayer,
-                numDirections=16,
-                numSteps=500,
+                numDirections=numDirections,
+                numSteps=numSteps,
                 rtol=1e-2,
                 updateMagnitude=updateMagnitude,
                 )
@@ -88,6 +91,7 @@ for index in range(numIterations):
 plt.title("Implementing Random Matrices")
 plt.ylabel("magnitude of difference vector")
 plt.xlabel("LAMM iteration")
+fig2.savefig("applyDeltaOversizedMZI_randomMatrix.png")
 
 fig3 = plt.figure()
 print("--------STARTING TEST: Sparse Delta Convergence [0,1)--------")
@@ -95,8 +99,8 @@ records = [] # to store traces of magnitude for each matrix
 numUnits = int(matrixSize*(matrixSize-1)/2)
 for index in range(numIterations):
     mzi = OversizedMZI(matrixSize, dummyLayer,
-              numDirections=16,
-              numSteps=500,
+              numDirections=numDirections,
+              numSteps=numSteps,
               rtol=1e-2,
               updateMagnitude=updateMagnitude,
               )
@@ -132,6 +136,4 @@ plt.ylabel("magnitude of difference vector")
 plt.xlabel("LAMM iteration")
 
 # plt.show()
-fig1.savefig("applyDeltaOversizedMZI_smallDeviations.png")
-fig2.savefig("applyDeltaOversizedMZI_randomMatrix.png")
 fig3.savefig("applyDeltaOversizedMZI_sparseConvergence.png")
