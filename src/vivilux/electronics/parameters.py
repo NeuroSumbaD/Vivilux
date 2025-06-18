@@ -1,8 +1,8 @@
 import numpy as np
 
-from ..parameters import ParameterSet
+from ..parameters import ParamSet
 
-class Resistances(ParameterSet):
+class Resistances(ParamSet):
     def __init__(self, shape: tuple[int, int],
                  values: np.ndarray = None,
                  limits: tuple[float,float] = (1e-3,None), # TODO: FIND REASONABLE DEFAULT VALUES

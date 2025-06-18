@@ -19,7 +19,7 @@ from .paths import Path, TransposeMesh
 from .metrics import RMSE
 from .optimizers import Simple
 from .visualize import Monitor
-from .photonics.devices import Device
+from .photonics.synapses import SynapticDevice
 
 
 
@@ -233,7 +233,7 @@ class Net:
                       sending: Layer, # closer to source
                       receiving: Layer, # further from source
                       meshConfig = None,
-                      device: Device = None,
+                    #   device: SynapticDevice = None,
                       ) -> Path:
         '''Adds a connection from the sending layer to the receiving layer.
         '''
@@ -244,8 +244,8 @@ class Net:
         mesh = meshConfig["meshType"](sending, receiving, dtype=self.dtype, **meshArgs)
         receiving.addMesh(mesh)
 
-        if device is not None:
-            mesh.AttachDevice(device)
+        # if device is not None:
+        #     mesh.AttachDevice(device)
 
         return mesh
 
@@ -253,13 +253,13 @@ class Net:
                        sendings: list[Layer], # closer to source
                        receivings: list[Layer], # further from source
                        meshConfig = None,
-                       device: Device = None,
+                    #    device: SynapticDevice = None,
                        ) -> list[Path]:
         '''Helper function for generating multiple connections at once.
         '''
         meshes = []
         for receiving, sending in zip(receivings, sendings):
-            mesh = self.AddConnection(sending, receiving, meshConfig, device)
+            mesh = self.AddConnection(sending, receiving, meshConfig)
             meshes.append(mesh)
         return meshes
 

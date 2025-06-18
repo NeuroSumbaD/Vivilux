@@ -2,26 +2,24 @@
     parameters from physical processes. For example. see the phase
 '''
 
-from abc import ABC, abstractmethod
+# from abc import ABC, abstractmethod
 
 import numpy as np
 
 from .signals import Control
-from .parameters import ParameterSet
+from .parameters import ParamSet
 
-class Material(ABC):
-    parameter = ParameterSet
+class MaterialDef:
+    parameter = ParamSet
     def __init__(self, numElements,
                  controlType: Control):
         self.numElements = numElements
         self.controlType = controlType
 
-    @abstractmethod
     def CalculateParameters(self, control):
         raise NotImplementedError("CalculateParameter is not defined for type: "
                                   f"{type(self)}")
     
-    @abstractmethod
     def CalculateControlSignal(self, control):
         raise NotImplementedError("CalculateControlSignal is not defined for type: "
                                   f"{type(self)}")

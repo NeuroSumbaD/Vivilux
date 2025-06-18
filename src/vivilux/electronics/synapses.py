@@ -1,14 +1,14 @@
 import numpy as np
 
 from vivilux.materials import Material
-from vivilux.parameters import ParameterSet
+from vivilux.parameters import ParamSet
 
-from ..devices import Device
+from ..synapses import SynapticDevice
 from .materials import ResistiveElements
 
-class ResistiveCrossbar(Device):
+class ResistiveCrossbar(SynapticDevice):
     def __init__(self, shape: tuple[int,int],
-                 initParameters: dict[str, ParameterSet] = {},
+                 initParameters: dict[str, ParamSet] = {},
                  ) -> None:
         numElements = np.prod(shape)
         materials = {"crossings": (ResistiveElements, numElements)}

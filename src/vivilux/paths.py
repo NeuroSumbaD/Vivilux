@@ -19,82 +19,20 @@ class Path:
     '''Base class for a collection of synaptic elements.
     '''
     count = 0
-    SignalType = Data
-    def __init__(self, 
+    outputType = Data
+    def __init__(self,
                  sendLayer: Layer,
                  recvLayer: Layer,
-                 # below are generic leabra kwargs
-                 AbsScale: float = 1,
-                 RelScale: float = 1,
-                 InitMean: float = 0.5,
-                 InitVar: float = 0.25,
-                 Off: float = 1,
-                 Gain: float = 6,
-                 dtype = np.float64,
-                 wbOn = True,
-                 wbAvgThr = 0.25,
-                 wbHiThr = 0.4,
-                 wbHiGain = 4,
-                 wbLoThr = 0.4,
-                 wbLoGain = 6,
-                 wbInc = 1,
-                 wbDec = 1,
-                 WtBalInterval = 10,
-                 softBound = True,
-                #  device = Generic(),
-                 **kwargs):  # kwargs is catchall for extra keyword args meant for child classes
+                 name = None,
+                 **kwargs): # kwargs is catchall for extra keyword args meant for child classes
         self.shape = (len(recvLayer), len(sendLayer))
-        self.AttachLayer(recvLayer)
         self.size = np.max([len(recvLayer), len(sendLayer)])
-        self.Off = Off
-        self.Gain = Gain
-        self.dtype = dtype
 
-        # Weight Balance Parameters
-        self.wbOn = wbOn
-        self.wbAvgThr = wbAvgThr
-        self.wbHiThr = wbHiThr
-        self.wbHiGain = wbHiGain
-        self.wbLoThr = wbLoThr
-        self.wbLoGain = wbLoGain
-        self.wbInc = wbInc
-        self.wbDec = wbDec
-        self.WtBalInterval = 0
-        self.softBound = softBound
-
-        # Weight Balance variables
-        self.WtBalCtr = 0
-        self.wbFact = 0
-
-        # Generate from uniform distribution
-        low = InitMean - InitVar
-        high = InitMean + InitVar
-        self.matrix = np.random.uniform(low, high, size=(self.size, len(sendLayer)))
-        self.linMatrix = np.copy(self.matrix) # initialize linear weight
-        self.InvSigMatrix() # correct linear weight
-
-        # Other initializations
-        self.Gscale = 1#/len(inLayer)
         self.sendLayer = sendLayer
-        self.OptThreshParams = sendLayer.OptThreshParams
-        self.lastAct = np.zeros(self.size, dtype=self.dtype)
-        self.inAct = np.zeros(self.size, dtype=self.dtype)
+        self.recvLayer = recvLayer
 
-        # flag to track when matrix updates (for nontrivial meshes like MZI)
-        self.modified = False
-
-        self.name = f"MESH_{Path.count}"
+        self.name = f"PATH[{Path.count}]" if not name else name
         Path.count += 1
-
-        self.trainable = True
-        self.sndActAvg = sendLayer.ActAvg
-        self.rcvActAvg = None
-
-        # external matrix scaling parameters (constant synaptic gain)
-        self.AbsScale = AbsScale
-        self.RelScale = RelScale
-
-        # self.AttachDevice(device)
 
     def CalcEnergy(self):
         '''Returns integrated energy over the course of the simulation.
@@ -158,10 +96,111 @@ class Path:
 
     #     self.setIntegration += np.sum(currMat)
     #     self.resetIntegration += np.sum(newMat)
-    
+
     def set(self, matrix):
+        '''This version of the set function is not meant to be used except
+            in the case of initialization. Note: this may be deprecated in
+            the future.
+        '''
         self.modified = True
         self.matrix = matrix
+
+    def Update(self,):
+        '''Uses a subclass-defined method called CalculateUpdate() to generate
+            a delta vector with the same shape as the synaptic matrix, and then
+            calls an ApplyUpdate(delta) that should be overwritten in all
+            subclasses to calculate updates from parameters and update any other
+            internal parameters and material states.
+        '''
+        raise NotImplementedError(f"{type(self)} Does not implement the Update() method")
+    
+    def Apply(self,):
+        return self.ApplyTo(self.sendLayer.Get())
+    
+    def ApplyTo(self, data):
+        raise NotImplementedError(f"{type(self)} Does not implement the ApplyTo() method")
+
+    # def __len__(self):
+    #     return self.size
+
+    def __str__(self):
+        return f"\n\t\t{self.name}({",".join(self.shape)}): {self.sendLayer} to {self.recvLayer}"
+
+class LeabraPath(Path):
+    '''Subclass for implementing the training algorithm used in Leabra
+    '''
+    def __init__(self, 
+                 sendLayer: Layer,
+                 recvLayer: Layer,
+                 # below are generic leabra kwargs
+                 AbsScale: float = 1,
+                 RelScale: float = 1,
+                 InitMean: float = 0.5,
+                 InitVar: float = 0.25,
+                 Off: float = 1,
+                 Gain: float = 6,
+                 dtype = np.float64,
+                 wbOn = True,
+                 wbAvgThr = 0.25,
+                 wbHiThr = 0.4,
+                 wbHiGain = 4,
+                 wbLoThr = 0.4,
+                 wbLoGain = 6,
+                 wbInc = 1,
+                 wbDec = 1,
+                 WtBalInterval = 10,
+                 softBound = True,
+                #  device = Generic(),
+                 **kwargs):  # kwargs is catchall for extra keyword args meant for child classes
+        super().__init__(sendLayer=sendLayer, recvLayer=recvLayer, **kwargs)
+        self.AttachLayer(recvLayer)
+        self.Off = Off
+        self.Gain = Gain
+        self.dtype = dtype
+
+        # Weight Balance Parameters
+        self.wbOn = wbOn
+        self.wbAvgThr = wbAvgThr
+        self.wbHiThr = wbHiThr
+        self.wbHiGain = wbHiGain
+        self.wbLoThr = wbLoThr
+        self.wbLoGain = wbLoGain
+        self.wbInc = wbInc
+        self.wbDec = wbDec
+        self.WtBalInterval = 0
+        self.softBound = softBound
+
+        # Weight Balance variables
+        self.WtBalCtr = 0
+        self.wbFact = 0
+
+        # Generate from uniform distribution
+        low = InitMean - InitVar
+        high = InitMean + InitVar
+        self.matrix = np.random.uniform(low, high, size=(self.size, len(sendLayer)))
+        self.linMatrix = np.copy(self.matrix) # initialize linear weight
+        self.InvSigMatrix() # correct linear weight
+
+        # Other initializations
+        self.Gscale = 1#/len(inLayer)
+        self.sendLayer = sendLayer
+        self.OptThreshParams = sendLayer.OptThreshParams
+        self.lastAct = np.zeros(self.size, dtype=self.dtype)
+        self.inAct = np.zeros(self.size, dtype=self.dtype)
+
+        # flag to track when matrix updates (for nontrivial meshes like MZI)
+        self.modified = False
+
+        self.trainable = True
+        self.sndActAvg = sendLayer.ActAvg
+        self.rcvActAvg = None
+
+        # external matrix scaling parameters (constant synaptic gain)
+        self.AbsScale = AbsScale
+        self.RelScale = RelScale
+
+    def set(self, matrix):
+        super().set(matrix)
         self.InvSigMatrix()
 
     def setGscale(self):
@@ -300,10 +339,10 @@ class Path:
     def Update(self,
                dwtLog = None,
                ):
-        '''Calculates and applies the weight update according to the
-            learning rule and updates other related internal variables.
-
-            This function should apply to all meshes.
+        '''Uses the XCAL process to calculate changes to the synaptic matrix
+            in the form of a delta vector in the same shape as the path. Calls
+            an ApplyUpdate(delta) that should be overwritten in all subclasses
+            to calculate updates from parameters.
         '''
         delta, m, n = self.CalculateUpdate(dwtLog=dwtLog)
         self.ApplyUpdate(delta, m, n)
@@ -411,12 +450,6 @@ class Path:
     
     def invSigmoid(self, data):
         return 1 / (1 + np.power((1/self.Off)*(1-data)/data, (1/self.Gain)))
-
-    def __len__(self):
-        return self.size
-
-    def __str__(self):
-        return f"\n\t\t{self.name.upper()} ({self.size} <={self.sendLayer.name}) = {self.get()}"
 
 class TransposeMesh(Path):
     '''A class for feedback meshes based on the transpose of another mesh.

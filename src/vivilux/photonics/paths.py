@@ -1,7 +1,7 @@
 from ..paths import Path
 from ..layers import Layer
 from .utils import *
-from .devices import Device
+from .synapses import SynapticDevice
 
 import numpy as np
 from scipy.stats import ortho_group
@@ -416,7 +416,7 @@ class DiagMZI(MZImesh):
         self.concavity = 0.6
 
     def AttachDevice(self,
-                     psDevice: Device,
+                     psDevice: SynapticDevice,
                     #  soaDevice: Device, #TODO Implement SOA
                      ):
         self.psDevice = psDevice
@@ -497,7 +497,7 @@ class SVDMZI(MZImesh):
         self.concavity  = 0.6
 
     def AttachDevice(self,
-                     psDevice: Device,
+                     psDevice: SynapticDevice,
                     #  soaDevice: Device, #TODO Implement SOA
                      ):
         self.psDevice = psDevice

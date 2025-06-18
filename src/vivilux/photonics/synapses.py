@@ -4,13 +4,13 @@
 '''
 
 from ..signals import Signal
-from ..devices import Device, Volatile, NonVoltatile
+from ..synapses import SynapticDevice, Volatile, NonVoltatile
 
 import numpy as np
 
 from abc import ABC, abstractmethod
 
-class MZI(Device):
+class MZI(SynapticDevice):
     '''An ideal phase shifter that applies the same phase shift across all
         wavelengths.
     '''
