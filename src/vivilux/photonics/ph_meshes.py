@@ -635,6 +635,9 @@ class OversizedMZI(MZImesh):
                  rtol = 1e-2, # relative tolerance
                  bitPrecision = None,
                  **kwargs):
+        # TODO: Allow scaleFactor to adjust dynamically
+        # self.scaleFactor = 1+size
+        self.scaleFactor = 1 
         self.aux_in = aux_in
         self.aux_out = aux_out
         Mesh.__init__(self,size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
@@ -654,7 +657,7 @@ class OversizedMZI(MZImesh):
         self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
         
         self.mesh_size = max(size + aux_in, size + aux_out)
-        self.amplifiers = np.ones(self.mesh_size)
+        # self.amplifiers = np.ones(self.mesh_size)
         self.numUnits = int(self.mesh_size*(self.mesh_size-1)/2)
         self.bitPrecision = bitPrecision
         self.bitMask = int(2**bitPrecision - 1) if bitPrecision is not None else None
@@ -672,7 +675,8 @@ class OversizedMZI(MZImesh):
 
         self.setFromParams()
 
-    def getFromParams(self, params=None):
+
+    def getFromParams(self, params=None) -> np.ndarray:
         params = self.getParams() if params is None else params
         self.boundParams(params)
         self.ApplyBitPrecision(params)
@@ -680,33 +684,215 @@ class OversizedMZI(MZImesh):
         oversizedMat = np.square(np.abs(complexMat))
 
         # apply multipliers to each row
-        oversizedMat = Diagonalize(params[1]) @ oversizedMat
+        # oversizedMat = Diagonalize(params[1]) @ oversizedMat
+        oversizedMat *= self.scaleFactor
 
         N = self.mesh_size
         num_aux_in = self.aux_in
         num_aux_out = self.aux_out
         real_matrix = oversizedMat[1:(N-(num_aux_out-1)), :-num_aux_in]
         return real_matrix
-
-    def getParams(self):
-        return [self.phaseShifters, self.amplifiers]
     
-    def setParams(self, params):
+    def getOversizedFromParams(self, params=None) -> np.ndarray:
+        params = self.getParams() if params is None else params
+        self.boundParams(params)
+        self.ApplyBitPrecision(params)
+        complexMat = psToRect(params[0], self.mesh_size)
+        oversizedMat = np.square(np.abs(complexMat))
+
+        return oversizedMat
+
+
+    def getParams(self) -> list[np.ndarray]:
+        # return [self.phaseShifters, self.amplifiers]
+        return [self.phaseShifters]
+    
+    def setParams(self, params: list[np.ndarray]):
         self.boundParams(params)
         self.checkNaN(params)
         
 
         self.DeviceUpdate(params) # TODO: Implement SOA udpates
         self.phaseShifters = params[0]
-        self.amplifiers = params[1]
+        # self.amplifiers = params[1]
 
         self.modified = True
     
-    def boundParams(self, params):
+    def boundParams(self, params: list[np.ndarray]) -> list[np.ndarray]:
         params[0] = BoundTheta(params[0])
-        params[1] = BoundGain(params[1], lower=1, upper=10)
+        # params[1] = BoundGain(params[1], lower=1, upper=10)
 
         return params
+
+    def ApplyDelta(self, delta:np.ndarray, verbose=False):
+        '''Uses directional derivatives to find the set of phase shifters which
+            implements some change in weights for the matrix. Uses the LSO Analog
+            Matrix Mapping (LAMM) algorithm.
+            
+            Updates self.matrix and returns the difference vector between target
+            and implemented delta.
+        '''
+        # Make column vectors for deltas and theta
+        m, n = delta.shape # presynaptic, postsynaptic array lengths
+
+        delta /= self.scaleFactor # scale delta to match MZI array range
+
+        # generate oversized matrix delta
+        oversizedDelta = np.zeros((self.mesh_size, self.mesh_size), dtype=self.dtype)
+        oversizedDelta[1:(self.mesh_size-(self.aux_out-1)), :-self.aux_in] = delta
+
+        # fill first row and last column to maintain column and row sums
+        oversizedDelta[0, :] = -np.sum(oversizedDelta, axis=0)
+        oversizedDelta[:, -1] = -np.sum(oversizedDelta, axis=1)
+        # fill top right corner with 0
+        oversizedDelta[0, -1] = 0
+
+        delta = oversizedDelta
+
+        deltaFlat = delta.flatten().reshape(-1,1)
+        thetaFlat = np.concatenate([param.flatten() for param in self.getParams()]).reshape(-1,1)
+
+        initDeltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
+        deltaMagnitude = initDeltaMagnitude
+        updateMagnitude = self.updateMagnitude # save update magnitude
+        self.record = -np.ones(self.numSteps+1)
+        self.record[0] = initDeltaMagnitude
+        tol = self.atol + self.rtol * initDeltaMagnitude
+        errorTol = np.sqrt(tol/self.concavity)
+        coeff = 1
+        skipCount = 0
+        overflow = True
+        if verbose:
+            print(f"Initial delta magnitude: {initDeltaMagnitude}")
+
+        for step in range(self.numSteps):
+            # currMat = self.get()/self.Gscale
+            currMat = self.getOversizedFromParams()
+            X = np.zeros((deltaFlat.shape[0], self.numDirections))
+            V = np.zeros((thetaFlat.shape[0], self.numDirections))
+            
+            # Calculate directional derivatives
+            for i in range(self.numDirections):
+                tempx, tempv= self.matrixGradient()
+                tempv = np.concatenate([param.flatten() for param in tempv])
+                X[:,i], V[:,i] = tempx.flatten(), tempv.flatten()
+
+            # Solve least square regression for update
+            for iteration in range(self.numDirections):
+                xtx = X.T @ X # add L2 regularizer (equivalent to imposing gaussian prior or rewriting optimization as y - Xa + epsilon*I)
+                rank = np.linalg.matrix_rank(xtx)
+                if rank == len(xtx): # matrix will have an inverse
+                    a = np.linalg.inv(xtx) @ X.T @ deltaFlat
+                    assert(np.any(np.isnan(a))==False)
+                    break
+                elif rank == 0:
+                    self.updateMagnitude *= 1.2
+                    self.record[step+1] = -np.inf
+                else: # direction vectors cary redundant information use one less
+                    X = X[:,:-1]
+                    V = V[:,:-1]
+                    continue
+            if rank == 0: 
+                continue
+            
+            # bound max step in `a`
+            a *= coeff
+
+            # calculate updated params
+            linearCombination = V @ a
+            updatedParams = [param + opt for param, opt in zip(self.getParams(), self.reshapeParams(linearCombination))]
+            self.boundParams(updatedParams)
+
+            # test delta after step
+            newMat = self.getOversizedFromParams(updatedParams)
+            trueDelta = newMat - currMat
+            trueDelta[0, -1] = 0 # remove top right corner (irrelevant)
+            trueDelta = trueDelta.flatten().reshape(-1,1)
+            newMagnitude = Magnitude(deltaFlat - trueDelta)
+            stepCoeff = newMagnitude/deltaMagnitude
+            
+            # update step scaling
+            if (stepCoeff > 1):
+                coeff *= 0.9
+                skipCount += 1
+                if skipCount > 25: # take a random big step
+                    randomParams = [3e-1*2*(np.random.rand(*param.shape)-0.5)+
+                                    param for param in self.getParams()]
+                    newMat = self.getOversizedFromParams(randomParams)
+                    trueDelta = newMat - currMat
+                    trueDelta[0, -1] = 0 # remove top right corner (irrelevant)
+                    trueDelta = trueDelta.flatten().reshape(-1,1)
+                    deltaFlat -= trueDelta
+                    deltaMagnitude = Magnitude(deltaFlat)
+                    self.record[step+1] = deltaMagnitude
+                    self.setParams(randomParams)
+                    skipCount = 0 # reset skip count
+                    self.updateMagnitude = updateMagnitude # reset magnitude
+                    continue
+                elif skipCount > 10: # stop iterating if the delta isn't being implemented
+                    self.updateMagnitude *= 0.9 # take smaller test steps
+                self.record[step+1] = -100
+                continue # do not apply step
+            elif (stepCoeff > 0.9) and coeff < 1:
+                coeff *= 1.1 # increases step size if updates are slow
+            # coeff = np.min([coeff, 1]) # coeff should always be less than 1
+            skipCount = 0 
+
+            # Apply update to parameters
+            self.setParams(updatedParams)
+            deltaFlat -= trueDelta
+            deltaMagnitude = Magnitude(deltaFlat)
+            self.record[step+1] = deltaMagnitude
+            if deltaMagnitude < tol:
+                if verbose:
+                    print(f"Break after {step+1} steps, delta magnitude: {deltaMagnitude}")
+                overflow = False
+                break
+        if verbose:
+            print(f"Final delta magnitude: {deltaMagnitude}, success: {initDeltaMagnitude > deltaMagnitude}")
+        
+        self.numOverflows += int(overflow) # always increments except when exceeding tol
+
+        self.updateMagnitude = updateMagnitude # restore original magnitude
+
+        self.setFromParams()
+        return deltaMagnitude, step
+
+    def matrixGradient(self, stepVector: list[np.ndarray] = None):
+        '''Calculates the gradient of the matrix with respect to the phase
+            shifters in the MZI mesh. This gradient is with respect to the
+            magnitude of an array of detectors that serves as neural input.
+
+            Returns derivativeMatrix, stepVector
+        '''
+        paramsList = self.getParams()
+        # create a random step vector and set magnitude to self.updateMagnitude
+        if stepVector is None:
+            stepVectors = [2*np.random.rand(*param.shape)-1 for param in paramsList] # TODO: determine which range is better [0,1) or [-1,1)
+            flatVectors = [stepVector.flatten() for stepVector in stepVectors]
+            randMagnitude = Magnitude(np.concatenate(flatVectors))
+            stepVectors = [stepVector/randMagnitude for stepVector in stepVectors]
+            stepVectors = [stepVector*self.updateMagnitude for stepVector in stepVectors]
+        
+        # derivativeMatrix = np.zeros(self.matrix.shape)
+
+        #TODO: fix steps to be generic for any param structure (make flatten/shape function?)
+        # Forward step
+        plusVectors = [param + stepVector for param, stepVector in zip(paramsList, stepVectors)]
+        self.boundParams(plusVectors)
+        plusMatrix = self.getOversizedFromParams(plusVectors)
+        # plusMatrix = np.square(np.abs(psToRect(plusVectors[0], self.size)))
+        # Backward step
+        minusVectors = [param - stepVector for param, stepVector in zip(paramsList, stepVectors)]
+        self.boundParams(minusVectors)
+        minusMatrix = self.getOversizedFromParams(minusVectors)
+        # minusMatrix = np.square(np.abs(psToRect(minusVectors[0], self.size)))
+
+        differenceMatrix = plusMatrix - minusMatrix
+        differenceMatrix[0, -1] = 0 # remove top right corner (irrelevant)
+        derivativeMatrix = differenceMatrix/self.updateMagnitude
+
+        return derivativeMatrix, stepVectors
     
     def AttachDevice(self,
                      psDevice: Device,
@@ -732,7 +918,7 @@ class OversizedMZI(MZImesh):
         self.holdIntegration += np.sum(currParams[:1])
         self.holdTime += DT
 
-    def DeviceUpdate(self, updatedParams):
+    def DeviceUpdate(self, updatedParams: list[np.ndarray]):
         '''Calls the reset() and set() functions for each device in the mesh
             according to the updated parameters
 
