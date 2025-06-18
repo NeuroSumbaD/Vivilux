@@ -15,9 +15,9 @@ from copy import deepcopy
 from itertools import permutations
 
 matrixSize = 4
-numIterations = 10
+numIterations = 100
 updateMagnitude = 1e-3 # update magnitude for LAMM
-numDirections = 5 # number of directional vectors for LAMM
+numDirections = 10 # number of directional vectors for LAMM
 numSteps = 1000 # number of steps for LAMM
 
 dummyLayer = Layer(matrixSize, isInput=True, name="Input")
@@ -27,6 +27,7 @@ dummyNet.AddLayer(dummyLayer)
 rows = list(np.eye(matrixSize)) # list of rows for permutation matrix
 records = [] # to store traces of magnitude for each permutation matrix
 fig1 = plt.figure()
+numConverged = 0
 print("--------STARTING TEST: Small parameter deviations--------")
 for index in range(numIterations):
     mzi = OversizedMZI(matrixSize, dummyLayer,
@@ -38,7 +39,8 @@ for index in range(numIterations):
     matrix = mzi.getFromParams([0.2*np.random.rand(*param.shape)-0.1 + param for param in mzi.getParams()])
     initMatrix = mzi.get()/mzi.Gscale
     initDelta = matrix - initMatrix
-    magnitude, numSteps = mzi.set(matrix)
+    magnitude, numStepsUsed, hasConverged = mzi.set(matrix)
+    numConverged += int(hasConverged)
     print("Attempting to implement:")
     print(np.round(matrix,6))
     print("Initial matrix")
@@ -47,7 +49,7 @@ for index in range(numIterations):
     print(np.round(mzi.matrix, 6))
     print("Initial magnitude:", Magnitude(initDelta))
     print("Final delta magnitude:", magnitude)
-    print(f"Took {numSteps} steps.")
+    print(f"Took {numStepsUsed} steps. Conferged = {hasConverged}")
     records.append(mzi.record)
     plt.plot(mzi.record[mzi.record>=0])
 
@@ -55,6 +57,7 @@ plt.title("Implementing Small parameter deviations")
 plt.ylabel("magnitude of difference vector")
 plt.xlabel("LAMM iteration")
 fig1.savefig("applyDeltaOversizedMZI_smallDeviations.png")
+numConverged1 = numConverged
 
 # Random Matrix
 dummyLayer = Layer(matrixSize, isInput=True, name="Input")
@@ -64,6 +67,7 @@ fig2 = plt.figure()
 print("--------STARTING TEST: Random Matrix on [0,1)--------")
 records = [] # to store traces of magnitude for each matrix
 numUnits = int(matrixSize*(matrixSize-1)/2)
+numConverged = 0
 for index in range(numIterations):
     mzi = OversizedMZI(matrixSize, dummyLayer,
                 numDirections=numDirections,
@@ -74,29 +78,32 @@ for index in range(numIterations):
     initMatrix = mzi.get()/mzi.Gscale
     randMatrix = np.random.rand(4,4)
     initDelta = randMatrix - initMatrix
-    magnitude, numSteps = mzi.set(matrix)
+    magnitude, numStepsUsed, hasConverged = mzi.set(randMatrix)
+    numConverged += int(hasConverged)
     print("Attempting to implement:")
-    print(np.round(matrix,6))
+    print(np.round(randMatrix,6))
     print("Initial matrix")
     print(np.round(initMatrix, 6))
     print("Resulting matrix:")
     print(np.round(mzi.matrix, 6))
     print("Initial magnitude:", Magnitude(initDelta))
     print("Final delta magnitude:", magnitude)
-    print(f"Took {numSteps} steps.")
+    print(f"Took {numStepsUsed} steps. Conferged = {hasConverged}")
     records.append(mzi.record)
     plt.plot(mzi.record[mzi.record>=0])
 
-    magnitude, numSteps = mzi.set(randMatrix)
+    # magnitude, numSteps, hasConverged = mzi.set(randMatrix)
 plt.title("Implementing Random Matrices")
 plt.ylabel("magnitude of difference vector")
 plt.xlabel("LAMM iteration")
 fig2.savefig("applyDeltaOversizedMZI_randomMatrix.png")
+numConverged2 = numConverged
 
 fig3 = plt.figure()
 print("--------STARTING TEST: Sparse Delta Convergence [0,1)--------")
 records = [] # to store traces of magnitude for each matrix
 numUnits = int(matrixSize*(matrixSize-1)/2)
+numConverged = 0
 for index in range(numIterations):
     mzi = OversizedMZI(matrixSize, dummyLayer,
               numDirections=numDirections,
@@ -108,32 +115,38 @@ for index in range(numIterations):
 
     numSparseElements = 5 # out of 16
     randMatrix = np.copy(initMatrix)
-    randCoeff = 5e-4*np.random.rand(1)
+    randCoeff = 5e-2*np.random.rand(1)
     indices = np.random.permutation(16)[:numSparseElements]
     mask = np.zeros(16)
     mask[indices] = 1
     mask = mask.reshape(4,4).astype("bool")
-    randMatrix[mask] = 2 * (np.random.rand(numSparseElements) - 0.5)
-    randMatrix[mask] *= randCoeff
+    randMatrix[mask] += 2 * randCoeff*(np.random.rand(numSparseElements) - 0.5)
+    # randMatrix[mask] *= randCoeff
 
     initDelta = randMatrix - initMatrix
-    magnitude, numSteps = mzi.set(matrix)
+    magnitude, numStepsUsed, hasConverged = mzi.set(randMatrix)
+    numConverged += int(hasConverged)
     print("Attempting to implement:")
-    print(np.round(matrix,6))
+    print(np.round(randMatrix,6))
     print("Initial matrix")
     print(np.round(initMatrix, 6))
     print("Resulting matrix:")
     print(np.round(mzi.matrix, 6))
     print("Initial magnitude:", Magnitude(initDelta))
     print("Final delta magnitude:", magnitude)
-    print(f"Took {numSteps} steps.")
+    print(f"Took {numStepsUsed} steps. Conferged = {hasConverged}")
     records.append(mzi.record)
     plt.plot(mzi.record[mzi.record>=0])
 
-    magnitude, numSteps = mzi.set(randMatrix)
+    # magnitude, numSteps, hasConverged = mzi.set(randMatrix)
 plt.title("Implementing Sparse Deltas")
 plt.ylabel("magnitude of difference vector")
 plt.xlabel("LAMM iteration")
+numConverged3 = numConverged
 
 # plt.show()
 fig3.savefig("applyDeltaOversizedMZI_sparseConvergence.png")
+
+print(f"Converged {numConverged1}/{numIterations} times for small deviations.")
+print(f"Converged {numConverged2}/{numIterations} times for random matrices.")
+print(f"Converged {numConverged3}/{numIterations} times for sparse deltas.")

@@ -768,6 +768,12 @@ class OversizedMZI(MZImesh):
         if verbose:
             print(f"Initial delta magnitude: {initDeltaMagnitude}")
 
+        if initDeltaMagnitude < tol:
+            if verbose:
+                print(f"Delta magnitude {initDeltaMagnitude} is less than tolerance {tol}. No update needed.")
+            # self.setFromParams()
+            return initDeltaMagnitude, 0, True
+
         for step in range(self.numSteps):
             # currMat = self.get()/self.Gscale
             currMat = self.getOversizedFromParams()
@@ -860,7 +866,7 @@ class OversizedMZI(MZImesh):
         self.updateMagnitude = updateMagnitude # restore original magnitude
 
         self.setFromParams()
-        return deltaMagnitude, step
+        return deltaMagnitude, step, not overflow
 
     def matrixGradient(self, stepVector: list[np.ndarray] = None):
         '''Calculates the gradient of the matrix with respect to the phase
