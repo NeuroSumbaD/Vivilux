@@ -638,6 +638,7 @@ class OversizedMZI(MZImesh):
         # TODO: Allow scaleFactor to adjust dynamically
         # self.scaleFactor = 1+size
         self.scaleFactor = np.array([1])
+        self.freezeScaleFactor = False # prevents scale factor from being updated
         self.aux_in = aux_in
         self.aux_out = aux_out
         Mesh.__init__(self,size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
@@ -707,8 +708,10 @@ class OversizedMZI(MZImesh):
 
     def getParams(self) -> list[np.ndarray]:
         # return [self.phaseShifters, self.amplifiers]
-        # return [self.phaseShifters]
-        return [self.phaseShifters, self.scaleFactor]
+        if self.freezeScaleFactor:
+            return [self.phaseShifters]
+        else:
+            return [self.phaseShifters, self.scaleFactor]
     
     def setParams(self, params: list[np.ndarray]):
         self.boundParams(params)
@@ -717,13 +720,17 @@ class OversizedMZI(MZImesh):
 
         self.DeviceUpdate(params) # TODO: Implement SOA udpates
         self.phaseShifters = params[0]
-        # self.amplifiers = params[1]
+
+        if not self.freezeScaleFactor:
+            self.scaleFactor = params[1]
 
         self.modified = True
     
     def boundParams(self, params: list[np.ndarray]) -> list[np.ndarray]:
         params[0] = BoundTheta(params[0])
-        # params[1] = BoundGain(params[1], lower=1, upper=10)
+
+        if not self.freezeScaleFactor:
+            params[1] = BoundGain(params[1], lower=1, upper=10)
 
         return params
 
