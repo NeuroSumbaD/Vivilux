@@ -4,10 +4,14 @@ from vivilux.layers import Layer
 from vivilux.metrics import RMSE
 from vivilux.visualize import Monitor, Multimonitor, StackedMonitor
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
 # import tensorflow as tf
-np.random.seed(seed=0)
+
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
 plt.ion()
 numSamples = 80
@@ -16,10 +20,10 @@ inputSize = 3
 outputSize = 1
 
 # Define input and output data (must be normalized and positive-valued)
-vecs = np.random.normal(size=(numSamples, inputSize))
-mags = np.linalg.norm(vecs, axis=-1)
-inputs = np.abs(vecs/mags[...,np.newaxis])
-targets = np.random.rand(numSamples, 1)
+vecs = jrandom.normal(rngs['Params'], (numSamples, inputSize))
+mags = jnp.linalg.norm(vecs, axis=-1)
+inputs = jnp.abs(vecs/mags[...,jnp.newaxis])
+targets = jrandom.uniform(rngs['Params'], (numSamples, 1))
 del vecs, mags
 
 leabraNet = Net(name = "LEABRA_NET",
@@ -109,7 +113,7 @@ resultCHL = leabraNet.Learn(input=inputs, target=targets, numEpochs=numEpochs, r
 plt.plot(resultCHL['RMSE'], label="Leabra Net")
 
 # Compare to average RMSE of completely random guessing (uniform distribution)
-baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
+baseline = jnp.mean(jnp.array([RMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), targets) for entry in jrandom.uniform(rngs['Params'], (2000,numSamples,4))]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Random Input/Output Matching")

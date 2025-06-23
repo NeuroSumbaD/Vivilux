@@ -5,9 +5,10 @@ import vivilux.photonics as px
 from vivilux.photonics.ph_meshes import MZImesh
 from vivilux.photonics.utils import psToRect
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
-np.random.seed(seed=0)
 
 from copy import deepcopy
 from itertools import permutations
@@ -24,6 +25,8 @@ mzi = MZImesh(matrixSize, dummyLayer,
             #   updateMagnitude=0.05,
               )
 
+rngs = nnx.Rngs(0)
+
 # Convergence test #1
 plt.figure()
 print("--------STARTING CONVERGENCE TEST #1--------")
@@ -33,10 +36,9 @@ numUnits = int(matrixSize*(matrixSize-1)/2)
 for index in range(50):
     print(f"Convergence test #1: {index}...", end=" ")
     initMatrix = mzi.get()/mzi.Gscale
-    randMatrix = np.square(np.abs(psToRect(np.random.rand(numUnits,2)*2*np.pi,
-                                           matrixSize)))
+    randMatrix = jnp.square(jnp.abs(psToRect(jrandom.uniform(rngs["Params"], (numUnits,2), minval=0, maxval=2*jnp.pi), matrixSize)))
     delta = randMatrix - initMatrix
-    magDelta = np.sqrt(np.sum(np.square(delta.flatten())))
+    magDelta = jnp.sqrt(jnp.sum(jnp.square(delta.flatten())))
     magnitudes.append(magDelta)
 
     _, numSteps = mzi.set(randMatrix)

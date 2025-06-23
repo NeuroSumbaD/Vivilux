@@ -7,6 +7,8 @@ import nidaqmx
 import nidaqmx.system
 import nidaqmx.constants
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
 from vivilux.logger import log
@@ -19,7 +21,7 @@ class Board(daq.Board):
         super().__init__(name, *pins)
         self.unique_id = dev_serial_num
         
-    def group_vin(self, pin_names):
+    def group_vin(self, pin_names) -> jnp.ndarray:
         '''Groups the voltage inputs from the specified pins into a single array.
         
         Parameters
@@ -29,7 +31,7 @@ class Board(daq.Board):
 
         Returns
         -------
-        np.ndarray
+        jnp.ndarray
             An array containing the voltage inputs from the specified pins.
         '''
         with nidaqmx.Task() as task:
@@ -43,7 +45,7 @@ class Board(daq.Board):
                                                      terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
             data = np.array(task.read(number_of_samples_per_channel=100))
             data = np.mean(data[:, 10:], axis=1)
-        return data
+        return jnp.array(data)
 
 def get_driver_version() -> namedtuple:
     system = nidaqmx.system.System.local()

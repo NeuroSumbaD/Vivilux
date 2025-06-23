@@ -4,9 +4,10 @@ from vivilux.layers import Layer
 from vivilux.photonics.ph_meshes import MZImesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
-np.random.seed(seed=0)
 
 from copy import deepcopy
 
@@ -19,12 +20,13 @@ patternSize = 6
 numSamples = 25
 
 #define input and output data (must be one-hot encoded)
-inputs = np.zeros((numSamples, inputSize))
-inputs[:,:patternSize] = 1
-inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
-targets = np.zeros((numSamples, outputSize))
-targets[:,:patternSize] = 1
-targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
+rngs = nnx.Rngs(0)
+inputs = jnp.zeros((numSamples, inputSize))
+inputs = inputs.at[:,:patternSize].set(1)
+inputs = jnp.stack([jrandom.permutation(jrandom.fold_in(rngs["Params"], i), inputs[i]) for i in range(numSamples)])
+targets = jnp.zeros((numSamples, outputSize))
+targets = targets.at[:,:patternSize].set(1)
+targets = jnp.stack([jrandom.permutation(jrandom.fold_in(rngs["Params"], 100+i), targets[i]) for i in range(numSamples)])
 
 leabraRunConfig = {
     "DELTA_TIME": 0.001,
@@ -80,10 +82,13 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          shuffle=False,
                          EvaluateFirst=False,
                          )
-time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
+time = jnp.linspace(0,leabraNet.time, len(result['AvgSSE']))
 plt.plot(time, result['AvgSSE'], label="Leabra Net")
 
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
+baseline = jnp.mean(jnp.array([
+    ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), targets)
+    for entry in jrandom.uniform(rngs["Params"], (2000,numSamples,inputSize))
+]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Random Input/Output Matching")

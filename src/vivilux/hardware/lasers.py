@@ -4,7 +4,7 @@
 from typing import Any
 from time import sleep
 
-import numpy as np
+import jax.numpy as jnp
 import nidaqmx
 import pyvisa as visa
 
@@ -48,7 +48,7 @@ class LaserArray:
 
         # Measure offsets for detector readings
         self.initialized_offsets = False
-        self.offsets = np.zeros(self.size)
+        self.offsets = jnp.zeros(self.size)
         self.readPhotocurrent()  # Initialize offsets by reading the detectors
 
         self.optical_power_scale = None # Scales from power to control signal units (must be calibrated)
@@ -58,26 +58,26 @@ class LaserArray:
         for net in self.control_nets:
             self.netlist[net].reset()  # Reset control nets to default state (0 V)
 
-    def clip(self, vector: np.ndarray) -> np.ndarray:
+    def clip(self, vector: jnp.ndarray) -> jnp.ndarray:
         '''Ensures that the input vector is within the power limits.
         '''
-        if not isinstance(vector, np.ndarray):
-            vector = np.array(vector)
-        return np.clip(vector, self.limits[0], self.limits[1])
+        if not isinstance(vector, jnp.ndarray):
+            vector = jnp.array(vector)
+        return jnp.clip(vector, self.limits[0], self.limits[1])
     
-    def normalize(self, vector: np.ndarray) -> np.ndarray:
+    def normalize(self, vector: jnp.ndarray) -> jnp.ndarray:
         '''Normalizes the input vector to the range [0, 1].
         '''
-        if not isinstance(vector, np.ndarray):
-            vector = np.array(vector)
+        if not isinstance(vector, jnp.ndarray):
+            vector = jnp.array(vector)
         return (vector - self.limits[0]) / (self.limits[1] - self.limits[0])
     
-    def denormalize(self, vector: np.ndarray) -> np.ndarray:
+    def denormalize(self, vector: jnp.ndarray) -> jnp.ndarray:
         '''Denormalizes the input vector from the range [0, 1] to the control
             unit limits (usually voltage).
         '''
-        if not isinstance(vector, np.ndarray):
-            vector = np.array(vector)
+        if not isinstance(vector, jnp.ndarray):
+            vector = jnp.array(vector)
         return vector * (self.limits[1] - self.limits[0]) + self.limits[0]
     
     def calibrate_power_scale(self) -> None:
@@ -86,23 +86,23 @@ class LaserArray:
         '''
         if self.optical_power_scale is None:
             # Default scale factor, can be overridden in subclasses
-            self.optical_power_scale = np.zeros_like(self.control_nets, dtype=float)
+            self.optical_power_scale = jnp.zeros(len(self.control_nets), dtype=float)
             for index, net in enumerate(self.control_nets):
                 self.netlist[net].vout(self.limits[1]) # set to max power
                 # TODO: add sleep if necessary for turn-on time
                 # calculate and store a scaling factor 
-                self.optical_power_scale[index] = self.readPhotocurrent()[index] / self.limits[1]
+                self.optical_power_scale = self.optical_power_scale.at[index].set(self.readPhotocurrent()[index] / self.limits[1])
             log.debug(f"Optical power scale set to: {self.optical_power_scale}")
 
         else:
             log.warning(f"Optical power scale already set to: {self.optical_power_scale}")
 
-    def readPhotocurrent(self) -> np.ndarray:
+    def readPhotocurrent(self) -> jnp.ndarray:
         '''Reads from the detector nets and returns the photocurrent as a numpy array.
         '''
-        values = np.zeros(self.size)
+        values = jnp.zeros(self.size)
         for i, net in enumerate(self.detector_nets):
-            values[i] = self.netlist[net].vin()
+            values = values.at[i].set(self.netlist[net].vin())
 
         # TODO: refactor to get rid of the if statement (separate offset initialization)
         if not self.initialized_offsets:
@@ -117,28 +117,28 @@ class LaserArray:
         # pretty close to power in Watts
         return reading
     
-    def setControl(self, control_vector: np.ndarray) -> None:
+    def setControl(self, control_vector: jnp.ndarray) -> None:
         '''Sets the laser powers according to the input vector in terms
             of control signals (usually voltage).
             The input vector should be in the range of self.limits=[min, max]
         '''
-        if not isinstance(control_vector, np.ndarray):
-            control_vector = np.array(control_vector)
+        if not isinstance(control_vector, jnp.ndarray):
+            control_vector = jnp.array(control_vector)
         # control_vector = control_vector / self.optical_power_scale
 
         log.debug(f"Setting laser powers to: {control_vector*self.optical_power_scale} (Watts) "
                   f"with control signals: {control_vector} (Volts)")
 
         for i, net in enumerate(self.control_nets):
-            self.netlist[net].vout(control_vector[i])
+            self.netlist[net].vout(float(control_vector[i]))
 
         # TODO: add sleep if necessary for stable turn-on time
 
-    def setNormalized(self, vector: np.ndarray) -> None:
+    def setNormalized(self, vector: jnp.ndarray) -> None:
         '''Sets the laser powers from a normalized input vector.
         '''
-        if not isinstance(vector, np.ndarray):
-            vector = np.array(vector)
+        if not isinstance(vector, jnp.ndarray):
+            vector = jnp.array(vector)
         # Calculate the denormalized vector and set the power
         self.setControl(self.denormalize(vector))
 
@@ -148,15 +148,15 @@ class LaserArray:
         '''
         import matplotlib.pyplot as plt
 
-        control_signals = self.denormalize(np.linspace(0, 1, num_points))
-        control_signals = np.tile(control_signals, (self.size, 1)).T  # Repeat for each channel
+        control_signals = self.denormalize(jnp.linspace(0, 1, num_points))
+        control_signals = jnp.tile(control_signals, (self.size, 1)).T  # Repeat for each channel
 
-        power_readings = np.zeros((num_points, self.size))
+        power_readings = jnp.zeros((num_points, self.size))
 
         for i, control_vector in enumerate(control_signals):
 
             self.setControl(control_vector)
-            power_readings[i] = self.readPhotocurrent()
+            power_readings = power_readings.at[i].set(self.readPhotocurrent())
 
 
 
@@ -222,7 +222,7 @@ class InputGenerator:
         self.limits=limits
         self.maxMagnitude = limits[1]-limits[0]
         self.lowerLimit = limits[0]
-        self.chanScalingTable = np.ones((20, size)) #initialize scaling table
+        self.chanScalingTable = jnp.ones((20, size)) #initialize scaling table
         self.calibrated = False
         # self.calibratePower()
         self.readDetectors()
@@ -231,23 +231,23 @@ class InputGenerator:
         
     def calculateScatter(self):
         print("Calculating the scatter matrix...")
-        Y = np.zeros((self.size,self.size))
-        Xinv = np.zeros((self.size,self.size))
+        Y = jnp.zeros((self.size,self.size))
+        Xinv = jnp.zeros((self.size,self.size))
         for chan in range(self.size):
-            oneHot = np.zeros(self.size)
-            oneHot[chan] = 1
+            oneHot = jnp.zeros(self.size)
+            oneHot = oneHot.at[chan].set(1)
             print("\tOne-hot: ", oneHot)
             self.agilent.lasers_on(oneHot.astype(int))
             sleep(LONG_SLEEP)
             self.agilent.laserpower(oneHot*350)
             sleep(LONG_SLEEP)
-            Y[:,chan] = self.readDetectors()
-            Xinv[:,chan] = oneHot/350
+            Y = Y.at[:,chan].set(self.readDetectors())
+            Xinv = Xinv.at[:,chan].set(oneHot/350)
             sleep(LONG_SLEEP)
         # print("Detector outputs:\n", Y)
         self.scatter = Y @ Xinv
         # print("Scatter matrix:\n", self.scatter)
-        self.invScatter = np.linalg.inv(self.scatter)
+        self.invScatter = jnp.linalg.inv(self.scatter)
         print("Inverse scatter matrix:\n", self.invScatter)
         # maxS = np.max(self.invScatter)
         # minS = np.min(self.invScatter)
@@ -310,28 +310,29 @@ class InputGenerator:
     
     def readDetectors(self):
         if not hasattr(self, "offset"):
-            self.agilent.lasers_on(np.zeros(self.size))
+            self.agilent.lasers_on(jnp.zeros(self.size))
             sleep(LONG_SLEEP)
             with nidaqmx.Task() as task:
                 for chan in self.detectors:
                     task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
                     max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-                data = np.array(task.read(number_of_samples_per_channel=100))
-                data = np.mean(data[:,10:],axis=1)
+                data = jnp.array(task.read(number_of_samples_per_channel=100))
+                data = jnp.mean(data[:,10:],axis=1)
             self.offset = data
-            self.agilent.lasers_on(np.ones(self.size))
+            self.agilent.lasers_on(jnp.ones(self.size))
             sleep(LONG_SLEEP)
         with nidaqmx.Task() as task:
             for chan in self.detectors:
                 task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
                 max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-            data = np.array(task.read(number_of_samples_per_channel=100))
-            data = np.mean(data[:,10:],axis=1)
-        return np.maximum((self.offset - data),0)/220*1e3
+            data = jnp.array(task.read(number_of_samples_per_channel=100))
+            data = jnp.mean(data[:,10:],axis=1)
+        return jnp.maximum((self.offset - data),0)/220*1e3
 
     def __call__(self, vector, verbose=False, scale=1, **kwds: Any) -> Any:
         '''Sets the lasers powers according to the desired vector
         '''
+
 
         vector = self.scalePower(vector)
         vector *= scale

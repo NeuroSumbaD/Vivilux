@@ -11,14 +11,10 @@ import vivilux.photonics as px
 from vivilux.photonics.ph_meshes import OversizedMZI
 from vivilux.photonics.utils import psToRect, Magnitude
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
-
-np.set_printoptions(precision=6, suppress=True)
-np.random.seed(seed=0)
-
-# from copy import deepcopy
-# from itertools import permutations
 
 matrixSize = 4
 numIterations = 3
@@ -39,14 +35,15 @@ for index in range(numIterations):
     initMatrix = mzi.get()/mzi.Gscale
     initParams = mzi.getParams()
 
-    direction1 = [np.random.rand(*param.shape)-0.5 for param in mzi.getParams()]
-    direction2 = [np.random.rand(*param.shape)-0.5 for param in mzi.getParams()]
+    rngs = nnx.Rngs(0)
+    direction1 = [jrandom.uniform(rngs["Params"], param.shape)-0.5 for param in mzi.getParams()]
+    direction2 = [jrandom.uniform(jrandom.fold_in(rngs["Params"], 1), param.shape)-0.5 for param in mzi.getParams()]
 
     # Define grid for alpha and beta
-    alphas = np.linspace(-2*np.pi, 2*np.pi, 300)
-    betas = np.linspace(-2*np.pi, 2*np.pi, 300)
-    Alpha, Beta = np.meshgrid(alphas, betas)
-    Magnitudes = np.zeros_like(Alpha)
+    alphas = jnp.linspace(-2*jnp.pi, 2*jnp.pi, 300)
+    betas = jnp.linspace(-2*jnp.pi, 2*jnp.pi, 300)
+    Alpha, Beta = jnp.meshgrid(alphas, betas)
+    Magnitudes = jnp.zeros_like(Alpha)
 
     # Compute magnitude for each (alpha, beta)
     for i in range(Alpha.shape[0]):
@@ -55,10 +52,10 @@ for index in range(numIterations):
                       for init, d1, d2 in zip(initParams, direction1, direction2)]
             matrix = mzi.getFromParams(params)
             delta = matrix - initMatrix
-            Magnitudes[i, j] = Magnitude(delta)
+            Magnitudes = Magnitudes.at[i, j].set(Magnitude(delta))
 
     # Plot
-    ax.plot_surface(Alpha, Beta, Magnitudes, cmap='viridis')
+    ax.plot_surface(jnp.asarray(Alpha), jnp.asarray(Beta), jnp.asarray(Magnitudes), cmap='viridis')
     ax.set_xlabel('Step size in direction 1 (alpha)')
     ax.set_ylabel('Step size in direction 2 (beta)')
     ax.set_zlabel('Magnitude of difference')

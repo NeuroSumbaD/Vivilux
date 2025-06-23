@@ -7,8 +7,9 @@ from vivilux.learningRules import CHL
 from vivilux.optimizers import Simple
 
 import matplotlib.pyplot as plt
-import numpy as np
-np.random.seed(seed=0)
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 
 import pandas as pd
 
@@ -17,8 +18,8 @@ import pandas as pd
 from datetime import timedelta
 from time import time
 
-# np.set_printoptions(precision=3, suppress=True)
-
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
 mziMapping = [(1,0),
               (1,1),
@@ -81,8 +82,8 @@ print("\n\n","-"*80,"\nSTARTING CONVERGENCE TEST\n\n")
 #%% Conergence test
 for iteration in range(50):
     print(f"\tIteration: {iteration}")
-    init = 0.25*np.random.rand(6,1)+2
-    target = 0.25*np.random.rand(6,1)+2
+    init = 0.25*jrandom.uniform(rngs["Params"], (6,1), minval=2, maxval=2.25)
+    target = 0.25*jrandom.uniform(rngs["Params"], (6,1), minval=2, maxval=2.25)
     mesh.setParams([init])
     try:
         startMatrix = mesh.get()
@@ -131,7 +132,7 @@ for iteration in range(50):
         print(msg)
         finalMatrices.append(False)
         successes.append(False)
-        RECORDS.append(-np.ones(31))
+        RECORDS.append(-jnp.ones(31))
         continue
     end = time()
     print("\tExecution took: ", timedelta(seconds=(end-start)))
@@ -139,7 +140,7 @@ for iteration in range(50):
     numIter.append(iterToConverge)
     print(f"\tTook {iterToConverge} iterations to converge.")
     finalMag = record[-1]
-    record = np.pad(record, (0, 31-len(record)))
+    record = jnp.pad(record, (0, 31-len(record)))
     RECORDS.append(record)
     successes.append(True)
 
@@ -150,21 +151,21 @@ inGen.agilent.lasers_on([0,0,0,0])
 print("\n\nSUCCESSFULLY FINISHED. PLEASE MAKE SURE LASER AND TEMPERATURE CONTROL ARE OFF.")
 
 ##%% Plot Convergence versus magnitude
-converged = np.array(numIter) < 31
-x = np.array(initMag)[successes][converged]
-y = np.array(numIter)[converged]
+converged = jnp.array(numIter) < 31
+x = jnp.array(initMag)[successes][converged]
+y = jnp.array(numIter)[converged]
 #find line of best fit
-a, b = np.polyfit(x, y, 1)
+a, b = jnp.polyfit(x, y, 1)
 plt.figure()
 plt.scatter(x, y)
-fitX = np.linspace(0, 1.2*np.max(x), 20)
+fitX = jnp.linspace(0, 1.2*jnp.max(x), 20)
 fitY = a*fitX + b
 plt.plot(fitX, fitY, "--", label=f"{a:.2f}x+{b:.2f}")
 plt.title("Convergence versus magnitude")
 plt.xlabel("Initial magnitude of difference vector")
 plt.ylabel("Number of iterations to converge")
-plt.xlim(0, np.max(x)*1.2)
-plt.ylim(0, np.max(y)*1.2)
+plt.xlim(0, jnp.max(x)*1.2)
+plt.ylim(0, jnp.max(y)*1.2)
 plt.legend()
 plt.show()
 

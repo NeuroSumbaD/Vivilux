@@ -4,18 +4,20 @@ from vivilux.layers import Layer
 import vivilux.photonics as px
 from vivilux.photonics.ph_meshes import MZImesh, DiagMZI, SVDMZI
 
-import numpy as np
+import jax.numpy as jnp
 from scipy.stats import mode
 import matplotlib.pyplot as plt
-np.random.seed(seed=0)
+from flax import nnx
 
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
 matrixSize = 4
 
 record = {}
 for meshType in [MZImesh, DiagMZI, SVDMZI]:
 
-    magnitudes = np.linspace(-1,1,300)
+    magnitudes = jnp.linspace(-1,1,300)
     maxConcavity = 0.0
     record[meshType.NAME] = {"SSE": [],
                              "coeff": [],
@@ -34,10 +36,10 @@ for meshType in [MZImesh, DiagMZI, SVDMZI]:
 
         initialMatrix = mzi.get()/mzi.Gscale
         derivativeMatrix, stepVectors = mzi.matrixGradient()
-        flatVectors = np.concatenate([stepVector.flatten() for stepVector in stepVectors])
-        updateMagnitude = np.sqrt(np.sum(np.square(flatVectors)))
+        flatVectors = jnp.concatenate([stepVector.flatten() for stepVector in stepVectors])
+        updateMagnitude = jnp.sqrt(jnp.sum(jnp.square(flatVectors)))
         unitStepVectors = [stepVector/updateMagnitude for stepVector in stepVectors]
-        # assert(np.isclose(np.sqrt(np.sum(np.square(flatVectors))), 1, rtol=1e-3, atol=0))
+        # assert(jnp.isclose(jnp.sqrt(jnp.sum(jnp.square(flatVectors))), 1, rtol=1e-3, atol=0))
 
         errors = []
 
@@ -48,21 +50,21 @@ for meshType in [MZImesh, DiagMZI, SVDMZI]:
             mzi.boundParams(stepParams)
             trueDelta = mzi.getFromParams(stepParams) - initialMatrix
 
-            SSE = np.sum(np.square(expectedDelta.flatten() - trueDelta.flatten()))
+            SSE = jnp.sum(jnp.square(expectedDelta.flatten() - trueDelta.flatten()))
 
             errors.append(SSE)
         
-        coeff = np.polyfit(magnitudes, errors, 2)
+        coeff = jnp.polyfit(magnitudes, jnp.array(errors), 2)
         record[meshType.NAME]["coeff"].append(coeff)
         record[meshType.NAME]["SSE"].append(errors)
         if iteration < 6:
             plt.plot(magnitudes, errors, label=str(iteration))
 
-    record[meshType.NAME]["coeff"] = np.array(record[meshType.NAME]["coeff"])
+    record[meshType.NAME]["coeff"] = jnp.array(record[meshType.NAME]["coeff"])
     concavities = record[meshType.NAME]["coeff"][:,0]
-    maxConcavity = np.max(concavities)
-    mean = np.mean(concavities)
-    std = np.std(concavities)
+    maxConcavity = jnp.max(concavities)
+    mean = jnp.mean(concavities)
+    std = jnp.std(concavities)
     print(f"Max concavity for [{meshType.NAME}]: {maxConcavity}")
     print(f"\tmean concavity: {mean}, std dev: {std}")
 
@@ -77,7 +79,7 @@ for mesh in record:
     maxConcavity = concavities.max()
     minConcavity = concavities.min()
     plt.figure()
-    plt.hist(concavities, bins=np.arange(minConcavity,maxConcavity+0.1,0.1))
+    plt.hist(concavities, bins=jnp.arange(minConcavity,maxConcavity+0.1,0.1))
     plt.title(f"Central difference approximation histogram [{mesh}]")
     plt.xlabel("concavity of error")
     plt.ylabel("# occurences")

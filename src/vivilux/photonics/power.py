@@ -1,4 +1,4 @@
-import numpy as np
+import jax.numpy as jnp
 from jax.scipy.special import erfc
 from scipy.optimize import least_squares
 
@@ -25,7 +25,7 @@ def BER_NRZ(power: float,
     '''Calculate the bit error rate for a NRZ signal given the input power,
         responsivity, receiver bandwidth/impedance, and dark current.
     '''
-    return 0.5*erfc((1/np.sqrt(2))*SNR_NRZ(power = power,
+    return 0.5*erfc((1/jnp.sqrt(2))*SNR_NRZ(power = power,
                                             responsivity = responsivity,
                                             rx_bandwidth = rx_bandwidth,
                                             rx_in_impedance = rx_in_impedance,
@@ -36,7 +36,7 @@ def BER_NRZ(power: float,
 def BER_NRZ_from_SNR(SNR: float) -> float:
     '''Calculate the bit error rate for a NRZ signal given the signal to noise ratio.
     '''
-    return 0.5*erfc((1/np.sqrt(2))*SNR)
+    return 0.5*erfc((1/jnp.sqrt(2))*SNR)
 
 def SNR_NRZ(power: float,
             responsivity: float,
@@ -55,10 +55,10 @@ def SNR_NRZ(power: float,
 
     noise_squared = 2*q*power*responsivity*rx_bandwidth # shot noise
     noise_squared += 2*q*dark_current*rx_bandwidth # dark current noise
-    noise_squared += 4*k*temperature*rx_bandwidth/np.real(rx_in_impedance) # thermal noise
+    noise_squared += 4*k*temperature*rx_bandwidth/jnp.real(rx_in_impedance) # thermal noise
 
 
-    noise = np.sqrt(noise_squared)
+    noise = jnp.sqrt(noise_squared)
 
     return signal/noise
 
@@ -91,19 +91,19 @@ def power_from_BER(BER: float,
 def to_dBm(power: float) -> float:
     '''Convert power from Watts to dBm.
     '''
-    return 10*np.log10(power*1e3)
+    return 10*jnp.log10(power*1e3)
 
 def from_dBm(dBm: float) -> float:
     '''Convert power from dBm to Watts.
     '''
-    return 1e-3*np.power(10, dBm/10)
+    return 1e-3*jnp.power(10, dBm/10)
 
 def to_dB(power: float) -> float:
     '''Convert power from Watts to dB.
     '''
-    return 10*np.log10(power)
+    return 10*jnp.log10(power)
 
 def from_dB(dB: float) -> float:
     '''Convert power from dB to Watts.
     '''
-    return np.power(10, dB/10)
+    return jnp.power(10, dB/10)

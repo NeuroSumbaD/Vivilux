@@ -2,7 +2,7 @@
     relevant properties.
 '''
 
-import numpy as np
+from jax import numpy as jnp
 
 from vivilux.pdk.ports import Port
 
@@ -21,14 +21,14 @@ class Component:
 
         self.ports: dict[str, Port] = {}
 
-    def getTransferMatrix(self) -> np.ndarray:
+    def getTransferMatrix(self) -> jnp.ndarray:
         '''Returns the transfer matrix of the component. This should be implemented
             by the user to define the transfer matrix of the component in their
             PDK.
         '''
         raise NotImplementedError("getTransferMatrix() not implemented for this component.")
     
-    def getLoss(self) -> np.ndarray:
+    def getLoss(self) -> jnp.ndarray:
         '''Returns the loss for each path through the 
         '''
         return self.loss

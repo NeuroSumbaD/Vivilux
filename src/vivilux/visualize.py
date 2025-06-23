@@ -1,8 +1,9 @@
 from __future__ import annotations
-import numpy as np
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import networkx as nx
 import imageio
+from jax import jit
 
 from io import BytesIO
 from math import ceil, floor
@@ -35,7 +36,7 @@ class Monitor:
         self.ax = self.fig.add_subplot(111)
 
         #trace updates
-        self.data = np.zeros((self.xlim, numLines))
+        self.data = jnp.zeros((self.xlim, numLines))
         self.index = 0
         
         self.lines = self.ax.plot(self.data)
@@ -47,9 +48,9 @@ class Monitor:
         if legend:
             self.ax.legend(range(numLines))
 
-    def update(self, newData: dict[str, np.array]):
+    def update(self, newData: dict[str, jnp.ndarray]):
         if self.enable:
-            self.data[self.index] = newData[self.target]
+            self.data = self.data.at[self.index].set(newData[self.target])
 
             for lineIndex, line in enumerate(self.lines):
                 line.set_ydata(self.data[:, lineIndex])
@@ -57,7 +58,7 @@ class Monitor:
             if self.resizeAxes:
                 if self.index == 0:
                     self.ymax = 1
-                self.ymax = np.max([self.ymax, np.max(self.data)])
+                self.ymax = jnp.max(jnp.array([self.ymax, jnp.max(self.data)]))
                 self.ax.set_ylim(0, 1.2*self.ymax)
 
             self.index = self.index + 1 if self.index < self.xlim-1 else 0
@@ -81,19 +82,19 @@ class Magnitude(Monitor):
                          legend=legend,
                          resizeAxes=resizeAxes,
                          **kwargs)
-        mag = np.sqrt(np.sum(np.square(self.data), axis=1))
+        mag = jnp.sqrt(jnp.sum(jnp.square(self.data), axis=1))
         self.magnitude = self.ax.plot(mag, "--")
         if legend:
             self.ax.legend([*range(numLines), "magnitude"])
     
-    def update(self, newData: dict[str, np.array]):
+    def update(self, newData: dict[str, jnp.ndarray]):
         if self.enable:
             super().update(newData)
-            mag = np.sqrt(np.sum(np.square(self.data), axis=1))
+            mag = jnp.sqrt(jnp.sum(jnp.square(self.data), axis=1))
             self.magnitude[0].set_ydata(mag)
             
             if self.resizeAxes:
-                self.ymax = np.max([self.ymax, np.max(mag)])
+                self.ymax = jnp.max(jnp.array([self.ymax, jnp.max(mag)]))
                 self.ax.set_ylim(0, 1.2*self.ymax)
 
             #update the plot
@@ -120,7 +121,7 @@ class Multimonitor(Monitor):
         #     mgr = monitor.fig.canvas.manager
         #     mgr.window.setGeometry()
 
-    def update(self, newData: dict[str, np.array]):
+    def update(self, newData: dict[str, jnp.ndarray]):
         for monitor in self.monitors:
             monitor.enable = self.enable
             monitor.update(newData)
@@ -148,7 +149,7 @@ class StackedMonitor(Monitor):
 
         # Initialize data for each target
         self.numTarget = len(self.targets)
-        self.data = np.zeros((self.numTarget, self.xlim, numLines))
+        self.data = jnp.zeros((self.numTarget, self.xlim, numLines))
         self.lines = [self.axs[i].plot(self.data[i]) for i in range(self.numTarget)]
         self.index = 0
 
@@ -170,10 +171,10 @@ class StackedMonitor(Monitor):
             if legendVisibility:
                 ax.legend(range(numLines))
 
-    def update(self, newData: dict[str, np.array]):
+    def update(self, newData: dict[str, jnp.ndarray]):
         if self.enable:
             for i in range(self.numTarget):
-                self.data[i][self.index] = newData[self.targets[i]]
+                self.data = self.data.at[i, self.index].set(newData[self.targets[i]])
 
                 for lineIndex, line in enumerate(self.lines[i]):
                     line.set_ydata(self.data[i][:, lineIndex])
@@ -197,10 +198,10 @@ class Record(Monitor):
         self.target = target
 
         #trace updates
-        self.data = np.zeros((1,numLines))
+        self.data = jnp.zeros((1,numLines))
     
-    def update(self, newData: dict[str, np.array]):
-        self.data = np.concatenate((self.data, newData[self.target].reshape(1,-1)))
+    def update(self, newData: dict[str, jnp.ndarray]):
+        self.data = jnp.concatenate((self.data, newData[self.target].reshape(1,-1)))
 
 
 class Heatmap:
@@ -275,7 +276,7 @@ class Heatmap:
         labels = self.labels
         numEpochs = self.numEpochs
         numSamples = self.numSamples
-        cycleLength = np.sum([phase["numTimeSteps"] for phase in net.phaseConfig.values()])
+        cycleLength = sum([phase["numTimeSteps"] for phase in net.phaseConfig.values()])
 
         plt.figure(figsize=(10.6, 4.4))
         animation_frames = []
@@ -285,7 +286,7 @@ class Heatmap:
         activity_data = []
         for record in self.records:
             activity_data.append(record.data)
-        activity_data = np.array(activity_data)
+        activity_data = jnp.array(activity_data)
 
         # Create and save animation frames for each time step
         for t in range(time_steps):

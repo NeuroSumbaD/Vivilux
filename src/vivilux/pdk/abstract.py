@@ -6,8 +6,6 @@
     in the library.
 '''
 
-import numpy as np
-
 from vivilux.pdk.components import Component
 
 class PDK:

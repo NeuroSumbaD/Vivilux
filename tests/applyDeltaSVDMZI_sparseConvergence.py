@@ -18,9 +18,10 @@ import vivilux.photonics as px
 from vivilux.photonics.ph_meshes import SVDMZI
 from vivilux.photonics.utils import psToRect
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
-np.random.seed(seed=0)
 
 from copy import deepcopy
 from itertools import permutations
@@ -30,6 +31,7 @@ numIterations = 20
 
 
 # Sparse Convergence test
+rngs = nnx.Rngs(0)
 for numSparseElements in range(1,16):
     plt.figure()
     testName = "Sparse Changes"
@@ -39,7 +41,9 @@ for numSparseElements in range(1,16):
     numUnits = int(matrixSize*(matrixSize-1)/2)
     for index in range(numIterations):
         dummyLayer = Layer(matrixSize, isInput=True, name="Input")
-        dummyNet = Net(name = "LEABRA_NET")
+        # Use a unique seed for each Net instance for reproducibility
+        net_seed = int(jrandom.randint(jrandom.fold_in(jrandom.fold_in(rngs["Params"], numSparseElements), index), (), 0, 2**31-1))
+        dummyNet = Net(name = "LEABRA_NET", seed=net_seed)
         dummyNet.AddLayer(dummyLayer)
         mzi = SVDMZI(matrixSize, dummyLayer,
                     numDirections=16,
@@ -51,17 +55,16 @@ for numSparseElements in range(1,16):
         print(f"Convergence test [{testName}]: {index}...", end=" ")
         initMatrix = mzi.get()/mzi.Gscale
 
-        randMatrix = np.copy(initMatrix)
-        randCoeff = 5e-3*np.random.rand(1)
-        indices = np.random.permutation(16)[:numSparseElements]
-        mask = np.zeros(16)
-        mask[indices] = 1
-        mask = mask.reshape(4,4).astype("bool")
-        randMatrix[mask] = 2 * (np.random.rand(numSparseElements) - 0.5)
-        randMatrix[mask] *= randCoeff
+        randMatrix = jnp.copy(initMatrix)
+        randCoeff = 5e-3*jrandom.uniform(rngs["Params"], (1,))
+        indices = jrandom.permutation(rngs["Params"], 16)[:numSparseElements]
+        mask = jnp.zeros(16)
+        mask = mask.at[indices].set(1)
+        mask = mask.reshape(4,4).astype(bool)
+        randMatrix = randMatrix.at[mask].set(2 * (jrandom.uniform(rngs["Params"], (numSparseElements,)) - 0.5))
 
         delta = randMatrix - initMatrix
-        magDelta = np.sqrt(np.sum(np.square(delta.flatten())))
+        magDelta = jnp.sqrt(jnp.sum(jnp.square(delta.flatten())))
         magnitudes.append(magDelta)
 
         finMag, numSteps = mzi.set(randMatrix)

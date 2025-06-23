@@ -16,10 +16,11 @@ from vivilux.photonics.devices import Nonvolatile, phaseShift_PCM
 from vivilux.metrics import ThrMSE, ThrSSE
 
 import pandas as pd
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
 # import tensorflow as tf
-np.random.seed(seed=0)
 
 from copy import deepcopy
 import pathlib
@@ -128,12 +129,8 @@ for meshtype in [Mesh]: #[MZImesh, DiagMZI, SVDMZI]:
     
     axs[0].plot(result['AvgSSE'], label=meshtype.__name__)
 
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))),
-                           targets) for entry in 
-                           np.random.uniform(size=(2000,len(targets),
-                                                   outputSize)
-                                            )
-                    ])
+baseline = jnp.mean(jnp.array([ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))),
+                           targets) for entry in jrandom.uniform(nnx.Rngs(0)['Params'], (2000,len(targets),outputSize))]))
 axs[0].axhline(y=baseline, color="b", linestyle="--", 
                label="unformly distributed guessing")
 

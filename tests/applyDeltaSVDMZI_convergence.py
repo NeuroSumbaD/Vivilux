@@ -18,15 +18,18 @@ import vivilux.photonics as px
 from vivilux.photonics.ph_meshes import SVDMZI
 from vivilux.photonics.utils import psToRect
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
-np.random.seed(seed=0)
 
 from copy import deepcopy
 from itertools import permutations
 
 matrixSize = 4
 numIterations = 50
+
+rngs = nnx.Rngs(0)
 
 # Convergence test #3
 testName = "Small Parameter Deviations (+/- 5e-6)"
@@ -37,7 +40,7 @@ steps = []
 numUnits = int(matrixSize*(matrixSize-1)/2)
 for index in range(numIterations):
     dummyLayer = Layer(matrixSize, isInput=True, name="Input")
-    dummyNet = Net(name = "LEABRA_NET")
+    dummyNet = Net(name = "LEABRA_NET", seed=int(jrandom.randint(rngs["Params"], (), 0)))
     dummyNet.AddLayer(dummyLayer)
     mzi = SVDMZI(matrixSize, dummyLayer,
                 numDirections=16,
@@ -50,12 +53,11 @@ for index in range(numIterations):
     initMatrix = mzi.get()/mzi.Gscale
 
     # Generate a randomn feasible matrix
-    randCoeff = 5e-6*np.random.rand(1)
-    randMatrix = mzi.getFromParams([2*randCoeff*(np.random.rand(*param.shape)-0.5)+
+    randCoeff = 5e-6*jrandom.uniform(rngs["Params"], (1,))
+    randMatrix = mzi.getFromParams([2*randCoeff*(jrandom.uniform(rngs["Params"], param.shape)-0.5)+
                                     param for param in mzi.getParams()])
-
     delta = randMatrix - initMatrix
-    magDelta = np.sqrt(np.sum(np.square(delta.flatten())))
+    magDelta = jnp.sqrt(jnp.sum(jnp.square(delta.flatten())))
     magnitudes.append(magDelta)
 
     _, numSteps = mzi.set(randMatrix)
@@ -78,7 +80,7 @@ numSparseElements = 5 # out of 16
 numUnits = int(matrixSize*(matrixSize-1)/2)
 for index in range(numIterations):
     dummyLayer = Layer(matrixSize, isInput=True, name="Input")
-    dummyNet = Net(name = "LEABRA_NET")
+    dummyNet = Net(name = "LEABRA_NET", seed=int(jrandom.randint(rngs["Params"], (), 0)))
     dummyNet.AddLayer(dummyLayer)
     mzi = SVDMZI(matrixSize, dummyLayer,
                 numDirections=16,
@@ -90,17 +92,17 @@ for index in range(numIterations):
     print(f"Convergence test [{testName}]: {index}...", end=" ")
     initMatrix = mzi.get()/mzi.Gscale
 
-    randMatrix = np.copy(initMatrix)
-    randCoeff = 5e-4*np.random.rand(1)
-    indices = np.random.permutation(16)[:numSparseElements]
-    mask = np.zeros(16)
-    mask[indices] = 1
+    randMatrix = jnp.copy(initMatrix)
+    randCoeff = 5e-4*jrandom.uniform(rngs["Params"], (1,))
+    indices = jrandom.permutation(rngs["Params"], 16)[:numSparseElements]
+    mask = jnp.zeros(16)
+    mask = mask.at[indices].set(1)
     mask = mask.reshape(4,4).astype("bool")
-    randMatrix[mask] = 2 * (np.random.rand(numSparseElements) - 0.5)
+    randMatrix[mask] = 2 * (jrandom.uniform(rngs["Params"], (numSparseElements,)) - 0.5)
     randMatrix[mask] *= randCoeff
 
     delta = randMatrix - initMatrix
-    magDelta = np.sqrt(np.sum(np.square(delta.flatten())))
+    magDelta = jnp.sqrt(jnp.sum(jnp.square(delta.flatten())))
     magnitudes.append(magDelta)
 
     _, numSteps = mzi.set(randMatrix)

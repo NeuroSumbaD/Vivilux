@@ -12,19 +12,19 @@ from os import path
 import pathlib
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from typing import callable
+    from typing import Callable
 
 from ..activations import NoisyXX1
 
-import numpy as np
+import jax.numpy as jnp
 from scipy.optimize import curve_fit
 
 
 class Neuron:
     def __init__(self,
-                 scaleFn: callable,
-                 power: np.ndarray,
-                 rate: np.ndarray,
+                 scaleFn: 'Callable',
+                 power: jnp.ndarray,
+                 rate: jnp.ndarray,
                  spikeEnergy: float,
                  spikeWidth: float,
                  p0 = None) -> None:
@@ -57,7 +57,9 @@ def scalingFn(x, A, B, C):
     return A*actFn(B*(x-C))
 
 directory = pathlib.Path(__file__).parent.resolve()
-YunJhudata = np.genfromtxt(path.join(directory, "YunJhuNeuron.csv"), delimiter=",", skip_header=1)
+YunJhudata = jnp.array(
+    __import__('numpy').genfromtxt(path.join(directory, "YunJhuNeuron.csv"), delimiter=",", skip_header=1)
+)
 inputPower = YunJhudata[:,0]/0.9 # µW (assumed 0.9 A/W)
 firingRate = YunJhudata[:,1] # MHz
 YunJhuModel = Neuron(scalingFn, inputPower, firingRate,

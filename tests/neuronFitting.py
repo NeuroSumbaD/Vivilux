@@ -1,10 +1,13 @@
 from vivilux.activations import NoisyXX1
 
+import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
-data = np.genfromtxt("photonicNeuron.csv", delimiter=",", skip_header=1)
+# Use JAX for array ops
+
+data = jnp.array(np.genfromtxt("photonicNeuron.csv", delimiter=",", skip_header=1))
 x = data[:,0]
 y = data[:,1]
 
@@ -29,7 +32,7 @@ print(f"Threshold current (µA): {popt[2]}")
 
 plt.figure()
 plt.plot(x,y, "o", label="data")
-xhat = np.linspace(x.min(), x.max(), 100)
+xhat = jnp.linspace(x.min(), x.max(), 100)
 yhat = scalingFn(xhat, *popt)
 plt.plot(xhat, yhat, "--", label="fit")
 plt.legend()

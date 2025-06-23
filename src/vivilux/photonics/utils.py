@@ -1,56 +1,57 @@
-import numpy as np
+import jax.numpy as jnp
 
-def Magnitude(vector: np.ndarray) -> float:
+def Magnitude(vector: jnp.ndarray) -> float:
     '''Euclidian magnitude of vector.'''
-    return np.sqrt(np.sum(np.square(vector)))
+    return jnp.sqrt(jnp.sum(jnp.square(vector)))
 
-def Detect(input: np.ndarray) -> np.ndarray:
+def Detect(input: jnp.ndarray) -> jnp.ndarray:
     '''DC power detected (no cross terms)
     '''
-    return np.square(np.abs(np.sum(input, axis=-1)))
+    return jnp.square(jnp.abs(jnp.sum(input, axis=-1)))
 
-def Diagonalize(vector: np.ndarray) -> np.ndarray:
+def Diagonalize(vector: jnp.ndarray) -> jnp.ndarray:
     '''Turns a vector into a diagonal matrix to simulate independent wavelength
        components that don't have constructive/destructive interference.
     '''
-    diag = np.eye(len(vector))
-    for i in range(len(vector)):
-        diag[i,i] = vector[i]
+    diag = jnp.eye(len(vector))
+    diag = diag.at[jnp.arange(len(vector)), jnp.arange(len(vector))].set(vector)
     return diag
 
-def BoundTheta(thetas: np.ndarray) -> np.ndarray:
+def BoundTheta(thetas: jnp.ndarray) -> jnp.ndarray:
     '''Bounds the size of phase shifts between 1-2pi.
     '''
-    thetas[thetas > (2*np.pi)] -= 2*np.pi
-    thetas[thetas < 0] += 2*np.pi
+    thetas = thetas.copy()
+    thetas = jnp.where(thetas > (2*jnp.pi), thetas - 2*jnp.pi, thetas)
+    thetas = jnp.where(thetas < 0, thetas + 2*jnp.pi, thetas)
     return thetas
 
-def BoundGain(gain: np.ndarray, lower=1e-6, upper=np.inf) -> np.ndarray:
+def BoundGain(gain: jnp.ndarray, lower=1e-6, upper=jnp.inf) -> jnp.ndarray:
     '''Bounds multiplicative parameters like gain or attenuation.
     '''
-    gain[gain < lower] = lower
-    gain[gain > upper] = upper
+    gain = gain.copy()
+    gain = jnp.where(gain < lower, lower, gain)
+    gain = jnp.where(gain > upper, upper, gain)
     return gain
 
 
-def psToRect(phaseShifters: np.ndarray, size: float) -> np.ndarray:
+def psToRect(phaseShifters: jnp.ndarray, size: float) -> jnp.ndarray:
     '''Calculates the implemented matrix of rectangular MZI from its phase 
         shifts. Assumes ideal components.
     '''
-    fullMatrix = np.eye(size, dtype=np.cdouble)
+    fullMatrix = jnp.eye(size, dtype=jnp.complex64)
     index = 0
     for stage in range(size):
-        stageMatrix = np.eye(size, dtype=np.cdouble)
+        stageMatrix = jnp.eye(size, dtype=jnp.complex64)
         parity = stage % 2 # even or odd stage
         for wg in range(parity, size, 2): 
             # add MZI weights in pairs
             if wg >= size-1: break # handle case of last pair
             theta, phi = phaseShifters[index]
             index += 1
-            stageMatrix[wg:wg+2,wg:wg+2] = np.array([[np.exp(1j*phi)*np.sin(theta),np.cos(theta)],
-                                                     [np.exp(1j*phi)*np.cos(theta),-np.sin(theta)]],
-                                                     dtype=np.cdouble)
-        fullMatrix[:] = stageMatrix @ fullMatrix
+            block = jnp.array([[jnp.exp(1j*phi)*jnp.sin(theta),jnp.cos(theta)],
+                               [jnp.exp(1j*phi)*jnp.cos(theta),-jnp.sin(theta)]], dtype=jnp.complex64)
+            stageMatrix = stageMatrix.at[wg:wg+2, wg:wg+2].set(block)
+        fullMatrix = stageMatrix @ fullMatrix
     return fullMatrix
 
 
@@ -62,18 +63,18 @@ def crossbarCoupling(shape):
     '''
     numColumns = shape[1]
     powerSplit = 1/numColumns
-    couplers = np.ones(shape)
+    couplers = jnp.ones(shape)
     for col in range(numColumns):
         power = 1-col*powerSplit
-        couplers[:,col] *= powerSplit/power
+        couplers = couplers.at[:,col].multiply(powerSplit/power)
 
     return couplers
 
-def couplersToMatrix(couplers: np.ndarray):
+def couplersToMatrix(couplers: jnp.ndarray):
     shape = couplers.shape
     fullMatrix = couplers.copy()
 
     for col in range(shape[1]):
-        fullMatrix[:,col+1:] = np.multiply(fullMatrix[:,col+1:].T, 1-couplers[:,col]).T
+        fullMatrix = fullMatrix.at[:,col+1:].set(jnp.multiply(fullMatrix[:,col+1:].T, 1-couplers[:,col]).T)
 
     return fullMatrix

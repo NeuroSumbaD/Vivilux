@@ -5,10 +5,10 @@ from vivilux import RecurNet, Layer
 from vivilux.learningRules import CHL
 from vivilux.optimizers import Simple
 
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
-import numpy as np
-np.random.seed(seed=0)
-
 import pandas as pd
 
 # from sklearn import datasets
@@ -70,6 +70,8 @@ targetMatrices = []
 finalMatrices = []
 results = pd.DataFrame(columns=["initMag", "iteration", "numIter", "finalMag", "success", "record"])
 
+rngs = nnx.Rngs(0)
+
 print("\n\n","-"*80,"\nSTARTING CONVERGENCE TEST\n\n")
 
 for mag in [0.1, 0.2, 0.5]:
@@ -80,7 +82,7 @@ for mag in [0.1, 0.2, 0.5]:
     # for iteration, delta in enumerate(deltas):
     for iteration in range(numDeltas):
         print(f"\tIteration: {iteration}")
-        init = 0.5*np.random.rand(6,1)+2
+        init = 0.5*jrandom.uniform(rngs, (6,1)) + 2
         mesh.setParams([init])
         startMatrix = mesh.get()
         startMatrices.append(startMatrices)
@@ -97,8 +99,8 @@ for mag in [0.1, 0.2, 0.5]:
         # targetMatrices.append(targetMatrix)
         
         #Generate Delta
-        randMat = np.random.rand(4,4)
-        randMat = np.array([col/L1norm(col) for col in randMat.T]).T # generate a valid matrix
+        randMat = jrandom.uniform(rngs, (4,4))
+        randMat = jnp.stack([col/L1norm(col) for col in randMat.T]).T # generate a valid matrix
         delta = randMat - startMatrix
         delta *= mag/magnitude(delta)
         targetMatrix = startMatrix + delta
@@ -120,7 +122,7 @@ for mag in [0.1, 0.2, 0.5]:
             finalMatrices.append(matrices[-1])
         except AssertionError as msg:
             print(msg)
-            record = -np.ones((4,4))
+            record = -jnp.ones((4,4))
             results = pd.concat([results, {"initMag": magDelta,
                                        "iteration": iteration,
                                        "numIter": -1,
@@ -136,7 +138,7 @@ for mag in [0.1, 0.2, 0.5]:
         iterToConverge = len(record)
         print(f"\tTook {iterToConverge} iterations to converge.")
         finalMag = record[-1]
-        record = np.pad(record, (0, 31-len(record)))
+        record = jnp.pad(record, (0, 31-len(record)))
         results = pd.concat([results, {"initMag": magDelta,
                                        "iteration": iteration,
                                        "numIter": iterToConverge,

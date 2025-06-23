@@ -5,6 +5,8 @@
 
 from math import nan
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
 from vivilux.logger import log
@@ -280,7 +282,7 @@ class Board:
                   f" {pin_name} on board {self.board_name}")
         return pin.scan_vin(num_samples)
 
-    def group_vin(self, pin_names: list[str]) -> np.ndarray:
+    def group_vin(self, pin_names: list[str]) -> jnp.ndarray:
         '''Reads multiple samples from the specified pins.
         
         Parameters
@@ -290,8 +292,8 @@ class Board:
         
         Returns
         -------
-        dict[str, list[float]]
-            A dictionary mapping pin names to lists of voltages read from the pins.
+        jnp.ndarray
+            An array of voltages read from the pins (mock implementation).
         '''
         if self.board_num is None:
             log.error(f"Tried to group scan when board number is not set")
@@ -303,9 +305,9 @@ class Board:
                 raise ValueError(f"Pin {pin_name} not found in board {self.board_name}")
             
         log.debug(f"(ABSTRACT PIN) Group scanning pins {pin_names} on board {self.board_name}")
-        return np.array([nan] * len(pin_names))  # Placeholder for actual implementation
+        return jnp.full((len(pin_names),), nan)  # Placeholder for actual implementation
     
-    def group_scan_vin(self, pin_names: list[str], num_samples: int = 100) -> np.ndarray:
+    def group_scan_vin(self, pin_names: list[str], num_samples: int = 100) -> jnp.ndarray:
         '''Reads multiple samples from the specified pins.
         
         Parameters
@@ -317,8 +319,8 @@ class Board:
         
         Returns
         -------
-        np.ndarray
-            A 2D array where each row corresponds to a pin and each column corresponds to a sample.
+        jnp.ndarray
+            A 2D array where each row corresponds to a pin and each column corresponds to a sample (mock implementation).
         '''
         if self.board_num is None:
             log.error(f"Tried to group scan when board number is not set")
@@ -331,7 +333,7 @@ class Board:
         
         log.debug(f"(ABSTRACT PIN) Group scanning {num_samples} samples from "
                   f"pins {pin_names} on board {self.board_name}")
-        return np.array([[nan] * len(pin_names)] * num_samples)
+        return jnp.full((num_samples, len(pin_names)), nan)
         
     
     def dout(self, pin_name: str, value: bool):

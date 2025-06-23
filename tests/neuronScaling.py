@@ -6,15 +6,19 @@ from vivilux.layers import Layer
 from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-np.random.seed(seed=0)
 
 from copy import deepcopy
 
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
-data = np.genfromtxt("photonicNeuron.csv", delimiter=",", skip_header=1)
+data = jnp.array(np.genfromtxt("photonicNeuron.csv", delimiter=",", skip_header=1))
 x = data[:,0]
 y = data[:,1]
 
@@ -39,7 +43,7 @@ print(f"Threshold current (µA): {popt[2]}")
 
 plt.figure()
 plt.plot(x,y, "o", label="data")
-xhat = np.linspace(x.min(), x.max(), 100)
+xhat = jnp.linspace(x.min(), x.max(), 100)
 yhat = scalingFn(xhat, *popt)
 plt.plot(xhat, yhat, "--", label="fit")
 plt.legend()
@@ -56,12 +60,15 @@ patternSize = 6
 numSamples = 25
 
 #define input and output data (must be one-hot encoded)
-inputs = np.zeros((numSamples, inputSize))
-inputs[:,:patternSize] = 1
-inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
-targets = np.zeros((numSamples, outputSize))
-targets[:,:patternSize] = 1
-targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
+inputs = jnp.zeros((numSamples, inputSize))
+inputs = inputs.at[:,:patternSize].set(1)
+perm_rngs = jrandom.split(rngs['Params'], numSamples)
+def permute_row(row, rng):
+    return jnp.array(jrandom.permutation(rng, row))
+inputs = jnp.stack([permute_row(inputs[i], perm_rngs[i]) for i in range(numSamples)])
+targets = jnp.zeros((numSamples, outputSize))
+targets = targets.at[:,:patternSize].set(1)
+targets = jnp.stack([permute_row(targets[i], perm_rngs[i]) for i in range(numSamples)])
 
 leabraRunConfig = {
     "DELTA_TIME": 0.001,
@@ -118,12 +125,12 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          shuffle=False,
                          EvaluateFirst=False,
                          )
-time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
+time = jnp.linspace(0,leabraNet.time, len(result['AvgSSE']))
 
 
 plt.figure()
 plt.plot(time, result['AvgSSE'], label="Leabra Net")
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
+baseline = jnp.mean(jnp.array([ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), targets) for entry in jrandom.uniform(rngs['Params'], (2000,numSamples,inputSize))]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 plt.title("Random Input/Output Matching")
 plt.ylabel("RMSE")
@@ -162,13 +169,13 @@ cbar = fig.colorbar(im, cax=cbar_ax)
 cbar.set_label("Firing Rate (MHz)")
 
 ybar = scalingFn(x, *popt)
-R2 = 1-np.sum(np.square(y-ybar))/np.sum(np.square(y-np.mean(y)))
+R2 = 1-jnp.sum(jnp.square(y-ybar))/jnp.sum(jnp.square(y-jnp.mean(y)))
 print(f"R-squared: {R2}")
 
 
 firingRates = [list(layer.monitors.values())[0].data.flatten() for layer in layerList]
-firingRates = np.concatenate(firingRates)
-avgFiring = np.mean(firingRates)
+firingRates = jnp.concatenate(firingRates)
+avgFiring = jnp.mean(firingRates)
 print(f"Avg firing rate: {avgFiring*popt[0]}")
 
 

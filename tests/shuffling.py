@@ -4,22 +4,24 @@ from vivilux import *
 from vivilux.learningRules import CHL, GeneRec
 from vivilux.optimizers import Momentum
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
-np.random.seed(seed=0)
 
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
 numSamples = 40
 numEpochs = 300
 
-
 #define input and output data (must be normalized and positive-valued)
-vecs = np.random.normal(size=(numSamples, 4))
-mags = np.linalg.norm(vecs, axis=-1)
-inputs = np.abs(vecs/mags[...,np.newaxis])
-vecs = np.random.normal(size=(numSamples, 4))
-mags = np.linalg.norm(vecs, axis=-1)
-targets = np.abs(vecs/mags[...,np.newaxis])
+vecs = jrandom.normal(rngs['Params'], (numSamples, 4))
+mags = jnp.linalg.norm(vecs, axis=-1)
+inputs = jnp.abs(vecs/mags[...,jnp.newaxis])
+vecs = jrandom.normal(rngs['Params'], (numSamples, 4))
+mags = jnp.linalg.norm(vecs, axis=-1)
+targets = jnp.abs(vecs/mags[...,jnp.newaxis])
 del vecs, mags
 
 optArgs = {"lr" : 0.05,
@@ -40,7 +42,7 @@ plt.plot(resultMixed, label="No Shuffling")
 resultMixed_shuffled = netMixed_shuffled.Learn(inputs, targets, numEpochs=numEpochs, reset=False)
 plt.plot(resultMixed_shuffled, label="Shuffled")
 
-baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
+baseline = jnp.mean(jnp.array([RMSE(entry, targets) for entry in jrandom.uniform(rngs['Params'], (2000,numSamples,4))]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="guessing")
 
 

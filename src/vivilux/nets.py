@@ -12,7 +12,10 @@ if TYPE_CHECKING:
 from collections.abc import Iterator
 import math
 
-import numpy as np
+import jax
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 
 # import defaults
 from .meshes import Mesh, TransposeMesh
@@ -146,7 +149,8 @@ class Net:
                  runConfig = runConfig_std,
                  phaseConfig = phaseConfig_std,
                  layerConfig = layerConfig_std,
-                 dtype = np.float64,
+                 dtype: jnp.dtype = jnp.float64,
+                 seed: int = 0,
                  **kwargs):
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
@@ -157,6 +161,8 @@ class Net:
         self.layerConfig = layerConfig # Stereotyped layer definition
         self.monitoring = monitoring
         self.dtype = dtype
+        # Initialize a single stateful RNG for the whole Net
+        self.rngs = nnx.Rngs(seed)
 
         # For time keeping
         self.DELTA_TIME = runConfig["DELTA_TIME"]
@@ -305,7 +311,7 @@ class Net:
             meshes.append(mesh)
         return meshes
 
-    def ValidateDataset(self, **dataset: dict[str, np.ndarray]):
+    def ValidateDataset(self, **dataset: dict[str, jnp.ndarray]):
         '''Ensures that the entered dataset is properly constructed.
         '''
         numSamples = 0
@@ -437,7 +443,7 @@ class Net:
                  reset: bool = False,
                  shuffle: bool = False,
                  debugData = {},
-                 **dataset: dict[str, np.ndarray]):
+                 **dataset: dict[str, jnp.ndarray]):
         '''Runs an epoch (iteration through all samples of a dataset) using a
             specified run type mathing a key from self.runConfig.
 
@@ -451,7 +457,7 @@ class Net:
         self.outputs = {key: [] for key in self.runConfig["outputLayers"]}
 
         # suffle indices if necessary
-        sampleIndices = np.random.permutation(numSamples) if shuffle else range(numSamples)
+        sampleIndices = jnp.random.permutation(numSamples) if shuffle else range(numSamples)
         
         # TODO: find a faster way to iterate through datasets
         for sampleCount, sampleIndex in enumerate(sampleIndices):
@@ -477,7 +483,7 @@ class Net:
               repeat=1, # TODO: Implement repeated sample training (train muliple times for a single input sample before moving on to the next one)
               EvaluateFirst = True,
               debugData = {},
-              **dataset: dict[str, np.ndarray]) -> dict[str: list]:
+              **dataset: dict[str, jnp.ndarray]) -> dict[str: list]:
         '''Training loop that runs a specified number of epochs.
 
                 - verbosity: specifies how much is printed to the console
@@ -522,7 +528,7 @@ class Net:
               verbosity = 1,
               reset: bool = True,
               shuffle: bool = True,
-              **dataset: dict[str, np.ndarray]):
+              **dataset: dict[str, jnp.ndarray]):
 
         if verbosity > 0: print(f"Evaluating [{self.name}] without training...")
         self.RunEpoch("Infer", verbosity, reset, shuffle, **dataset)
@@ -538,7 +544,7 @@ class Net:
     def Infer(self,
               verbosity = 1,
               reset: bool = False,
-              **dataset: dict[str, np.ndarray]):
+              **dataset: dict[str, jnp.ndarray]):
         '''Applies the network to a given dataset and returns each output
         '''
         if verbosity > 0: print(f"Inferring [{self.name}]...")
@@ -579,6 +585,16 @@ class Net:
                 layer.rule = rule
         else:
             self.layers[layerIndex].rule = rule
+
+    # Example: parameter initialization using the 'Params' stream
+    def initialize_params(self, shape):
+        key = self.rngs["Params"]
+        return jax.random.normal(key, shape, dtype=self.dtype)
+
+    # Example: noise generation using the 'Noise' stream
+    def add_noise(self, shape):
+        key = self.rngs["Noise"]
+        return jax.random.normal(key, shape, dtype=self.dtype)
 
     def __str__(self) -> str:
         strs = []

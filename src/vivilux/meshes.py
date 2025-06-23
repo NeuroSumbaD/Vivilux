@@ -11,8 +11,9 @@ if TYPE_CHECKING:
 from .devices import Device, Generic
 from .processes import XCAL
 
-import numpy as np
-
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 
 class Mesh:
     '''Base class for meshes of synaptic elements.
@@ -20,14 +21,14 @@ class Mesh:
     count = 0
     def __init__(self, 
                  size: int,
-                 inLayer: Layer,
+                 inLayer: 'Layer',
                  AbsScale: float = 1,
                  RelScale: float = 1,
                  InitMean: float = 0.5,
                  InitVar: float = 0.25,
                  Off: float = 1,
                  Gain: float = 6,
-                 dtype = np.float64,
+                 dtype: jnp.dtype = jnp.float64,
                  wbOn = True,
                  wbAvgThr = 0.25,
                  wbHiThr = 0.4,
@@ -39,12 +40,14 @@ class Mesh:
                  WtBalInterval = 10,
                  softBound = True,
                  device = Generic(),
+                 rngs: nnx.Rngs = None,
                  **kwargs):
         self.shape = (size, len(inLayer))
         self.size = size if size > len(inLayer) else len(inLayer)
         self.Off = Off
         self.Gain = Gain
         self.dtype = dtype
+        self.rngs = rngs
 
         # Weight Balance Parameters
         self.wbOn = wbOn
@@ -65,16 +68,19 @@ class Mesh:
         # Generate from uniform distribution
         low = InitMean - InitVar
         high = InitMean + InitVar
-        self.matrix = np.random.uniform(low, high, size=(size, len(inLayer)))
-        self.linMatrix = np.copy(self.matrix) # initialize linear weight
+        if self.rngs is not None:
+            self.matrix = jrandom.uniform(self.rngs["Params"], shape=(size, len(inLayer)), minval=low, maxval=high, dtype=self.dtype)
+        else:
+            self.matrix = jnp.ones((size, len(inLayer)), dtype=self.dtype) * InitMean
+        self.linMatrix = jnp.copy(self.matrix) # initialize linear weight
         self.InvSigMatrix() # correct linear weight
 
         # Other initializations
         self.Gscale = 1#/len(inLayer)
         self.inLayer = inLayer
         self.OptThreshParams = inLayer.OptThreshParams
-        self.lastAct = np.zeros(self.size, dtype=self.dtype)
-        self.inAct = np.zeros(self.size, dtype=self.dtype)
+        self.lastAct = jnp.zeros(self.size, dtype=self.dtype)
+        self.inAct = jnp.zeros(self.size, dtype=self.dtype)
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
         self.modified = False
@@ -135,7 +141,7 @@ class Mesh:
         DT = self.inLayer.net.DELTA_TIME
         self.holdEnergy += self.device.Hold(self.matrix, DT)
 
-        self.holdIntegration += np.sum(self.matrix)
+        self.holdIntegration += jnp.sum(self.matrix)
         self.holdTime += DT
 
 
@@ -151,8 +157,8 @@ class Mesh:
         self.updateEnergy += self.device.Reset(currMat)
         self.updateEnergy += self.device.Set(newMat)
 
-        self.setIntegration += np.sum(currMat)
-        self.resetIntegration += np.sum(newMat)
+        self.setIntegration += jnp.sum(currMat)
+        self.resetIntegration += jnp.sum(newMat)
     
     def set(self, matrix):
         self.modified = True
@@ -161,7 +167,7 @@ class Mesh:
 
     def setGscale(self):
         # TODO: handle case for inhibitory mesh
-        totalRel = np.sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes], dtype=self.dtype)
+        totalRel = jnp.sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes], dtype=self.dtype)
         self.Gscale = self.AbsScale * self.RelScale 
         self.Gscale /= totalRel if totalRel > 0 else 1
 
@@ -169,7 +175,7 @@ class Mesh:
         self.avgActP = self.inLayer.ActAvg.ActPAvg
 
         #calculate average number of active neurons in sending layer
-        sendLayActN = np.maximum(np.round(self.avgActP*len(self.inLayer)), 1, dtype=self.dtype)
+        sendLayActN = jnp.maximum(jnp.round(self.avgActP*len(self.inLayer)), 1, dtype=self.dtype)
         sc = 1/sendLayActN # TODO: implement relative importance
         self.Gscale *= sc
 
@@ -179,7 +185,7 @@ class Mesh:
     def getInput(self):
         act = self.inLayer.getActivity()
         pad = self.size - act.size
-        return np.pad(act, pad_width=(0,pad))
+        return jnp.pad(act, pad_width=(0,pad))
 
     def apply(self):
         self.DeviceHold()
@@ -190,14 +196,14 @@ class Mesh:
         delta = data - self.lastAct
 
         cond1 = data <= self.OptThreshParams["Send"]
-        cond2 = np.abs(delta) <= self.OptThreshParams["Delta"]
-        mask1 = np.logical_or(cond1, cond2)
-        notMask1 = np.logical_not(mask1)
+        cond2 = jnp.abs(delta) <= self.OptThreshParams["Delta"]
+        mask1 = jnp.logical_or(cond1, cond2)
+        notMask1 = jnp.logical_not(mask1)
         delta[mask1] = 0 # only signal delta above both thresholds
         self.lastAct[notMask1] = data[notMask1]
 
         cond3 = self.lastAct > self.OptThreshParams["Send"]
-        mask2 = np.logical_and(cond3, cond1)
+        mask2 = jnp.logical_and(cond3, cond1)
         delta[mask2] = -self.lastAct[mask2]
         self.lastAct[mask2] = 0
 
@@ -208,7 +214,7 @@ class Mesh:
     def applyTo(self, data):
         try:
             synapticWeights = self.get()[:self.shape[0], :self.shape[1]]
-            return np.array(synapticWeights @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
+            return jnp.array(synapticWeights @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
         except ValueError as ve:
             raise ValueError(f"Attempted to apply {data} (shape: {data.shape})"
                              f" to mesh of dimension: {self.shape}")
@@ -228,7 +234,7 @@ class Mesh:
 
             ####----WtBalFmWt----####
             if not self.WtBalance: return
-            wbAvg = np.mean(self.matrix)
+            wbAvg = jnp.mean(self.matrix)
 
             if wbAvg < self.wbLoThr:
                 if wbAvg < self.wbAvgThr:
@@ -247,14 +253,14 @@ class Mesh:
             m, n = delta.shape
             delta[mask1] *= self.wbInc * (1 - self.linMatrix[:m,:n][mask1])
 
-            mask2 = np.logical_not(mask1)
+            mask2 = jnp.logical_not(mask1)
             delta[mask2] *= self.wbDec * self.linMatrix[:m,:n][mask2]
         else:
             mask1 = delta > 0
             m, n = delta.shape
             delta[mask1] *= self.wbInc
 
-            mask2 = np.logical_not(mask1)
+            mask2 = jnp.logical_not(mask1)
             delta[mask2] *= self.wbDec
                     
         return delta
@@ -327,18 +333,18 @@ class Mesh:
         # isolate frame of important data from log
         dwtLog = kwargs["dwtLog"]
         frame = dwtLog[dwtLog["sName"] == self.inLayer.name][dwtLog["rName"] == self.rcvLayer.name]
-        frame = frame[frame["time"].round(3) == np.round(time, 3)]
+        frame = frame[frame["time"].round(3) == jnp.round(time, 3)]
         frame = frame.drop(["time", "rName", "sName"], axis=1)
         if len(frame) == 0: return
         
         leabraData = {}
         sendLen = frame["sendIndex"].max() + 1
         recvLen = frame["recvIndex"].max() + 1
-        leabraData["norm"] = np.zeros((recvLen, sendLen))
-        leabraData["dwt"] = np.zeros((recvLen, sendLen))
-        leabraData["Dwt"] = np.zeros((recvLen, sendLen))
-        leabraData["lwt"] = np.zeros((recvLen, sendLen))
-        leabraData["wt"] = np.zeros((recvLen, sendLen))
+        leabraData["norm"] = jnp.zeros((recvLen, sendLen))
+        leabraData["dwt"] = jnp.zeros((recvLen, sendLen))
+        leabraData["Dwt"] = jnp.zeros((recvLen, sendLen))
+        leabraData["lwt"] = jnp.zeros((recvLen, sendLen))
+        leabraData["wt"] = jnp.zeros((recvLen, sendLen))
         for row in frame.index:
             ri = frame["recvIndex"][row]
             si = frame["sendIndex"][row]
@@ -358,9 +364,9 @@ class Mesh:
             lbDatum = leabraData[key]
             percentError = 100 * (vlDatum - lbDatum) / lbDatum
             mask = lbDatum == 0
-            mask = np.logical_and(mask, vlDatum==0)
+            mask = jnp.logical_and(mask, vlDatum==0)
             percentError[mask] = 0
-            isEqual = np.all(np.abs(percentError) < 2)
+            isEqual = jnp.all(jnp.abs(percentError) < 2)
             
             allEqual[key] = isEqual
 
@@ -380,13 +386,13 @@ class Mesh:
         mask2 = self.linMatrix >= 1
         self.matrix[mask2] = 1
 
-        mask3 = np.logical_not(np.logical_or(mask1, mask2))
+        mask3 = jnp.logical_not(jnp.logical_or(mask1, mask2))
         self.matrix[mask3] = self.sigmoid(self.linMatrix[mask3])
 
         return self.matrix
 
     def sigmoid(self, data):
-        return 1 / (1 + np.power(self.Off*(1-data)/data, self.Gain))
+        return 1 / (1 + jnp.power(self.Off*(1-data)/data, self.Gain))
     
     def InvSigMatrix(self):
         '''This function is only called when the weights are set manually to
@@ -398,13 +404,13 @@ class Mesh:
         mask2 = self.matrix >= 1
         self.matrix[mask2] = 1
 
-        mask3 = np.logical_not(np.logical_or(mask1, mask2))
+        mask3 = jnp.logical_not(jnp.logical_or(mask1, mask2))
         self.linMatrix[mask3] = self.invSigmoid(self.matrix[mask3])
 
         return self.linMatrix
     
     def invSigmoid(self, data):
-        return 1 / (1 + np.power((1/self.Off)*(1-data)/data, (1/self.Gain)))
+        return 1 / (1 + jnp.power((1/self.Off)*(1-data)/data, (1/self.Gain)))
 
     def __len__(self):
         return self.size
@@ -436,10 +442,10 @@ class TransposeMesh(Mesh):
     def getInput(self):
         act = self.mesh.inLayer.getActivity()
         pad = self.shape[1] - act.size
-        return np.pad(act, pad_width=(0,pad))
+        return jnp.pad(act, pad_width=(0,pad))
 
     def Update(self,
                debugDwt = None,
                ):
         return None
-    
+

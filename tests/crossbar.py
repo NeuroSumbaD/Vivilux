@@ -5,13 +5,16 @@ from vivilux.photonics.ph_meshes import Crossbar
 from vivilux.photonics.devices import Nonvolatile
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
-np.random.seed(seed=0)
 
 from copy import deepcopy
 from datetime import datetime
 
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
 numEpochs = 30
 inputSize = 25
@@ -21,12 +24,16 @@ patternSize = 6
 numSamples = 25
 
 #define input and output data (must be one-hot encoded)
-inputs = np.zeros((numSamples, inputSize))
-inputs[:,:patternSize] = 1
-inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
-targets = np.zeros((numSamples, outputSize))
-targets[:,:patternSize] = 1
-targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
+inputs = jnp.zeros((numSamples, inputSize))
+inputs = inputs.at[:,:patternSize].set(1)
+# JAX does not have apply_along_axis, so use vmap for permutation
+perm_rngs = jrandom.split(rngs['Params'], numSamples)
+def permute_row(row, rng):
+    return jnp.array(jrandom.permutation(rng, row))
+inputs = jnp.stack([permute_row(inputs[i], perm_rngs[i]) for i in range(numSamples)])
+targets = jnp.zeros((numSamples, outputSize))
+targets = targets.at[:,:patternSize].set(1)
+targets = jnp.stack([permute_row(targets[i], perm_rngs[i]) for i in range(numSamples)])
 
 leabraRunConfig = {
     "DELTA_TIME": 0.001,
@@ -48,7 +55,7 @@ leabraRunConfig = {
 }
 
 fig, axs = plt.subplots(1,2, figsize=(20,12))
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
+baseline = jnp.mean(jnp.array([ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), targets) for entry in jrandom.uniform(rngs['Params'], (2000,numSamples,inputSize))]))
 axs[0].axhline(y=baseline, color="b", linestyle="--", 
                label="unformly distributed guessing")
 
@@ -67,9 +74,9 @@ for bitPrecision in [4, 8, 16]:
     leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
 
     pcmDevice = Nonvolatile({
-        "length": np.inf, # m
-        "width": np.inf, # m
-        "shiftDelay": np.inf, # s
+        "length": jnp.inf, # m
+        "width": jnp.inf, # m
+        "shiftDelay": jnp.inf, # s
         "setEnergy": 1.5e-9, # J/dB
         "resetEnergy": 0, # J
         "opticalLoss": 0.05, # dB/um (need to find um of this device)
@@ -106,7 +113,7 @@ for bitPrecision in [4, 8, 16]:
 
     neuralEnergy, synapticEnergy = leabraNet.GetEnergy()
 
-    time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
+    time = jnp.linspace(0,leabraNet.time, len(result['AvgSSE']))
 
 
     axs[1].bar(f"uint{bitPrecision}", neuralEnergy, label="neural")

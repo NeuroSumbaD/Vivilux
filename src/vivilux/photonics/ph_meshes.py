@@ -3,13 +3,17 @@ from ..layers import Layer
 from .utils import *
 from .devices import Device
 
-import numpy as np
-from scipy.stats import ortho_group
+import jax.numpy as jnp
+import jax
+from flax import nnx
+from typing import Any
 
 class Unitary(Mesh):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.set(ortho_group.rvs(len(self)))
+    def __init__(self, *args, rngs: nnx.Rngs = None, **kwargs):
+        super().__init__(*args, rngs=rngs, **kwargs)
+        if self.rngs is not None:
+            # Use JAX orthogonal matrix for unitary initialization
+            self.set(jax.random.orthogonal(self.rngs["Params"], (len(self), len(self))))
 
 class MZImesh(Mesh):
     '''Base class for a single rectangular MZI used in incoherent mode.
@@ -24,7 +28,7 @@ class MZImesh(Mesh):
                  InitVar: float = 0.25,
                  Off: float = 1,
                  Gain: float = 6,
-                 dtype = np.float64,
+                 dtype = jnp.float64,
                  wbOn = True,
                  wbAvgThr = 0.25,
                  wbHiThr = 0.4,
@@ -41,30 +45,31 @@ class MZImesh(Mesh):
                  atol = 0, # absolute tolerance
                  rtol = 1e-2, # relative tolerance
                  bitPrecision = None,
+                 rngs: nnx.Rngs = None,
                  **kwargs):
         super().__init__(size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
                          Gain,dtype,wbOn,wbAvgThr,wbHiThr,wbHiGain,wbLoThr,
-                         wbLoGain,wbInc,wbDec,WtBalInterval,softBound, **kwargs)
+                         wbLoGain,wbInc,wbDec,WtBalInterval,softBound, rngs=rngs, **kwargs)
 
         # pad initial matrix to square matrix
         if size > len(self.inLayer): # expand variables appropriately
             size = size
-            self.lastAct = np.zeros(size, dtype=self.dtype)
-            self.inAct = np.zeros(size, dtype=self.dtype)
+            self.lastAct = jnp.zeros(size, dtype=self.dtype)
+            self.inAct = jnp.zeros(size, dtype=self.dtype)
         else: 
             size = len(self.inLayer)
         shape1 = self.linMatrix.shape
-        self.linMatrix = np.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
+        self.linMatrix = jnp.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
         shape2 = self.matrix.shape
-        self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
+        self.matrix = jnp.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
         
         self.numUnits = int(self.size*(self.size-1)/2)
         self.bitPrecision = bitPrecision
         self.bitMask = int(2**bitPrecision - 1) if bitPrecision is not None else None
         self.Initialize()
-        numParams = np.concatenate([param.flatten() for param in self.getParams()]).size
+        numParams = jnp.concatenate([param.flatten() for param in self.getParams()]).size
         # arbitrary guess for how many directions are needed
-        self.numDirections = int(np.round(numParams/4)) if numDirections is None else numDirections
+        self.numDirections = int(jnp.round(numParams/4)) if numDirections is None else numDirections
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
         self.numSteps = numSteps
         
@@ -88,7 +93,10 @@ class MZImesh(Mesh):
 
             This function should be overwritten for each mesh type.
         '''
-        self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
+        if self.rngs is not None:
+            self.phaseShifters = jax.random.uniform(self.rngs["Params"], (self.numUnits,2), minval=0, maxval=2*jnp.pi)
+        else:
+            self.phaseShifters = jnp.zeros((self.numUnits,2))
 
         self.ApplyBitPrecision(self.getParams())
 
@@ -105,7 +113,7 @@ class MZImesh(Mesh):
         params = self.getParams()
         self.holdEnergy += self.device.Hold(params, DT)
 
-        self.holdIntegration += np.sum(params)
+        self.holdIntegration += jnp.sum(params)
         self.holdTime += DT
 
 
@@ -120,8 +128,8 @@ class MZImesh(Mesh):
         self.updateEnergy += self.device.Reset(currParams)
         self.updateEnergy += self.device.Set(updatedParams)
 
-        self.setIntegration += np.sum(currParams)
-        self.resetIntegration += np.sum(updatedParams)
+        self.setIntegration += jnp.sum(currParams)
+        self.resetIntegration += jnp.sum(updatedParams)
 
     def getFromParams(self, params = None):
         '''Function generates matrix from a list of params.
@@ -133,7 +141,7 @@ class MZImesh(Mesh):
         self.boundParams(params)
         self.ApplyBitPrecision(params)
         complexMat = psToRect(params[0], self.size)
-        return np.square(np.abs(complexMat))
+        return jnp.square(jnp.abs(complexMat))
     
     def set(self, matrix, verbose=False):
         '''Function used to directly set the matrix implemented by the mesh
@@ -153,7 +161,7 @@ class MZImesh(Mesh):
         
         return self.Gscale * self.matrix
     
-    def getParams(self) -> list[np.ndarray]:
+    def getParams(self) -> list[jnp.ndarray]:
         '''Returns a list of the parameters for the given mesh. 
         
             Overwrite for meshes with different parameter structures.
@@ -211,7 +219,7 @@ class MZImesh(Mesh):
         result = super().applyTo(matrixData)
         result = result.reshape(self.shape[0], dataShape[1])
         ## Take the sum across each wavelength
-        return np.sum(result, axis=1)
+        return jnp.sum(result, axis=1)
     
     def ApplyUpdate(self, delta, m, n):
         '''Applies the delta vector to the linear weights and calculates the 
@@ -235,10 +243,10 @@ class MZImesh(Mesh):
         self.modified = False
 
     def checkNaN(self, params):
-        flatParams = np.concatenate([param.flatten() for param in params])
-        assert(np.any(np.isnan(flatParams))==False)
+        flatParams = jnp.concatenate([param.flatten() for param in params])
+        assert(jnp.any(jnp.isnan(flatParams))==False)
     
-    def ApplyDelta(self, delta:np.ndarray, verbose=False):
+    def ApplyDelta(self, delta:jnp.ndarray, verbose=False):
         '''Uses directional derivatives to find the set of phase shifters which
             implements some change in weights for the matrix. Uses the LSO Analog
             Matrix Mapping (LAMM) algorithm.
@@ -249,15 +257,15 @@ class MZImesh(Mesh):
         # Make column vectors for deltas and theta
         m, n = delta.shape # presynaptic, postsynaptic array lengths
         deltaFlat = delta.flatten().reshape(-1,1)
-        thetaFlat = np.concatenate([param.flatten() for param in self.getParams()]).reshape(-1,1)
+        thetaFlat = jnp.concatenate([param.flatten() for param in self.getParams()]).reshape(-1,1)
 
-        initDeltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
+        initDeltaMagnitude = jnp.sqrt(jnp.sum(jnp.square(deltaFlat)))
         deltaMagnitude = initDeltaMagnitude
         updateMagnitude = self.updateMagnitude # save update magnitude
-        self.record = -np.ones(self.numSteps+1)
-        self.record[0] = initDeltaMagnitude
+        self.record = -jnp.ones(self.numSteps+1)
+        self.record = self.record.at[0].set(initDeltaMagnitude)
         tol = self.atol + self.rtol * initDeltaMagnitude
-        errorTol = np.sqrt(tol/self.concavity)
+        errorTol = jnp.sqrt(tol/self.concavity)
         coeff = 1
         skipCount = 0
         overflow = True
@@ -266,26 +274,27 @@ class MZImesh(Mesh):
 
         for step in range(self.numSteps):
             currMat = self.get()/self.Gscale
-            X = np.zeros((deltaFlat.shape[0], self.numDirections))
-            V = np.zeros((thetaFlat.shape[0], self.numDirections))
+            X = jnp.zeros((deltaFlat.shape[0], self.numDirections))
+            V = jnp.zeros((thetaFlat.shape[0], self.numDirections))
             
             # Calculate directional derivatives
             for i in range(self.numDirections):
                 tempx, tempv= self.matrixGradient()
-                tempv = np.concatenate([param.flatten() for param in tempv])
-                X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()
+                tempv = jnp.concatenate([param.flatten() for param in tempv])
+                X = X.at[:,i].set(tempx[:n, :m].flatten())
+                V = V.at[:,i].set(tempv.flatten())
 
             # Solve least square regression for update
             for iteration in range(self.numDirections):
                 xtx = X.T @ X # add L2 regularizer (equivalent to imposing gaussian prior or rewriting optimization as y - Xa + epsilon*I)
-                rank = np.linalg.matrix_rank(xtx)
+                rank = jnp.linalg.matrix_rank(xtx)
                 if rank == len(xtx): # matrix will have an inverse
-                    a = np.linalg.inv(xtx) @ X.T @ deltaFlat
-                    assert(np.any(np.isnan(a))==False)
+                    a = jnp.linalg.inv(xtx) @ X.T @ deltaFlat
+                    assert(jnp.any(jnp.isnan(a))==False)
                     break
                 elif rank == 0:
                     self.updateMagnitude *= 1.2
-                    self.record[step+1] = -np.inf
+                    self.record = self.record.at[step+1].set(-jnp.inf)
                 else: # direction vectors cary redundant information use one less
                     X = X[:,:-1]
                     V = V[:,:-1]
@@ -313,21 +322,21 @@ class MZImesh(Mesh):
                 coeff *= 0.9
                 skipCount += 1
                 if skipCount > 25: # take a random big step
-                    randomParams = [3e-1*2*(np.random.rand(*param.shape)-0.5)+
+                    randomParams = [3e-1*2*(jax.random.uniform(self.rngs["Params"], param.shape)-0.5)+
                                     param for param in self.getParams()]
                     newMat = self.getFromParams(randomParams)
                     trueDelta = newMat - currMat
                     trueDelta = trueDelta.flatten().reshape(-1,1)
                     deltaFlat -= trueDelta
                     deltaMagnitude = Magnitude(deltaFlat)
-                    self.record[step+1] = deltaMagnitude
+                    self.record = self.record.at[step+1].set(deltaMagnitude)
                     self.setParams(randomParams)
                     skipCount = 0 # reset skip count
                     self.updateMagnitude = updateMagnitude # reset magnitude
                     continue
                 elif skipCount > 10: # stop iterating if the delta isn't being implemented
                     self.updateMagnitude *= 0.9 # take smaller test steps
-                self.record[step+1] = -100
+                self.record = self.record.at[step+1].set(-100)
                 continue # do not apply step
             elif (stepCoeff > 0.9):
                 coeff *= 1.1 # increases step size if updates are slow
@@ -338,7 +347,7 @@ class MZImesh(Mesh):
             self.setParams(updatedParams)
             deltaFlat -= trueDelta
             deltaMagnitude = Magnitude(deltaFlat)
-            self.record[step+1] = deltaMagnitude
+            self.record = self.record.at[step+1].set(deltaMagnitude)
             if deltaMagnitude < tol:
                 if verbose:
                     print(f"Break after {step+1} steps, delta magnitude: {deltaMagnitude}")
@@ -354,7 +363,7 @@ class MZImesh(Mesh):
         self.setFromParams()
         return deltaMagnitude, step
         
-    def matrixGradient(self, stepVector: list[np.ndarray] = None):
+    def matrixGradient(self, stepVector: list[jnp.ndarray] = None):
         '''Calculates the gradient of the matrix with respect to the phase
             shifters in the MZI mesh. This gradient is with respect to the
             magnitude of an array of detectors that serves as neural input.
@@ -364,9 +373,9 @@ class MZImesh(Mesh):
         paramsList = self.getParams()
         # create a random step vector and set magnitude to self.updateMagnitude
         if stepVector is None:
-            stepVectors = [2*np.random.rand(*param.shape)-1 for param in paramsList] # TODO: determine which range is better [0,1) or [-1,1)
+            stepVectors = [2*jax.random.uniform(self.rngs["Params"], param.shape)-1 for param in paramsList] # TODO: determine which range is better [0,1) or [-1,1)
             flatVectors = [stepVector.flatten() for stepVector in stepVectors]
-            randMagnitude = Magnitude(np.concatenate(flatVectors))
+            randMagnitude = Magnitude(jnp.concatenate(flatVectors))
             stepVectors = [stepVector/randMagnitude for stepVector in stepVectors]
             stepVectors = [stepVector*self.updateMagnitude for stepVector in stepVectors]
         
@@ -407,11 +416,18 @@ class DiagMZI(MZImesh):
         a unitary*diagonal matrix configuration.
     '''
     NAME = "Diag_Mesh"
+    def __init__(self, *args, rngs: nnx.Rngs = None, **kwargs):
+        super().__init__(*args, rngs=rngs, **kwargs)
+
     def Initialize(self):
         '''Initializes internal variables for each set of parameter.
         '''
-        self.phaseShifters = np.random.rand(self.numUnits,2)*2*np.pi
-        self.diagonals = np.random.rand(self.size)
+        if self.rngs is not None:
+            self.phaseShifters = jax.random.uniform(self.rngs["Params"], (self.numUnits,2), minval=0, maxval=2*jnp.pi)
+            self.diagonals = jax.random.uniform(self.rngs["Params"], (self.size,))
+        else:
+            self.phaseShifters = jnp.zeros((self.numUnits,2))
+            self.diagonals = jnp.zeros((self.size,))
 
         self.concavity = 0.6
 
@@ -436,7 +452,7 @@ class DiagMZI(MZImesh):
         self.holdEnergy += self.psDevice.Hold(currParams[:1], DT)
         # TODO implement SOA
 
-        self.holdIntegration += np.sum(currParams[:1])
+        self.holdIntegration += jnp.sum(currParams[:1])
         self.holdTime += DT
 
     def DeviceUpdate(self, updatedParams):
@@ -451,8 +467,8 @@ class DiagMZI(MZImesh):
         self.updateEnergy += self.psDevice.Set(updatedParams[:1])
         
         # TODO implement SOA
-        self.setIntegration += np.sum(currParams[:1])
-        self.resetIntegration += np.sum(updatedParams[:1])
+        self.setIntegration += jnp.sum(currParams[:1])
+        self.resetIntegration += jnp.sum(updatedParams[:1])
     
     def getFromParams(self, params = None):
         '''Function generates matrix from the list of params.
@@ -461,7 +477,7 @@ class DiagMZI(MZImesh):
         self.boundParams(params)
         complexMat = psToRect(params[0], self.size)
         soaStage = Diagonalize(params[1])
-        return soaStage @ np.square(np.abs(complexMat))
+        return soaStage @ jnp.square(jnp.abs(complexMat))
     
     def getParams(self):
         return [self.phaseShifters, self.diagonals]
@@ -489,10 +505,18 @@ class SVDMZI(MZImesh):
         between creating a unitary*diagonal*unitary matrix configuration.
     '''
     NAME = "SVD_Mesh"
+    def __init__(self, *args, rngs: nnx.Rngs = None, **kwargs):
+        super().__init__(*args, rngs=rngs, **kwargs)
+
     def Initialize(self):
-        self.phaseShifters1 = np.random.rand(self.numUnits,2)*2*np.pi
-        self.diagonals = np.random.rand(self.size)
-        self.phaseShifters2 = np.random.rand(self.numUnits,2)*2*np.pi
+        if self.rngs is not None:
+            self.phaseShifters1 = jax.random.uniform(self.rngs["Params"], (self.numUnits,2), minval=0, maxval=2*jnp.pi)
+            self.diagonals = jax.random.uniform(self.rngs["Params"], (self.size,))
+            self.phaseShifters2 = jax.random.uniform(self.rngs["Params"], (self.numUnits,2), minval=0, maxval=2*jnp.pi)
+        else:
+            self.phaseShifters1 = jnp.zeros((self.numUnits,2))
+            self.diagonals = jnp.zeros((self.size,))
+            self.phaseShifters2 = jnp.zeros((self.numUnits,2))
 
         self.concavity  = 0.6
 
@@ -517,7 +541,7 @@ class SVDMZI(MZImesh):
         self.holdEnergy += self.psDevice.Hold(currParams[:1], DT)
         # TODO implement SOA
 
-        self.holdIntegration += np.sum(currParams[:1])
+        self.holdIntegration += jnp.sum(currParams[:1])
         self.holdTime += DT
 
     def DeviceUpdate(self, updatedParams):
@@ -534,10 +558,10 @@ class SVDMZI(MZImesh):
         self.updateEnergy += self.psDevice.Set(updatedParams[-1:]) # right mat
         
         # TODO implement SOA
-        self.setIntegration += np.sum(currParams[:1]) # left mat
-        self.setIntegration += np.sum(currParams[-1:]) # right mat
-        self.resetIntegration += np.sum(updatedParams[:1]) # left mat
-        self.setIntegration += np.sum(currParams[-1:]) # right mat
+        self.setIntegration += jnp.sum(currParams[:1]) # left mat
+        self.setIntegration += jnp.sum(currParams[-1:]) # right mat
+        self.resetIntegration += jnp.sum(updatedParams[:1]) # left mat
+        self.setIntegration += jnp.sum(currParams[-1:]) # right mat
 
     def getFromParams(self, params = None):
         '''Function generates matrix from the list of params.
@@ -547,9 +571,9 @@ class SVDMZI(MZImesh):
         complexMat1 = psToRect(params[0], self.size)
         soaStage = Diagonalize(params[1])
         complexMat2 = psToRect(params[2], self.size)
-        fullComplexMat = complexMat2 @ np.sqrt(soaStage) @ complexMat1
+        fullComplexMat = complexMat2 @ jnp.sqrt(soaStage) @ complexMat1
 
-        return np.square(np.abs(fullComplexMat))
+        return jnp.square(jnp.abs(fullComplexMat))
 
     def getParams(self):
         return [self.phaseShifters1, self.diagonals, self.phaseShifters2]
@@ -617,7 +641,7 @@ class OversizedMZI(MZImesh):
                  InitVar: float = 0.25,
                  Off: float = 1,
                  Gain: float = 6,
-                 dtype = np.float64,
+                 dtype = jnp.float64,
                  wbOn = True,
                  wbAvgThr = 0.25,
                  wbHiThr = 0.4,
@@ -634,28 +658,29 @@ class OversizedMZI(MZImesh):
                  atol = 0, # absolute tolerance
                  rtol = 1e-2, # relative tolerance
                  bitPrecision = None,
+                 rngs: nnx.Rngs = None,
                  **kwargs):
         # TODO: Allow scaleFactor to adjust dynamically
         # self.scaleFactor = 1+size
-        self.scaleFactor = np.array([1])
+        self.scaleFactor = jnp.array([1])
         self.freezeScaleFactor = False # prevents scale factor from being updated
         self.aux_in = aux_in
         self.aux_out = aux_out
         Mesh.__init__(self,size,inLayer,AbsScale,RelScale,InitMean,InitVar,Off,
                       Gain,dtype,wbOn,wbAvgThr,wbHiThr,wbHiGain,wbLoThr,
-                      wbLoGain,wbInc,wbDec,WtBalInterval,softBound, **kwargs)
+                      wbLoGain,wbInc,wbDec,WtBalInterval,softBound, rngs=rngs, **kwargs)
         
         # pad initial matrix to square matrix
         if size > len(self.inLayer): # expand variables appropriately
             size = size
-            self.lastAct = np.zeros(size, dtype=self.dtype)
-            self.inAct = np.zeros(size, dtype=self.dtype)
+            self.lastAct = jnp.zeros(size, dtype=self.dtype)
+            self.inAct = jnp.zeros(size, dtype=self.dtype)
         else: 
             size = len(self.inLayer)
         shape1 = self.linMatrix.shape
-        self.linMatrix = np.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
+        self.linMatrix = jnp.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
         shape2 = self.matrix.shape
-        self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
+        self.matrix = jnp.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
         
         self.mesh_size = max(size + aux_in, size + aux_out)
         # self.amplifiers = np.ones(self.mesh_size)
@@ -663,9 +688,9 @@ class OversizedMZI(MZImesh):
         self.bitPrecision = bitPrecision
         self.bitMask = int(2**bitPrecision - 1) if bitPrecision is not None else None
         self.Initialize()
-        numParams = np.concatenate([param.flatten() for param in self.getParams()]).size
+        numParams = jnp.concatenate([param.flatten() for param in self.getParams()]).size
         # arbitrary guess for how many directions are needed
-        self.numDirections = int(np.round(numParams/4)) if numDirections is None else numDirections
+        self.numDirections = int(jnp.round(numParams/4)) if numDirections is None else numDirections
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
         self.numSteps = numSteps
         
@@ -677,12 +702,12 @@ class OversizedMZI(MZImesh):
         self.setFromParams()
 
 
-    def getFromParams(self, params=None) -> np.ndarray:
+    def getFromParams(self, params=None) -> jnp.ndarray:
         params = self.getParams() if params is None else params
         self.boundParams(params)
         self.ApplyBitPrecision(params)
         complexMat = psToRect(params[0], self.mesh_size)
-        oversizedMat = np.square(np.abs(complexMat))
+        oversizedMat = jnp.square(jnp.abs(complexMat))
 
         # apply multipliers to each row
         # oversizedMat = Diagonalize(params[1]) @ oversizedMat
@@ -694,26 +719,26 @@ class OversizedMZI(MZImesh):
         real_matrix = oversizedMat[1:(N-(num_aux_out-1)), :-num_aux_in]
         return real_matrix
     
-    def getOversizedFromParams(self, params=None) -> np.ndarray:
+    def getOversizedFromParams(self, params=None) -> jnp.ndarray:
         params = self.getParams() if params is None else params
         self.boundParams(params)
         self.ApplyBitPrecision(params)
         complexMat = psToRect(params[0], self.mesh_size)
-        oversizedMat = np.square(np.abs(complexMat))
+        oversizedMat = jnp.square(jnp.abs(complexMat))
 
         oversizedMat *= self.scaleFactor
 
         return oversizedMat
 
 
-    def getParams(self) -> list[np.ndarray]:
+    def getParams(self) -> list[jnp.ndarray]:
         # return [self.phaseShifters, self.amplifiers]
         if self.freezeScaleFactor:
             return [self.phaseShifters]
         else:
             return [self.phaseShifters, self.scaleFactor]
     
-    def setParams(self, params: list[np.ndarray]):
+    def setParams(self, params: list[jnp.ndarray]):
         self.boundParams(params)
         self.checkNaN(params)
         
@@ -726,7 +751,7 @@ class OversizedMZI(MZImesh):
 
         self.modified = True
     
-    def boundParams(self, params: list[np.ndarray]) -> list[np.ndarray]:
+    def boundParams(self, params: list[jnp.ndarray]) -> list[jnp.ndarray]:
         params[0] = BoundTheta(params[0])
 
         if not self.freezeScaleFactor:
@@ -734,7 +759,7 @@ class OversizedMZI(MZImesh):
 
         return params
 
-    def ApplyDelta(self, delta:np.ndarray, verbose=False):
+    def ApplyDelta(self, delta:jnp.ndarray, verbose=False):
         '''Uses directional derivatives to find the set of phase shifters which
             implements some change in weights for the matrix. Uses the LSO Analog
             Matrix Mapping (LAMM) algorithm.
@@ -748,27 +773,27 @@ class OversizedMZI(MZImesh):
         delta /= self.scaleFactor # scale delta to match MZI array range
 
         # generate oversized matrix delta
-        oversizedDelta = np.zeros((self.mesh_size, self.mesh_size), dtype=self.dtype)
+        oversizedDelta = jnp.zeros((self.mesh_size, self.mesh_size), dtype=self.dtype)
         oversizedDelta[1:(self.mesh_size-(self.aux_out-1)), :-self.aux_in] = delta
 
         # fill first row and last column to maintain column and row sums
-        oversizedDelta[0, :] = -np.sum(oversizedDelta, axis=0)
-        oversizedDelta[:, -1] = -np.sum(oversizedDelta, axis=1)
+        oversizedDelta = oversizedDelta.at[0, :].set(-jnp.sum(oversizedDelta, axis=0))
+        oversizedDelta = oversizedDelta.at[:, -1].set(-jnp.sum(oversizedDelta, axis=1))
         # fill top right corner to make total sum zero
-        oversizedDelta[0, -1] = -np.sum(oversizedDelta)
+        oversizedDelta = oversizedDelta.at[0, -1].set(-jnp.sum(oversizedDelta))
 
         delta = oversizedDelta
 
         deltaFlat = delta.flatten().reshape(-1,1)
-        thetaFlat = np.concatenate([param.flatten() for param in self.getParams()]).reshape(-1,1)
+        thetaFlat = jnp.concatenate([param.flatten() for param in self.getParams()]).reshape(-1,1)
 
-        initDeltaMagnitude = np.sqrt(np.sum(np.square(deltaFlat)))
+        initDeltaMagnitude = jnp.sqrt(jnp.sum(jnp.square(deltaFlat)))
         deltaMagnitude = initDeltaMagnitude
         updateMagnitude = self.updateMagnitude # save update magnitude
-        self.record = -np.ones(self.numSteps+1)
-        self.record[0] = initDeltaMagnitude
+        self.record = -jnp.ones(self.numSteps+1)
+        self.record = self.record.at[0].set(initDeltaMagnitude)
         tol = self.atol + self.rtol * initDeltaMagnitude
-        errorTol = np.sqrt(tol/self.concavity)
+        errorTol = jnp.sqrt(tol/self.concavity)
         coeff = 1
         skipCount = 0
         overflow = True
@@ -784,26 +809,27 @@ class OversizedMZI(MZImesh):
         for step in range(self.numSteps):
             # currMat = self.get()/self.Gscale
             currMat = self.getOversizedFromParams()
-            X = np.zeros((deltaFlat.shape[0], self.numDirections))
-            V = np.zeros((thetaFlat.shape[0], self.numDirections))
+            X = jnp.zeros((deltaFlat.shape[0], self.numDirections))
+            V = jnp.zeros((thetaFlat.shape[0], self.numDirections))
             
             # Calculate directional derivatives
             for i in range(self.numDirections):
                 tempx, tempv= self.matrixGradient()
-                tempv = np.concatenate([param.flatten() for param in tempv])
-                X[:,i], V[:,i] = tempx.flatten(), tempv.flatten()
+                tempv = jnp.concatenate([param.flatten() for param in tempv])
+                X = X.at[:,i].set(tempx.flatten())
+                V = V.at[:,i].set(tempv.flatten())
 
             # Solve least square regression for update
             for iteration in range(self.numDirections):
                 xtx = X.T @ X # add L2 regularizer (equivalent to imposing gaussian prior or rewriting optimization as y - Xa + epsilon*I)
-                rank = np.linalg.matrix_rank(xtx)
+                rank = jnp.linalg.matrix_rank(xtx)
                 if rank == len(xtx): # matrix will have an inverse
-                    a = np.linalg.inv(xtx) @ X.T @ deltaFlat
-                    assert(np.any(np.isnan(a))==False)
+                    a = jnp.linalg.inv(xtx) @ X.T @ deltaFlat
+                    assert(jnp.any(jnp.isnan(a))==False)
                     break
                 elif rank == 0:
                     self.updateMagnitude *= 1.2
-                    self.record[step+1] = -np.inf
+                    self.record = self.record.at[step+1].set(-jnp.inf)
                 else: # direction vectors cary redundant information use one less
                     X = X[:,:-1]
                     V = V[:,:-1]
@@ -832,7 +858,7 @@ class OversizedMZI(MZImesh):
                 coeff *= 0.9
                 skipCount += 1
                 if skipCount > 25: # take a random big step
-                    randomParams = [3e-1*2*(np.random.rand(*param.shape)-0.5)+
+                    randomParams = [3e-1*2*(jax.random.uniform(self.rngs["Params"], param.shape)-0.5)+
                                     param for param in self.getParams()]
                     newMat = self.getOversizedFromParams(randomParams)
                     trueDelta = newMat - currMat
@@ -840,14 +866,14 @@ class OversizedMZI(MZImesh):
                     trueDelta = trueDelta.flatten().reshape(-1,1)
                     deltaFlat -= trueDelta
                     deltaMagnitude = Magnitude(deltaFlat)
-                    self.record[step+1] = deltaMagnitude
+                    self.record = self.record.at[step+1].set(deltaMagnitude)
                     self.setParams(randomParams)
                     skipCount = 0 # reset skip count
                     self.updateMagnitude = updateMagnitude # reset magnitude
                     continue
                 elif skipCount > 10: # stop iterating if the delta isn't being implemented
                     self.updateMagnitude *= 0.9 # take smaller test steps
-                self.record[step+1] = -100
+                self.record = self.record.at[step+1].set(-100)
                 continue # do not apply step
             # elif (stepCoeff > 0.9) and coeff < 1:
             elif (stepCoeff > 0.9):
@@ -859,7 +885,7 @@ class OversizedMZI(MZImesh):
             self.setParams(updatedParams)
             deltaFlat -= trueDelta
             deltaMagnitude = Magnitude(deltaFlat)
-            self.record[step+1] = deltaMagnitude
+            self.record = self.record.at[step+1].set(deltaMagnitude)
             if deltaMagnitude < tol:
                 if verbose:
                     print(f"Break after {step+1} steps, delta magnitude: {deltaMagnitude}")
@@ -875,7 +901,7 @@ class OversizedMZI(MZImesh):
         self.setFromParams()
         return deltaMagnitude, step, not overflow
 
-    def matrixGradient(self, stepVector: list[np.ndarray] = None):
+    def matrixGradient(self, stepVector: list[jnp.ndarray] = None):
         '''Calculates the gradient of the matrix with respect to the phase
             shifters in the MZI mesh. This gradient is with respect to the
             magnitude of an array of detectors that serves as neural input.
@@ -885,9 +911,9 @@ class OversizedMZI(MZImesh):
         paramsList = self.getParams()
         # create a random step vector and set magnitude to self.updateMagnitude
         if stepVector is None:
-            stepVectors = [2*np.random.rand(*param.shape)-1 for param in paramsList] # TODO: determine which range is better [0,1) or [-1,1)
+            stepVectors = [2*jax.random.uniform(self.rngs["Params"], param.shape)-1 for param in paramsList] # TODO: determine which range is better [0,1) or [-1,1)
             flatVectors = [stepVector.flatten() for stepVector in stepVectors]
-            randMagnitude = Magnitude(np.concatenate(flatVectors))
+            randMagnitude = Magnitude(jnp.concatenate(flatVectors))
             stepVectors = [stepVector/randMagnitude for stepVector in stepVectors]
             stepVectors = [stepVector*self.updateMagnitude for stepVector in stepVectors]
         
@@ -932,10 +958,10 @@ class OversizedMZI(MZImesh):
         self.holdEnergy += self.psDevice.Hold(currParams[:1], DT)
         # TODO implement SOA
 
-        self.holdIntegration += np.sum(currParams[:1])
+        self.holdIntegration += jnp.sum(currParams[:1])
         self.holdTime += DT
 
-    def DeviceUpdate(self, updatedParams: list[np.ndarray]):
+    def DeviceUpdate(self, updatedParams: list[jnp.ndarray]):
         '''Calls the reset() and set() functions for each device in the mesh
             according to the updated parameters
 
@@ -947,8 +973,8 @@ class OversizedMZI(MZImesh):
         self.updateEnergy += self.psDevice.Set(updatedParams[:1])
         
         # TODO implement SOA
-        self.setIntegration += np.sum(currParams[:1])
-        self.resetIntegration += np.sum(updatedParams[:1])
+        self.setIntegration += jnp.sum(currParams[:1])
+        self.resetIntegration += jnp.sum(updatedParams[:1])
 
 class Crossbar(Mesh):
     def __init__(self,
@@ -960,7 +986,7 @@ class Crossbar(Mesh):
                  InitVar: float = 0.25,
                  Off: float = 1,
                  Gain: float = 6,
-                 dtype = np.float64,
+                 dtype = jnp.float64,
                  wbOn = True,
                  wbAvgThr = 0.25,
                  wbHiThr = 0.4,
@@ -999,15 +1025,15 @@ class Crossbar(Mesh):
         # pad initial matrix to square matrix
         if size > len(self.inLayer): # expand variables appropriately
             size = size
-            self.lastAct = np.zeros(size, dtype=self.dtype)
-            self.inAct = np.zeros(size, dtype=self.dtype)
+            self.lastAct = jnp.zeros(size, dtype=self.dtype)
+            self.inAct = jnp.zeros(size, dtype=self.dtype)
         else: 
             size = len(self.inLayer)
             
         shape1 = self.linMatrix.shape
-        self.linMatrix = np.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
+        self.linMatrix = jnp.pad(self.linMatrix, ((0,size-shape1[0]),(0, size-shape1[1])))
         shape2 = self.matrix.shape
-        self.matrix = np.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
+        self.matrix = jnp.pad(self.matrix, ((0,size-shape2[0]),(0, size-shape2[1])))
         
         self.coupling = 1/size if coupling is None else coupling
         self.gain = size if gain is None else gain
@@ -1030,9 +1056,9 @@ class Crossbar(Mesh):
     def Initialize(self):
         '''Initializes internal variables for each set of parameter.
         '''
-        self.attenuators = np.random.rand(self.size,self.size)
+        self.attenuators = jax.random.uniform(self.rngs["Params"], (self.size,self.size))
         self.attenuators = self.ApplyBitPrecision([self.attenuators])[0]
-        self.attenuatorsDB = 10*np.log10(self.attenuators)
+        self.attenuatorsDB = 10*jnp.log10(self.attenuators)
 
     def getFromParams(self, params = None):
         '''Function generates matrix from a list of params.
@@ -1043,8 +1069,8 @@ class Crossbar(Mesh):
         params = self.getParams() if params is None else params
         self.boundParams(params)
         self.ApplyBitPrecision(params)
-        matrix = np.multiply(params[0], self.coupling)
-        matrix = np.multiply(matrix, self.gain)
+        matrix = jnp.multiply(params[0], self.coupling)
+        matrix = jnp.multiply(matrix, self.gain)
         return matrix
     
     def set(self, matrix, verbose=False):
@@ -1053,7 +1079,7 @@ class Crossbar(Mesh):
         '''
         self.modified = True
         self.matrix = matrix
-        self.setParams([np.divide(matrix, self.coupling)])
+        self.setParams([jnp.divide(matrix, self.coupling)])
     
     def get(self):
         '''Returns the current matrix representation multiplied by the Gscale.
@@ -1065,7 +1091,7 @@ class Crossbar(Mesh):
         
         return self.Gscale * self.matrix
     
-    def getParams(self) -> list[np.ndarray]:
+    def getParams(self) -> list[jnp.ndarray]:
         '''Returns a list of the parameters for the given mesh. 
         
             Overwrite for meshes with different parameter structures.
@@ -1082,11 +1108,11 @@ class Crossbar(Mesh):
         # self.checkNaN(params)
         
         self.attenuators = params[0]
-        self.attenuatorsDB = 10*np.log10(self.attenuators)
+        self.attenuatorsDB = 10*jnp.log10(self.attenuators)
         self.DeviceUpdate([-self.attenuatorsDB])
         self.modified = True
 
-    def reshapeParams(self, flatParams):
+    def reshapeParams(self, flatParams: jnp.ndarray) -> list[jnp.ndarray]:
         '''Reshapes a flattened set of parameters to list format
             accepted by getParams and setParams.
         '''
@@ -1132,7 +1158,7 @@ class Crossbar(Mesh):
         self.linMatrix[:m, :n] += delta
         self.ClipLinMatrix()
         newMatrix = self.SigMatrix()
-        self.setParams([np.divide(newMatrix, self.coupling)])
+        self.setParams([jnp.divide(newMatrix, self.coupling)])
 
     def setFromParams(self):
         '''Sets the current matrix from the phase shifter params.
@@ -1154,10 +1180,10 @@ class Crossbar(Mesh):
         self.updateEnergy += self.device.Reset(currParams)
         self.updateEnergy += self.device.Set(updatedParams)
 
-        self.setIntegration += np.sum(currParams)
-        self.resetIntegration += np.sum(updatedParams)
+        self.setIntegration += jnp.sum(currParams)
+        self.resetIntegration += jnp.sum(updatedParams)
 
     
 class CrossbarRings(Crossbar):
     def Initialize(self):
-        self.through = np.random.rand(self.size,self.size)
+        self.through = jax.random.uniform(self.rngs["Params"], (self.size,self.size))

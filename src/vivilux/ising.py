@@ -3,7 +3,7 @@ from vivilux.activations import ReLu
 from vivilux.learningRules import CHL
 from vivilux.visualize import Monitor
 
-import numpy as np
+import jax.numpy as jnp
 
 class IsingNet(Net):
     '''Ising machine class which has one recurrent Layer of some neuron type
@@ -36,22 +36,22 @@ class IsingNet(Net):
         phaseActivity = []
         for time in range(self.numTimeSteps):
             phaseActivity.append(self.TimeStep())
-        return np.array(phaseActivity)
+        return jnp.array(phaseActivity)
 
     def TimeStep(self):
         layerActivities = []
         for layer in self.layers:
             layerActivities.append(layer.TimeStep())
-        return np.array(layerActivities).reshape(1, -1) #flatten all activity into single timestep
+        return jnp.array(layerActivities).reshape(1, -1) #flatten all activity into single timestep
 
     def Run(self, numPhases, flatten=True):
         phases = []
         for step in range(numPhases):
             phases.append(self.PhaseStep())
         if flatten: #flatten phases into timesteps
-            return np.array(phases).reshape(-1, np.sum([len(lay) for lay in self.layers]))
+            return jnp.array(phases).reshape(-1, jnp.sum(jnp.array([len(lay) for lay in self.layers])))
         else:
-            return np.array(phases)
+            return jnp.array(phases)
 
 
 
@@ -65,23 +65,23 @@ class RingOscillator(Layer):
     def __init__(self, length, activation=ReLu(), name=None, offset=[], EN=[], period=20):
         self.modified = False 
         self.act = activation
-        self.offset = offset if len(offset) > 0 else np.zeros(length)
-        self.EN = EN if len(EN) > 0 else np.ones(length).astype(bool)
+        self.offset = offset if len(offset) > 0 else jnp.zeros(length)
+        self.EN = EN if len(EN) > 0 else jnp.ones(length, dtype=bool)
         self.period = period
 
         self.monitor = None
         self.snapshot = {}
 
         # Initialize layer activities
-        self.excAct = np.zeros(length) # linearly integrated dendritic inputs (internal Activation)
-        self.inhAct = np.zeros(length)
-        self.outAct = np.zeros(length).astype(bool)
-        self.counter = np.array(self.offset) # counts steps since last flip
+        self.excAct = jnp.zeros(length) # linearly integrated dendritic inputs (internal Activation)
+        self.inhAct = jnp.zeros(length)
+        self.outAct = jnp.zeros(length, dtype=bool)
+        self.counter = jnp.array(self.offset) # counts steps since last flip
         self.modified = True
         # Empty initial excitatory and inhibitory meshes
         self.excMeshes: list[Mesh] = []
         self.inhMeshes: list[Mesh] = []
-        self.EXT = np.ones(length).astype(bool)
+        self.EXT = jnp.ones(length, dtype=bool)
         
         self.freeze = False
         self.name =  f"OSC_LAYER_{Layer.count}" if name == None else name
@@ -92,25 +92,25 @@ class RingOscillator(Layer):
             self.excAct -= DELTA_TIME*self.excAct
             self.Integrate()
             DET = self.act(self.excAct) > 0.5 # TIA output above logical threshold
-            EXT = np.logical_not(np.logical_and(DET, self.EN))
-            fallingEdge = np.logical_and(self.EXT, np.logical_not(EXT))
+            EXT = jnp.logical_not(jnp.logical_and(DET, self.EN))
+            fallingEdge = jnp.logical_and(self.EXT, jnp.logical_not(EXT))
             self.EXT = EXT
             # Calculate output activity
             boolAct = self.outAct.astype(bool)
-            self.counter +=1
-            flipMask = self.counter > np.floor(self.period/2)
+            self.counter += 1
+            flipMask = self.counter > jnp.floor(self.period/2)
             # reset counter each time falling edge or flip is true
-            reset = np.logical_or(fallingEdge, flipMask)
-            self.counter *= np.logical_not(reset) 
-            internalOscillation = np.logical_xor(flipMask, boolAct)
-            externalOscillation = np.logical_and(EXT, internalOscillation)
+            reset = jnp.logical_or(fallingEdge, flipMask)
+            self.counter *= jnp.logical_not(reset) 
+            internalOscillation = jnp.logical_xor(flipMask, boolAct)
+            externalOscillation = jnp.logical_and(EXT, internalOscillation)
             self.outAct = externalOscillation
 
         return self.outAct
     
     def Integrate(self):
-        self.excAct = np.zeros(len(self))
-        self.inhAct = np.zeros(len(self))
+        self.excAct = jnp.zeros(len(self))
+        self.inhAct = jnp.zeros(len(self))
         for mesh in self.excMeshes:
             self.excAct += mesh.apply()[:len(self)]
 
@@ -118,8 +118,8 @@ class RingOscillator(Layer):
             self.inhAct += mesh.apply()[:len(self)]
 
     
-    def setEN(self, EN: np.ndarray):
-        self.EN = np.array(EN).astype(bool)
+    def setEN(self, EN: jnp.ndarray):
+        self.EN = jnp.array(EN, dtype=bool)
         self.modified = True
 
     def TimeStep(self):

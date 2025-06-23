@@ -6,10 +6,11 @@ from vivilux.metrics import ThrMSE, ThrSSE
 from vivilux.visualize import StackedMonitor
 
 import pandas as pd
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
 # import tensorflow as tf
-np.random.seed(seed=0)
 
 from copy import deepcopy
 import pathlib
@@ -26,19 +27,22 @@ import time
 
 directory = pathlib.Path(__file__).parent.resolve()
 
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
+
 # Number of Hyperparameter Combinations: 155727 -> 25272 -> 13608 -> 7875
 hyperparameter_values = {
-    'Gi': np.arange(1.3, 2.6, 0.2), # 7
-    'FF': np.arange(0, 1.1, 0.5), # 3
-    'FB': np.arange(0, 1.1, 0.5), # 3
-    'FBTau': np.array([1.4, 3, 5]), # 3
-    'MaxVsAvg': np.array([0, 0.5, 1]), # 3
-    'FF0': np.arange(0, 0.11, 0.05) # 3
+    'Gi': jnp.arange(1.3, 2.6, 0.2), # 7
+    'FF': jnp.arange(0, 1.1, 0.5), # 3
+    'FB': jnp.arange(0, 1.1, 0.5), # 3
+    'FBTau': jnp.array([1.4, 3, 5]), # 3
+    'MaxVsAvg': jnp.array([0, 0.5, 1]), # 3
+    'FF0': jnp.arange(0, 0.11, 0.05) # 3
 }
 
 layerSize = 4
-inputs = np.array(list(product(*[np.arange(0, 1, 0.2)] * layerSize))) # 625 inputs
-identityMesh = np.eye(layerSize)
+inputs = jnp.array(list(product(*[jnp.arange(0, 1, 0.2)] * layerSize))) # 625 inputs
+identityMesh = jnp.eye(layerSize)
 
 inputLayer = Layer(layerSize, isInput=True, name="Input")
 outputLayer = Layer(layerSize, isTarget=True, name="Output")
@@ -72,16 +76,13 @@ for Gi in hyperparameter_values['Gi']:
                         mesh.set(matrix=identityMesh)
 
                         # Number of Inferences: 1557270000
-                        output_vectors = np.array(leabraNet.Infer(input=inputs, verbosity=0)['target'])
-                        # print(output_vector)
-
-                        inL0 = np.count_nonzero(inputs, axis=1)
-                        inL1 = np.linalg.norm(inputs, ord=1, axis=1)
-                        inL2 = np.linalg.norm(inputs, ord=2, axis=1)
-
-                        outL0 = np.count_nonzero(output_vectors, axis=1)
-                        outL1 = np.linalg.norm(output_vectors, ord=1, axis=1)
-                        outL2 = np.linalg.norm(output_vectors, ord=2, axis=1)
+                        output_vectors = jnp.array(leabraNet.Infer(input=inputs, verbosity=0)['target'])
+                        inL0 = jnp.count_nonzero(inputs, axis=1)
+                        inL1 = jnp.linalg.norm(inputs, ord=1, axis=1)
+                        inL2 = jnp.linalg.norm(inputs, ord=2, axis=1)
+                        outL0 = jnp.count_nonzero(output_vectors, axis=1)
+                        outL1 = jnp.linalg.norm(output_vectors, ord=1, axis=1)
+                        outL2 = jnp.linalg.norm(output_vectors, ord=2, axis=1)
                         
 
                         

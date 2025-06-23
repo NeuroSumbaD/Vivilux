@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 from .processes import ActAvg, FFFB
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 
 # import defaults
 from .activations import NoisyXX1
@@ -35,11 +37,10 @@ class Layer:
                  isTarget = False, # Specifies the layer is an output layer
                  clampMax = 0.95,
                  clampMin = 0,
-                #  freeze = False,
-                #  batchMode=False,
-                 dtype = np.float64,
+                 dtype: jnp.dtype = jnp.float64,
                  name = None,
                  neuron: Neuron = YunJhuModel,
+                 rngs: nnx.Rngs = None,
                  ):
         
         self.isFloating = True # Not attached to net
@@ -52,7 +53,7 @@ class Layer:
         self.actFn = activation
         self.rule = learningRule
         self.dtype = dtype
-        
+        self.rngs = rngs
         self.monitors: dict[str, Monitor] = {}
         self.snapshot = {}
 
@@ -65,15 +66,15 @@ class Layer:
         # Initialize layer variables
         self.net = None
 
-        self.GeRaw = np.zeros(length, dtype=self.dtype)
-        self.Ge = np.zeros(length, dtype=self.dtype)
+        self.GeRaw = jnp.zeros(length, dtype=self.dtype)
+        self.Ge = jnp.zeros(length, dtype=self.dtype)
 
-        self.GiRaw = np.zeros(length, dtype=self.dtype)
-        self.GiSyn = np.zeros(length, dtype=self.dtype)
-        self.Gi = np.zeros(length, dtype=self.dtype)
+        self.GiRaw = jnp.zeros(length, dtype=self.dtype)
+        self.GiSyn = jnp.zeros(length, dtype=self.dtype)
+        self.Gi = jnp.zeros(length, dtype=self.dtype)
 
-        self.Act = np.zeros(length, dtype=self.dtype)
-        self.Vm = np.zeros(length, dtype=self.dtype)
+        self.Act = jnp.zeros(length, dtype=self.dtype)
+        self.Vm = jnp.zeros(length, dtype=self.dtype)
 
         # Empty initial excitatory and inhibitory meshes
         self.excMeshes: list[Mesh] = []
@@ -188,7 +189,7 @@ class Layer:
         newAct = self.actFn(self.Ge*Gbar["E"] - geThr)
         
         # Activity below threshold is nearly zero
-        mask = np.logical_and(
+        mask = jnp.logical_and(
             self.Act < self.actFn.VmActThr,
             self.Vm <= self.actFn.Thr
             )
@@ -359,15 +360,15 @@ class Layer:
                 self.debugLog[colName][2].append(time)
 
                 viviluxData = kwargs[colName]
-                self.debugLog[colName][0].append(np.copy(viviluxData))
+                self.debugLog[colName][0].append(jnp.copy(viviluxData))
 
                 leabraData = currentLog[colName].to_numpy()
                 self.debugLog[colName][1].append(leabraData)
                 percentError = 100 * (viviluxData - leabraData) / leabraData
                 mask = leabraData == 0
-                mask = np.logical_and(mask, viviluxData==0)
+                mask = jnp.logical_and(mask, viviluxData==0)
                 percentError[mask] = 0
-                isEqual = np.all(np.abs(percentError) < 2)
+                isEqual = jnp.all(jnp.abs(percentError) < 2)
                 
                 allEqual[colName] = isEqual
 
@@ -381,9 +382,9 @@ class Layer:
             total, hold, update = mesh.GetEnergy(device=synDevice)
             synapticEnergy += total
 
-        return np.sum(self.neuralEnergy), synapticEnergy
+        return jnp.sum(self.neuralEnergy), synapticEnergy
     
-    def SetDtype(self, dtype: np.dtype):
+    def SetDtype(self, dtype: jnp.dtype):
         self.dtype = dtype
         self.GeRaw = self.GeRaw.astype(dtype)
         self.Ge = self.Ge.astype(dtype)

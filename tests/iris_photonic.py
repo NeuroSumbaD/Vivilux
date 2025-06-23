@@ -8,13 +8,16 @@ from vivilux.layers import Layer
 from vivilux.photonics.ph_meshes import SVDMZI
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
-import numpy as np    
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
+
 from sklearn import datasets
 import matplotlib.pyplot as plt
 
 from copy import deepcopy
 
-np.random.seed(20)
+rngs = nnx.Rngs(20)
 
 numEpochs = 50
 inputSize = 25
@@ -23,29 +26,31 @@ outputSize = 25
 patternSize = 6
 numSamples = 25
 
-targetPatterns = np.zeros((3, outputSize))
-targetPatterns[:,:patternSize] = 1
-targetPatterns = np.apply_along_axis(np.random.permutation, axis=1, arr=targetPatterns)
+targetPatterns = jnp.zeros((3, outputSize))
+targetPatterns = targetPatterns.at[:,:patternSize].set(1)
+def permute_row(row, key):
+    return jrandom.permutation(key, row)
+targetPatterns = jnp.stack([permute_row(row, jrandom.fold_in(rngs["Params"], i)) for i, row in enumerate(targetPatterns)])
 
 def sig(x):
-    return 1/(1+np.exp(-10*(x-0.5)))
+    return 1/(1+jnp.exp(-10*(x-0.5)))
 
-def manyHot(arr, numHot):
-    maxIndices = np.argpartition(arr, kth=1, axis=0)[:,:numHot]
-    arr[:] = 0
-    arr[maxIndices] = 1
-    return arr
+def manyHot(arr: jnp.ndarray, numHot: int) -> jnp.ndarray:
+    idx = jnp.argsort(arr, axis=1)[:, -numHot:]
+    out = jnp.zeros_like(arr)
+    row_idx = jnp.arange(arr.shape[0])[:, None]
+    out = out.at[row_idx, idx].set(1)
+    return out
     
 iris = datasets.load_iris()
-inputs = iris.data
-maxMagnitude = np.max(np.sqrt(np.sum(np.square(inputs), axis=1)))
-inputs = inputs/maxMagnitude # bound on (0,1]
-inputs = (np.random.rand(inputSize, 4) @ inputs.T).T # project from 4 dimensional input to inputSize
+inputs = jnp.array(iris.data)
+maxMagnitude = jnp.max(jnp.sqrt(jnp.sum(jnp.square(inputs), axis=1)))
+inputs = inputs/maxMagnitude
+proj_key = rngs["Params"]
+inputs = jnp.dot(jrandom.uniform(proj_key, (inputSize, 4)), inputs.T).T
 inputs = manyHot(inputs, patternSize)
-# Assign targets to target pattern
-targets = np.array([targetPatterns[flower] for flower in iris.target])
-#shuffle both arrays in the same manner
-shuffle = np.random.permutation(len(inputs))
+targets = jnp.array([targetPatterns[flower] for flower in iris.target])
+shuffle = jrandom.permutation(rngs["Params"], len(inputs))
 trainInputs, trainTargets = inputs[shuffle][:numSamples], targets[shuffle][:numSamples]
 evalInputs, evalTargets = inputs[shuffle][numSamples:], targets[shuffle][numSamples:]
 
@@ -64,7 +69,8 @@ leabraRunConfig = {
 }
 
 leabraNet = Net(name = "LEABRA_NET",
-                runConfig=leabraRunConfig) # Default Leabra net
+                runConfig=leabraRunConfig,
+                seed=20) # Default Leabra net
 
 # Add layers
 layerList = [Layer(inputSize, isInput=True, name="Input"),
@@ -100,10 +106,13 @@ result = leabraNet.Learn(input=trainInputs, target=trainTargets,
                          shuffle=False,
                          EvaluateFirst=False,
                          )
-time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
+time = jnp.linspace(0,leabraNet.time, len(result['AvgSSE']))
 plt.plot(time, result['AvgSSE'], label="Leabra Net")
 
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), trainTargets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
+baseline = jnp.mean(jnp.array([
+    ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), trainTargets)
+    for entry in jrandom.uniform(rngs["Params"], (2000,numSamples,inputSize))
+]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Random Input/Output Matching")

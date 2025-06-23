@@ -3,7 +3,10 @@
 
 from time import sleep
 
-import numpy as np
+import jax
+import jax.numpy as jnp
+from flax import nnx
+import numpy as np  # Only for DAQ/hardware boundary conversions
 import nidaqmx
 from mcculw import ul
 
@@ -22,35 +25,28 @@ class HardMZI(MZImesh):
     availablePins = 20
     def __init__(self, *args, updateMagnitude=0.01, mziMapping=[], barMZI = [],
                  inChannels=[12,8,9,10], outChannels=None,
+                 rngs=nnx.Rngs(0),  # Default random number generator
                  **kwargs):
-        Mesh.__init__(self, *args, **kwargs)
-
+        Mesh.__init__(self, *args, rngs=rngs, **kwargs)
         self.numUnits = int(self.size*(self.size-1)/2)
         if len(mziMapping) == 0:
             raise ValueError("Must define MZI mesh mapping with list of "
                              "(board num, channel) mappings")
         self.mziMapping = mziMapping
-        # bound initial voltages to middle of range
-        ## only use 6 phase shifters (for now)
-        self.voltages = np.random.rand(self.numUnits,1)*(HardMZI.upperThreshold/2)
-
-        self.outChannels = np.arange(0, self.size) if outChannels is None else outChannels
+        # Bound initial voltages to half of upperThreshold
+        self.voltages = jnp.array(jax.random.uniform(self.rngs["Params"], (self.numUnits,1))) * (HardMZI.upperThreshold/2)
+        self.outChannels = jnp.arange(0, self.size) if outChannels is None else jnp.array(outChannels)
         self.inGen = InputGenerator(self.size, detectors=inChannels)
-        self.resetDelta = np.zeros((self.size, self.size))
+        self.resetDelta = jnp.zeros((self.size, self.size))
         self.makeBar(barMZI)
-
         self.modified = True
         initMatrix = self.get()
         print('Initialized matrix with voltages: \n', self.voltages)
         print('Matrix: \n', initMatrix)
-
-        # self.numDirections = numDirections
-        numParams = int(np.concatenate([param.flatten() for param in self.getParams()]).size)
-        self.numDirections = int(np.round(0.8*numParams)) # arbitrary guess for how many directions are needed
-        self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
-
-
-        self.records = [] # for recording the convergence of deltas
+        numParams = int(jnp.concatenate([param.flatten() for param in self.getParams()]).size)
+        self.numDirections = int(jnp.round(0.8*numParams)) # arbitrary guess for number of directions
+        self.updateMagnitude = updateMagnitude # magnitude of update step
+        self.records = []
 
 
     def makeBar(self, mzis):
@@ -61,12 +57,10 @@ class HardMZI(MZImesh):
 
 
     def setParams(self, params):
-        '''Sets the current matrix from the phase shifter params.
-        '''
+        '''Sets the current matrix from the phase shifter params.'''
         ps = params[0]
         assert(ps.size == self.numUnits), f"Error: {ps.size} != {self.numUnits}"
         self.voltages = self.BoundParams(params)[0]
-            
         self.modified = True
 
     def setFromParams(self):
@@ -81,45 +75,44 @@ class HardMZI(MZImesh):
         assert params.max() <= self.upperLimit and params.min() >= 0, f"Error params out of bounds: {params}"
         for (dev, chan), volt in zip(self.mziMapping, params.flatten()):
             assert volt >= 0 and volt <= self.upperLimit, f"ERROR voltage out of bounds: {params}"
-            ul.v_out(dev, chan, mcc.ao_range, volt)
+            ul.v_out(dev, chan, mcc.ao_range, float(volt))
 
-        powerMatrix = np.zeros((self.size, self.size)) # for pass by reference
+        powerMatrix = jnp.zeros((self.size, self.size)) # for pass by reference
         powerMatrix = self.measureMatrix(powerMatrix)
         self.resetParams()
         return powerMatrix
 
     def resetParams(self):
         for (dev, chan), volt in zip(self.mziMapping, self.voltages.flatten()):
-            ul.v_out(dev, chan, mcc.ao_range, volt)
+            ul.v_out(dev, chan, mcc.ao_range, float(volt))
     
     def getParams(self):
         return [self.voltages]
     
     def measureMatrix(self, powerMatrix):
         for chan in range(self.size):
-            oneHot = np.zeros(self.size)
-            oneHot[chan] = 1
-            scale = 350/np.max(self.inGen.scalePower(oneHot))
+            oneHot = jnp.zeros(self.size)
+            oneHot = oneHot.at[chan].set(1)
+            scale = 350/jnp.max(self.inGen.scalePower(oneHot))
             # first check min laser power
-            self.inGen(np.zeros(self.size), scale=scale)
+            self.inGen(jnp.zeros(self.size), scale=scale)
             offset = self.readOut()
             offset /= L1norm(self.inGen.readDetectors()) 
             # now offset input vector and normalize result
             self.inGen(oneHot, scale=scale)
             columnReadout = self.readOut()
             columnReadout /= L1norm(self.inGen.readDetectors()) 
-            column = np.maximum(columnReadout - offset, 0) # assume negative values are noise
-            norm = np.sum(np.abs(column)) #L1 norm
+            column = jnp.maximum(columnReadout - offset, 0) # assume negative values are noise
+            norm = jnp.sum(jnp.abs(column)) #L1 norm
             assert norm != 0, f"ERROR: Zero norm on chan={chan} with scale={scale}. Column readout:\n{columnReadout}\nOffset:\n{offset}"
-            powerMatrix[:,chan] = column
-        for col in range(len(powerMatrix)): # re-norm the output
-            powerMatrix[:,col] /= L1norm(powerMatrix[:,col])
+            powerMatrix = powerMatrix.at[:,chan].set(column)
+        for col in range(len(powerMatrix)):
+            powerMatrix = powerMatrix.at[:,col].set(powerMatrix[:,col] / L1norm(powerMatrix[:,col]))
         return powerMatrix
             
     def get(self, params=None):
-        '''Returns full mesh matrix.
-        '''
-        powerMatrix = np.zeros((self.size, self.size))
+        '''Returns full mesh matrix.'''
+        powerMatrix = jnp.zeros((self.size, self.size))
         # Stached change
         if params is not None: # calculate matrix using params
             # return self.Gscale * self.psToMat(params[0])
@@ -127,33 +120,6 @@ class HardMZI(MZImesh):
             assert(params[0].size ==self.numUnits), f"Error: {params[0].size} != {self.numUnits}, params[0]"
             assert params[0].max() <= self.upperLimit and params[0].min() >= 0, f"Error params out of bounds: {params}"
             self.testParams(params[0])
-            # for chan in range(self.size):
-            #     oneHot = np.zeros(self.size)
-            #     oneHot[int(chan)] = 1
-            #     scale = 1#350/np.max(self.inGen.scalePower(oneHot))
-            #     # first offset min laser power
-            #     self.inGen(np.zeros(self.size), scale=scale)
-            #     offset = self.readOut()
-            #     offset /= L1norm(self.inGen.readDetectors()) 
-            #     # print(f"Offset readout: {offset}")
-            #     # print(f"Offset readout: {np.sum(offset)}")
-            #     # now offset input vector and normalize result
-            #     self.inGen(oneHot, scale=scale)
-            #     columnReadout = self.readOut()
-            #     columnReadout /= L1norm(self.inGen.readDetectors()) 
-            #     # print(f"Column readout: {columnReadout}")
-            #     # print(f"Column readout: {np.sum(columnReadout)}")
-
-            #     # column = np.maximum(columnReadout - offset, -0.05)
-            #     column = np.maximum(columnReadout - offset, 0) # assume negative values are noise
-            #     norm = np.sum(np.abs(column)) #L1 norm
-            #     assert norm != 0, f"ERROR: Zero norm on chan={chan} with scale={scale}. Column readout:\n{columnReadout}\nOffset:\n{offset}"
-            #     print(params)
-            #     # column /= norm
-            #     # assert(np.any(np.isnan(column))), f"Error: column readout: {columnReadout}, column: {column}"
-            #     # column /= magnitude(column) #L2 norm
-            #     powerMatrix[:,chan] = column
-            # powerMatrix = powerMatrix @ self.inGen.invScatter
             powerMatrix = self.measureMatrix(powerMatrix)
             self.resetParams()
             return powerMatrix
@@ -168,7 +134,7 @@ class HardMZI(MZImesh):
         return self.Gscale * powerMatrix
     
     def applyTo(self, data):
-        self.inGen(np.zeros(self.size))
+        self.inGen(jnp.zeros(self.size))
         offset = self.readOut()
         self.inGen(data)
         outData = self.readOut() - offset # subtract min laser power
@@ -177,107 +143,91 @@ class HardMZI(MZImesh):
     
     def readOut(self):
         if not hasattr(self, "detectorOffset"):
-            self.inGen.agilent.lasers_on(np.zeros(self.size))
+            self.inGen.agilent.lasers_on(jnp.zeros(self.size))
             sleep(LONG_SLEEP)
             with nidaqmx.Task() as task:
                 for chan in self.outChannels:
-                    task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
+                    task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(int(chan)),min_val=-0.0,
                     max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-                data = np.array(task.read(number_of_samples_per_channel=100))
+                data = np.asarray(task.read(number_of_samples_per_channel=100))
                 data = np.mean(data[:,10:],axis=1)
             self.detectorOffset = data
-            self.inGen.agilent.lasers_on(np.ones(self.size))
+            self.inGen.agilent.lasers_on(jnp.ones(self.size))
             sleep(LONG_SLEEP)
         with nidaqmx.Task() as task:
             for k in self.outChannels:
-                task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(k),min_val=-0.0,
+                task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(int(k)),min_val=-0.0,
                     max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-            data = np.array(task.read(number_of_samples_per_channel=100))
+            data = np.asarray(task.read(number_of_samples_per_channel=100))
             data = np.mean(data[:,10:],axis=1)
-        return np.maximum((self.detectorOffset - data), 0)/220*1e3
+        return jnp.maximum((self.detectorOffset - data), 0)/220*1e3
     
-    def BoundParams(self, params):
-        '''If a param is reaching some threshold of its upper limit, return to zero
-            and step up to find equivalent param (according to its periodicity). Use
-            binary search (somehow)?
-        '''
-        # params[0] = np.maximum(params[0],0)
+    def BoundParams(self, params: list[np.ndarray]) -> list[np.ndarray]:
+        '''If a param is reaching the upper threshold, it is reset to a random value'''
         paramsToReset =  params[0] > HardMZI.upperThreshold
-        paramsToReset = np.logical_or(params[0] < 0, paramsToReset)
-        # print(f"paramsToReset: {paramsToReset}")
-        if np.sum(paramsToReset) > 0: #check if any values need resetting
+        paramsToReset = jnp.logical_or(params[0] < 0, paramsToReset)
+        if jnp.sum(paramsToReset) > 0:
             matrix = self.get()
-            numParams = np.sum(paramsToReset)
-            randomReInit = 2*(np.random.rand(numParams)-0.5) + (self.upperThreshold/2)
-            params[0][paramsToReset] = randomReInit
+            numParams = int(jnp.sum(paramsToReset))
+            randomReInit = 2*(jax.random.uniform(self.rngs["Params"], (numParams,))-0.5) + (self.upperThreshold/2)
+            params0 = params[0].copy()
+            params0 = params0.at[paramsToReset].set(randomReInit)
+            params[0] = params0
             self.resetDelta = self.get(params) - matrix
             print("Reset delta:", self.resetDelta, ", magnitude: ", magnitude(self.resetDelta))
-
         return params
     
-    def matrixGradient(self, voltages: np.ndarray, stepVector = None):
-        '''Calculates the gradient of the matrix with respect to the phase
-            shifters in the MZI mesh. This gradient is with respect to the
-            magnitude of an array of detectors that serves as neural input.
-
-            Returns derivativeMatrix, stepVector
+    def matrixGradient(self, voltages: jnp.ndarray, stepVector = None):
+        '''Calculates the gradient of the matrix with respect to the voltages.
+            Uses finite differences to calculate the gradient.
         '''
         updateMagnitude = self.updateMagnitude
-        stepVector = (np.random.rand(*voltages.shape)-0.5) if stepVector is None else stepVector
-        # stepVector = np.sign(np.random.rand(*voltages.shape)-0.5) if stepVector is None else stepVector
-        randMagnitude = np.sqrt(np.sum(np.square(stepVector)))
+        if stepVector is None:
+            stepVector = jax.random.uniform(self.rngs["Params"], voltages.shape) - 0.5
+        randMagnitude = jnp.sqrt(jnp.sum(jnp.square(stepVector)))
         stepVector = stepVector/randMagnitude
         stepVector = stepVector*updateMagnitude
-        # Push step vector within the bounds
         diffToMax = self.upperLimit - voltages
-        stepVector = np.minimum(stepVector, diffToMax) # prevent plus going over
-        stepVector = np.maximum(stepVector, -diffToMax) # prevent minus going over
-        stepVector = np.maximum(stepVector, -voltages) # prevent minus going under
-        stepVector = np.minimum(stepVector, voltages) # prevent plus going under
-            
-        # print(stepVector)
-        
+        stepVector = jnp.minimum(stepVector, diffToMax)
+        stepVector = jnp.maximum(stepVector, -diffToMax)
+        stepVector = jnp.maximum(stepVector, -voltages)
+        stepVector = jnp.minimum(stepVector, voltages)
         currMat = self.get()
-        derivativeMatrix = np.zeros(currMat.shape)
-
-        # Forward step
+        derivativeMatrix = jnp.zeros(currMat.shape)
         plusVectors = voltages + stepVector
         assert (plusVectors.max() <= self.upperLimit or plusVectors.min() >= 0), f"Error: plus vector out of bounds: {plusVectors}"
         plusMatrix = self.testParams(plusVectors)
-        # Backward step
         minusVectors = voltages - stepVector
         assert (minusVectors.max() <= self.upperLimit or minusVectors.min() >= 0), f"Error: minus vector out of bounds: {minusVectors}"
         minusMatrix = self.testParams(minusVectors)
-
         differenceMatrix = plusMatrix-minusMatrix
         derivativeMatrix = differenceMatrix/updateMagnitude
-        
-
         return derivativeMatrix, stepVector/updateMagnitude
 
 
-    def getGradients(self, delta:np.ndarray, voltages: np.ndarray,
+    def getGradients(self, delta:jnp.ndarray, voltages: jnp.ndarray,
                      numDirections=5, verbose=False):
         # Make column vectors for deltas and theta
         m, n = delta.shape # presynaptic, postsynaptic array lengths
         deltaFlat = delta.flatten().reshape(-1,1)
         thetaFlat = voltages.flatten().reshape(-1,1)
 
-        X = np.zeros((deltaFlat.shape[0], numDirections))
-        V = np.zeros((thetaFlat.shape[0], numDirections))
+        X = jnp.zeros((deltaFlat.shape[0], numDirections))
+        V = jnp.zeros((thetaFlat.shape[0], numDirections))
         
         # Calculate directional derivatives
         for i in range(numDirections):
             if verbose:
                 print(f"\tGetting derivative {i}")
             tempx, tempv= self.matrixGradient(voltages)
-            tempv = np.concatenate([param.flatten() for param in tempv])
-            X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()
+            tempv = jnp.concatenate([param.flatten() for param in tempv])
+            X = X.at[:,i].set(tempx[:n, :m].flatten())
+            V = V.at[:,i].set(tempv.flatten())
 
         return X, V
     
     
-    def ApplyDelta(self, delta: np.ndarray, eta=1, numDirections=3, 
+    def ApplyDelta(self, delta: jnp.ndarray, eta=1, numDirections=3, 
                      numSteps=10, earlyStop = 1e-3, verbose=False):
         '''Uses directional derivatives to find the set of phase shifters which
             implements some change in weights for the matrix. Uses the LSO Analog
@@ -300,9 +250,9 @@ class HardMZI(MZImesh):
             # minimize least squares difference to deltas
             for iteration in range(numDirections):
                     xtx = X.T @ X
-                    rank = np.linalg.matrix_rank(xtx)
+                    rank = jnp.linalg.matrix_rank(np.asarray(xtx))
                     if rank == len(xtx): # matrix will have an inverse
-                        a = np.linalg.inv(xtx) @ X.T @ deltaFlat
+                        a = jnp.linalg.inv(np.asarray(xtx)) @ jnp.asarray(X.T) @ jnp.asarray(deltaFlat)
                         break
                     else: # direction vectors cary redundant information use one less
                         X = X[:,:-1]
@@ -324,7 +274,7 @@ class HardMZI(MZImesh):
                 print(correlate(deltaFlat.flatten(), predDelta.flatten()))
             deltaFlat -= trueDelta.flatten().reshape(-1,1) # substract update
             deltaFlat -= self.resetDelta.flatten().reshape(-1,1) # subtract any delta due to voltage reset
-            self.resetDelta = np.zeros((self.size, self.size)) # reset the reset delta
+            self.resetDelta = jnp.zeros((self.size, self.size)) # reset the reset delta
             self.record.append(magnitude(deltaFlat))
             if verbose: print(f"Magnitude of delta: {magnitude(deltaFlat)}")
             if magnitude(deltaFlat) < earlyStop:

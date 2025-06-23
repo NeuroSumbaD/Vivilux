@@ -9,10 +9,11 @@ from vivilux.layers import Layer
 from vivilux.photonics.ph_meshes import SVDMZI
 from vivilux.metrics import RMSE
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
 from sklearn import datasets
-np.random.seed(seed=0)
 
 from copy import deepcopy
 
@@ -20,8 +21,8 @@ numEpochs = 30
 numSamples = 10
 
 diabetes = datasets.load_diabetes()
-inputs = diabetes.data * 2 + 0.5 # mean at 0.5, +/- 0.4
-targets = diabetes.target
+inputs = jnp.array(diabetes.data) * 2 + 0.5 # mean at 0.5, +/- 0.4
+targets = jnp.array(diabetes.target)
 targets /= targets.max() # normalize output
 targets = targets.reshape(-1, 1) # reshape into 1D vector
 inputs = inputs[:numSamples]
@@ -73,6 +74,7 @@ fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
 print("Initial weights:")
 print(leabraNet.getWeights())
 
+rngs = nnx.Rngs(0)
 result = leabraNet.Learn(input=inputs, target=targets,
                          numEpochs=numEpochs,
                          reset=False,
@@ -81,9 +83,9 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          )
 plt.plot(result, label="CHL")
 
-guessing = [RMSE(entry, targets) for entry in np.random.uniform(size=(2000,442,1))]
-baseline = np.mean(guessing)
-stddev = np.std(guessing)
+guessing = [RMSE(entry, targets) for entry in jrandom.uniform(rngs["Noise"], (2000,442,1))]
+baseline = jnp.mean(jnp.array(guessing))
+stddev = jnp.std(jnp.array(guessing))
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 print(f"Baseline guessing: {baseline}, std dev: {stddev}")
 

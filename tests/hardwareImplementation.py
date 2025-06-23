@@ -5,8 +5,9 @@ from vivilux.learningRules import CHL
 from vivilux.optimizers import Simple
 
 import matplotlib.pyplot as plt
-import numpy as np
-np.random.seed(seed=0)
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 
 from sklearn import datasets
 
@@ -26,6 +27,8 @@ optArgs = {"lr" : 0.1,
             "beta2": 0.999,
             "epsilon": 1e-08}
 
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
 netCHL_MZI = RecurNet([
         Layer(4, isInput=True),
@@ -38,8 +41,9 @@ netCHL_MZI = RecurNet([
     name = "Net_CHL(MZI)")
 
 
-oneHot = np.zeros(4)
-oneHot[0]=1
+# JAX one-hot encoding
+oneHot = jnp.zeros(4)
+oneHot = oneHot.at[0].set(1)
 
 mesh = netCHL_MZI.layers[1].excMeshes[0]
 targetMesh = netCHL_MZI.layers[2].excMeshes[0]
@@ -48,27 +52,27 @@ toMat = mesh.psToMat
 
 # assume 10V is 2.5*pi phase shift
 ## phase shift is related to power so use voltage squared
-a = 10**2/(2.5*np.pi) 
+a = 10**2/(2.5*jnp.pi) 
 
 ps = mesh.phaseShifters
 ps2 = targetMesh.phaseShifters # target phsae shifter values
-v = np.sqrt(ps/a) # get initial voltages
-v2 = np.sqrt(ps2/a)
+v = jnp.sqrt(ps/a) # get initial voltages
+v2 = jnp.sqrt(ps2/a)
 
 def vToPs(voltages):
-    return a * np.square(voltages)
+    return a * jnp.square(voltages)
 
 def psToV(phaseShifts):
-    return np.sqrt(phaseShifts/a)
+    return jnp.sqrt(phaseShifts/a)
 
 def vToMat(voltages):
     return toMat(vToPs(voltages))
 
 def fieldToPower(weights):
-    return np.square(np.abs(weights))
+    return jnp.square(jnp.abs(weights))
 
 mat = fieldToPower(vToMat(v))
-targetMat = np.array([[0,0,0,1],
+targetMat = jnp.array([[0,0,0,1],
                       [0,0,1,0],
                       [0,1,0,0],
                       [1,0,0,0]])
@@ -82,13 +86,13 @@ def matrixGradient(phaseShifters, stepVector = None, updateMagnitude=0.01):
             Returns derivativeMatrix, stepVector
         '''
         
-        stepVector = np.random.rand(*phaseShifters.shape) if stepVector is None else stepVector
-        randMagnitude = np.sqrt(np.sum(np.square(stepVector)))
+        stepVector = jrandom.uniform(rngs, phaseShifters.shape) if stepVector is None else stepVector
+        randMagnitude = jnp.sqrt(jnp.sum(jnp.square(stepVector)))
         stepVector = stepVector/randMagnitude
         stepVector = stepVector*updateMagnitude
         
         currMat = toMat(phaseShifters)
-        derivativeMatrix = np.zeros(currMat.shape)
+        derivativeMatrix = jnp.zeros(currMat.shape)
 
         # Forward step
         plusVectors = phaseShifters + stepVector 
@@ -103,32 +107,32 @@ def matrixGradient(phaseShifters, stepVector = None, updateMagnitude=0.01):
         return derivativeMatrix, stepVector/updateMagnitude
 
 
-def getGradients(delta:np.ndarray, phaseShifters: np.ndarray, numDirections=5):
+def getGradients(delta: jnp.ndarray, phaseShifters: jnp.ndarray, numDirections=5):
         # Make column vectors for deltas and theta
         m, n = delta.shape # presynaptic, postsynaptic array lengths
         deltaFlat = delta.flatten().reshape(-1,1)
         thetaFlat = phaseShifters.flatten().reshape(-1,1)
 
-        X = np.zeros((deltaFlat.shape[0], numDirections))
-        V = np.zeros((thetaFlat.shape[0], numDirections))
+        X = jnp.zeros((deltaFlat.shape[0], numDirections))
+        V = jnp.zeros((thetaFlat.shape[0], numDirections))
         
         # Calculate directional derivatives
         for i in range(numDirections):
             tempx, tempv= matrixGradient(phaseShifters)
-            tempv = np.concatenate([param.flatten() for param in tempv])
+            tempv = jnp.concatenate([param.flatten() for param in tempv])
             X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()
 
         return X, V
 
 def correlate(a, b):
-    magA = np.sqrt(np.sum(np.square(a)))
-    magB = np.sqrt(np.sum(np.square(b)))
-    return np.dot(a,b)/(magA*magB)
+    magA = jnp.sqrt(jnp.sum(jnp.square(a)))
+    magB = jnp.sqrt(jnp.sum(jnp.square(b)))
+    return jnp.dot(a,b)/(magA*magB)
 
 def magnitude(a):
-    return np.sqrt(np.sum(np.square(a)))
+    return jnp.sqrt(jnp.sum(jnp.square(a)))
 
-def stepGradient(delta: np.ndarray, phaseShifters: np.ndarray, eta=0.5, numDirections=5, numSteps=5):
+def stepGradient(delta: jnp.ndarray, phaseShifters: jnp.ndarray, eta=0.5, numDirections=5, numSteps=5):
     '''Calculate gradients and step towards desired delta.
     '''
     deltaFlat = delta.copy().flatten().reshape(-1,1)
@@ -143,9 +147,9 @@ def stepGradient(delta: np.ndarray, phaseShifters: np.ndarray, eta=0.5, numDirec
         # minimize least squares difference to deltas
         for iteration in range(numDirections):
                 xtx = X.T @ X
-                rank = np.linalg.matrix_rank(xtx)
+                rank = jnp.linalg.matrix_rank(xtx)
                 if rank == len(xtx): # matrix will have an inverse
-                    a = np.linalg.inv(xtx) @ X.T @ deltaFlat
+                    a = jnp.linalg.inv(xtx) @ X.T @ deltaFlat
                     break
                 else: # direction vectors cary redundant information use one less
                     X = X[:,:-1]
@@ -187,6 +191,7 @@ plt.ylabel("Magnitude of delta")
 plt.show()
 
 
+# --- JAX refactor for remaining legacy NumPy code in commented block ---
 # totNumIter = []
 # totStdNumIter = []
 # etas = [0.01, 0.05, 0.1, 0.25, 0.5, 1]
@@ -196,27 +201,27 @@ plt.show()
 # for eta in etas:
 #     print(f"Solvings eta={eta}...")
 #     numDeltas = 30
-#     magnitudes = np.logspace(-2.9,-1, 50)
+#     magnitudes = jnp.logspace(-2.9,-1, 50)
 #     numIter = []
 #     stdNumIter = []
 #     eta = 1
 #     print("Testing magnitude vs number of iterations to converge to delta < 1e-3")
 #     for mag in magnitudes:
 #         print(f"\tSolving magnitude={mag}...")
-#         deltas = [delta-np.mean(delta) for delta in np.random.rand(numDeltas,4,4)]
-#         deltas = np.array([delta/magnitude(delta) for delta in deltas]) #normalize magnitudes
+#         deltas = [delta-jnp.mean(delta) for delta in jrandom.uniform(rngs, (numDeltas,4,4))]
+#         deltas = jnp.array([delta/magnitude(delta) for delta in deltas]) #normalize magnitudes
 #         deltas *= mag
 #         numIterMag = []
 #         for delta in deltas:
 #             newMat, newPs, record = stepGradient(delta, ps, eta=eta, numSteps=2000, numDirections=10)
 #             numIterMag.append(len(record))
-
-#         numIter.append(np.mean(numIterMag))
-#         stdNumIter.append(np.std(numIterMag))
+#
+#         numIter.append(jnp.mean(jnp.array(numIterMag)))
+#         stdNumIter.append(jnp.std(jnp.array(numIterMag)))
 #     totNumIter.append(numIter)
 #     totStdNumIter.append(stdNumIter)
 #     plt.errorbar(magnitudes, numIter, yerr=stdNumIter)
-
+#
 # plt.title(f"Number of iterations vs magnitude of delta (eta={eta})")
 # plt.xlabel("Delta magnitude")
 # plt.ylabel("Number of iterations")

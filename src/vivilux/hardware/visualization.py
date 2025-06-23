@@ -1,8 +1,10 @@
 '''Submodule abstracting live visualizations of hardware data.
 '''
 
-import numpy as np
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import jax
+from flax import nnx
 
 class HeatmapVisualizer:
     def __init__(self, shape=(10, 10), cmap='viridis', vmin=0, vmax=1,
@@ -24,7 +26,7 @@ class HeatmapVisualizer:
         - scaling: If True, dynamically scale the color limits based on data.
         """
         self.shape = shape
-        self.data = np.zeros(shape)
+        self.data = jnp.zeros(shape)
         self.vmin = vmin
         self.vmax = vmax
         self.scaling = scaling
@@ -42,20 +44,21 @@ class HeatmapVisualizer:
         plt.ion()  # Turn on interactive mode
         plt.show()
 
-    def update(self, new_data):
+    def update(self, new_data: jnp.ndarray):
         """
         Update the heatmap with new data.
 
         Parameters:
-        - new_data: A NumPy array of the same shape as initialized.
+        - new_data: A JAX array of the same shape as initialized.
         """
         if new_data.shape != self.shape:
             raise ValueError(f"Expected shape {self.shape}, got {new_data.shape}")
         self.data = new_data
-        self.im.set_data(self.data)
+        # If matplotlib requires numpy array, convert here:
+        self.im.set_data(jnp.asarray(self.data))
         if self.scaling:
-            self.vmin = np.min(new_data)
-            self.vmax = np.max(new_data)
+            self.vmin = float(jnp.min(new_data))
+            self.vmax = float(jnp.max(new_data))
             self.im.set_clim(vmin=self.vmin, vmax=self.vmax)  # Optional dynamic scaling
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
@@ -66,8 +69,8 @@ if __name__ == "__main__":
     vis = HeatmapVisualizer(shape=(6, 7), vmin=0, vmax=100,
                             xlabel="Column Index", ylabel="Row Index",
                             clabel="Intensity", origin='upper')
-
+    rngs = nnx.Rngs(jax.random.PRNGKey(0))
     for i in range(20):
-        data = np.random.randint(0, 100, (6, 7))
+        data = jax.random.randint(rngs['Noise'], (6, 7), 0, 100)
         vis.update(data)
         time.sleep(0.5)

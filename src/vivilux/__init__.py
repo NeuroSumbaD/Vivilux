@@ -27,9 +27,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 import math
 
-import numpy as np
-np.random.seed(seed=0)
-
 # from .nets import *
 # from .layers import *
 # from .meshes import *

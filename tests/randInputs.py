@@ -4,11 +4,11 @@ from vivilux.layers import Layer
 from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
 # import tensorflow as tf
-np.random.seed(seed=0)
-# np.seterr(all='raise')
 
 from copy import deepcopy
 
@@ -20,13 +20,16 @@ outputSize = 25
 patternSize = 6
 numSamples = 25
 
+# Set up stateful RNGs
+rngs = nnx.Rngs(0)
+
 #define input and output data (must be one-hot encoded)
-inputs = np.zeros((numSamples, inputSize))
-inputs[:,:patternSize] = 1
-inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
-targets = np.zeros((numSamples, outputSize))
-targets[:,:patternSize] = 1
-targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
+inputs = jnp.zeros((numSamples, inputSize))
+inputs = inputs.at[:,:patternSize].set(1)
+inputs = jnp.stack([inputs[i][jrandom.permutation(rngs["Params"], inputSize)] for i in range(numSamples)])
+targets = jnp.zeros((numSamples, outputSize))
+targets = targets.at[:,:patternSize].set(1)
+targets = jnp.stack([targets[i][jrandom.permutation(rngs["Params"], outputSize)] for i in range(numSamples)])
 
 leabraRunConfig = {
     "DELTA_TIME": 0.001,
@@ -43,7 +46,8 @@ leabraRunConfig = {
 }
 
 leabraNet = Net(name = "LEABRA_NET",
-                runConfig=leabraRunConfig) # Default Leabra net
+                runConfig=leabraRunConfig,
+                seed=0) # Default Leabra net
 
 # Add layers
 layerList = [Layer(inputSize, isInput=True, name="Input"),
@@ -72,28 +76,11 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          shuffle=False,
                          EvaluateFirst=False,
                          )
-time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
+time = jnp.linspace(0,leabraNet.time, len(result['AvgSSE']))
 plt.plot(time, result['AvgSSE'], label="Leabra Net")
 
-
-
-# sig = lambda x: tf.math.sigmoid(10*(x-0.5))
-# refModel = tf.keras.models.Sequential([
-#     tf.keras.layers.InputLayer(input_shape=(4,)),
-#     tf.keras.layers.Dense(4, use_bias=False, activation=sig),
-#     tf.keras.layers.Dense(4, use_bias=False, activation=sig),
-# ])
-# refModel.compile(optimizer=tf.keras.optimizers.SGD(0.001084),
-#                  loss = "mae",
-#                  metrics = "mse"
-# )
-
-# refResult = np.sqrt(refModel.fit(inputs, targets, epochs=numEpochs, batch_size=1).history["mse"])
-# plt.plot(refResult, label="SGD")
-
-
-
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
+# Baseline guessing (JAX version)
+baseline = jnp.mean(jnp.array([ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), targets) for entry in jrandom.uniform(rngs["Noise"], (2000,numSamples,inputSize))]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Random Input/Output Matching")
@@ -108,9 +95,9 @@ print("Done")
 predictions = leabraNet.outputs["target"]
 
 for index in range(len(targets)):
-    inp = inputs[index].reshape(5,5)
-    prediction = predictions[index].reshape(5,5)
-    target = targets[index].reshape(5,5)
+    inp = jnp.array(inputs[index]).reshape(5,5)
+    prediction = jnp.array(predictions[index]).reshape(5,5)
+    target = jnp.array(targets[index]).reshape(5,5)
     fig = plt.figure()
     ax = fig.subplots(1,3)
     ax[0].imshow(inp)

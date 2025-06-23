@@ -6,10 +6,14 @@ from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 from vivilux.visualize import Magnitude
 
 import matplotlib.pyplot as plt
-import numpy as np
-np.random.seed(seed=0)
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 
 from copy import deepcopy
+
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
 numEpochs = 50
 inputSize = 25
@@ -19,12 +23,15 @@ patternSize = 6
 numSamples = 25
 
 #define input and output data (must be one-hot encoded)
-inputs = np.zeros((numSamples, inputSize))
-inputs[:,:patternSize] = 1
-inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
-targets = np.zeros((numSamples, outputSize))
-targets[:,:patternSize] = 1
-targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
+inputs = jnp.zeros((numSamples, inputSize))
+inputs = inputs.at[:,:patternSize].set(1)
+perm_rngs = jrandom.split(rngs['Params'], numSamples)
+def permute_row(row, rng):
+    return jnp.array(jrandom.permutation(rng, row))
+inputs = jnp.stack([permute_row(inputs[i], perm_rngs[i]) for i in range(numSamples)])
+targets = jnp.zeros((numSamples, outputSize))
+targets = targets.at[:,:patternSize].set(1)
+targets = jnp.stack([permute_row(targets[i], perm_rngs[i]) for i in range(numSamples)])
 
 plt.ion()
 leabraNet = Net(name = "LEABRA_NET",

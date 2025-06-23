@@ -8,7 +8,7 @@ if TYPE_CHECKING:
 
 from abc import ABC, abstractmethod
 
-import numpy as np
+import jax.numpy as jnp
 
 # import defaults
 # from .activations import Sigmoid
@@ -60,7 +60,7 @@ class FFFB(NeuralProcess):
 
     def AttachLayer(self, layer: Layer):
         self.pool = layer
-        self.poolAct = np.zeros(len(layer))
+        self.poolAct = jnp.zeros(len(layer))
         self.FFFBparams = layer.FFFBparams
 
         self.fbi = 0
@@ -70,13 +70,13 @@ class FFFB(NeuralProcess):
     def StepTime(self):
         FFFBparams = self.FFFBparams
         poolGe = self.pool.Ge
-        avgGe = np.mean(poolGe)
-        maxGe = np.max(poolGe)
-        avgAct = np.mean(self.poolAct)
+        avgGe = jnp.mean(poolGe)
+        maxGe = jnp.max(poolGe)
+        avgAct = jnp.mean(self.poolAct)
 
         # Scalar feedforward inhibition proportional to max and avg Ge
         ffNetin = avgGe + FFFBparams["MaxVsAvg"] * (maxGe - avgGe)
-        ffi = FFFBparams["FF"] * np.maximum(ffNetin - FFFBparams["FF0"], 0)
+        ffi = FFFBparams["FF"] * jnp.maximum(ffNetin - FFFBparams["FF0"], 0)
 
         # Scalar feedback inhibition based on average activity in the pool
         self.fbi += FFFBparams["FBDt"] * FFFBparams["FB"] * (avgAct - self.fbi)
@@ -158,14 +158,14 @@ class ActAvg(PhasicProcess):
         # layer.phaseProcesses.append(self) # Layer calls this directly at trial start
 
         # Pre-allocate Numpy
-        self.AvgSS = np.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgS = np.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgM = np.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgL = np.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgSS = jnp.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgS = jnp.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgM = jnp.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgL = jnp.zeros(len(self.pool), dtype=layer.dtype)
 
-        self.AvgSLrn = np.zeros(len(self.pool), dtype=layer.dtype)
-        self.ModAvgLLrn = np.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgLLrn = np.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgSLrn = jnp.zeros(len(self.pool), dtype=layer.dtype)
+        self.ModAvgLLrn = jnp.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgLLrn = jnp.zeros(len(self.pool), dtype=layer.dtype)
 
         self.InitAct()
 
@@ -194,15 +194,15 @@ class ActAvg(PhasicProcess):
             return
 
         plus = self.pool.phaseHist["plus"]
-        plus -= np.mean(plus)
-        magPlus = np.sum(np.square(plus))
+        plus -= jnp.mean(plus)
+        magPlus = jnp.sum(jnp.square(plus))
 
         minus = self.pool.phaseHist["minus"]
-        minus -= np.mean(minus)
-        magMinus = np.sum(np.square(minus))
+        minus -= jnp.mean(minus)
+        magMinus = jnp.sum(jnp.square(minus))
 
-        cosv = np.dot(plus, minus)
-        dist = np.sqrt(magPlus*magMinus)
+        cosv = jnp.dot(plus, minus)
+        dist = jnp.sqrt(magPlus*magMinus)
         cosv = cosv/dist if dist != 0 else cosv
 
         if self.layCosDiffAvg == 0:
@@ -210,7 +210,7 @@ class ActAvg(PhasicProcess):
         else:
             self.layCosDiffAvg += self.ActPAvg_Dt * (cosv - self.layCosDiffAvg)
         
-        self.ModAvgLLrn = np.maximum(1 - self.layCosDiffAvg, self.ModMin)
+        self.ModAvgLLrn = jnp.maximum(1 - self.layCosDiffAvg, self.ModMin)
 
 
     def InitTrial(self):
@@ -224,12 +224,12 @@ class ActAvg(PhasicProcess):
     def UpdateAvgL(self):
         '''Updates AvgL, and initializes AvgLLrn'''
         self.AvgL += self.Dt * (self.Gain * self.AvgM - self.AvgL)
-        self.AvgL = np.maximum(self.AvgL, self.Min)
+        self.AvgL = jnp.maximum(self.AvgL, self.Min)
         self.AvgLLrn = self.LrnFact * (self.AvgL - self.Min)
 
     def UpdateActPAvg(self):
         '''Update plus phase ActPAvg and ActPAvgEff'''
-        Act = np.mean(self.pool.getActivity())
+        Act = jnp.mean(self.pool.getActivity())
         if Act >= 0.0001:
             self.ActPAvg += 0.5 * (Act-self.ActPAvg) if self.UseFirst else self.ActPAvg_Dt * (Act-self.ActPAvg)
         self.ActPAvgEff = self.ActPAvg_Adjust * self.ActPAvg if not self.Fixed else self.Init
@@ -291,15 +291,15 @@ class XCAL(PhasicProcess):
         sndLayerLen = len(self.send)
         rcvLayerLen = len(self.recv)
 
-        self.Norm = np.zeros((rcvLayerLen, sndLayerLen))
-        self.moment = np.zeros((rcvLayerLen, sndLayerLen))
+        self.Norm = jnp.zeros((rcvLayerLen, sndLayerLen))
+        self.moment = jnp.zeros((rcvLayerLen, sndLayerLen))
 
     def Reset(self):
         self.Init()
 
     def GetDeltas(self,
                   dwtLog = None,
-                  ) -> np.ndarray:
+                  ) -> jnp.ndarray:
         if self.recv.isTarget:
             dwt = self.ErrorDriven()
         else:
@@ -310,8 +310,8 @@ class XCAL(PhasicProcess):
         if self.hasNorm:
             # it seems like norm must be calculated first, but applied after 
             ## momentum (if applicable).
-            self.Norm = np.maximum(self.DecayDt * self.Norm, np.abs(dwt))
-            norm = self.Norm_LrComp / np.maximum(self.Norm, self.normMin)
+            self.Norm = jnp.maximum(self.DecayDt * self.Norm, jnp.abs(dwt))
+            norm = self.Norm_LrComp / jnp.maximum(self.Norm, self.normMin)
             norm[self.Norm==0] = 1
             # TODO understand what prjn.go:607-620 is doing...
             # TODO enable custom norm procedure (L1, L2, etc.)
@@ -354,24 +354,24 @@ class XCAL(PhasicProcess):
                 if key == "dwtLog": continue
                 self.vlDwtLog[key] = kwargs[key]
 
-    def xcal(self, x: np.ndarray, th) -> np.ndarray:
+    def xcal(self, x: jnp.ndarray, th) -> jnp.ndarray:
         '''"Check mark" linearized BCM-style learning rule which calculates
             describes the calcium concentration versus change in synaptic
             efficacy curve. This is proportional to change in weight strength
             versus the activity of sending and receiving neuron for a single
             synapse.
         '''
-        out = np.zeros(x.shape)
+        out = jnp.zeros(x.shape)
         
         cond1 = x < self.DThr
-        not1 = np.logical_not(cond1)
+        not1 = jnp.logical_not(cond1)
         mask1 = cond1
 
         cond2 = (x > th * self.DRev)
-        mask2 = np.logical_and(cond2, not1)
-        not2 = np.logical_not(cond2)
+        mask2 = jnp.logical_and(cond2, not1)
+        not2 = jnp.logical_not(cond2)
 
-        mask3 = np.logical_and(not1, not2)
+        mask3 = jnp.logical_and(not1, not2)
 
         # (x < DThr) ? 0 : (x > th * DRev) ? (x - th) : (-x * ((1-DRev)/DRev))
         out[mask1] = 0
@@ -380,44 +380,42 @@ class XCAL(PhasicProcess):
 
         return out
 
-    def ErrorDriven(self) -> np.ndarray:
+    def ErrorDriven(self) -> jnp.ndarray:
         '''Calculates an error-driven learning weight update based on the
             contrastive hebbian learning (CHL) rule.
         '''
         send = self.send.ActAvg
         recv = self.recv.ActAvg
-        srs = recv.AvgSLrn[:,np.newaxis] @ send.AvgSLrn[np.newaxis,:]
-        srm = recv.AvgM[:,np.newaxis] @ send.AvgM[np.newaxis,:]
+        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
+        srm = recv.AvgM[:,jnp.newaxis] @ send.AvgM[jnp.newaxis,:]
         dwt = self.xcal(srs, srm)
 
         return dwt
 
-    def BCM(self) -> np.ndarray:
+    def BCM(self) -> jnp.ndarray:
         send = self.send.ActAvg
         recv = self.recv.ActAvg
-        srs = recv.AvgSLrn[:,np.newaxis] @ send.AvgSLrn[np.newaxis,:]
-        AvgL = np.repeat(recv.AvgL[:,np.newaxis], len(self.send), axis=1)
+        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
+        AvgL = jnp.repeat(recv.AvgL[:,jnp.newaxis], len(self.send), axis=1)
         dwt = self.xcal(srs, AvgL)
 
         return dwt
 
-    def MixedLearn(self) -> np.ndarray:
+    def MixedLearn(self) -> jnp.ndarray:
         send = self.send.ActAvg
         recv = self.recv.ActAvg
         AvgLLrn = recv.AvgLLrn
-        srs = recv.AvgSLrn[:,np.newaxis] @ send.AvgSLrn[np.newaxis,:]
-        srm = recv.AvgM[:,np.newaxis] @ send.AvgM[np.newaxis,:]
-        AvgL = np.repeat(recv.AvgL[:,np.newaxis], len(self.send), axis=1)
+        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
+        srm = recv.AvgM[:,jnp.newaxis] @ send.AvgM[jnp.newaxis,:]
+        AvgL = jnp.repeat(recv.AvgL[:,jnp.newaxis], len(self.send), axis=1)
 
         errorDriven = self.xcal(srs, srm)
         hebbLike = self.xcal(srs, AvgL)
-        hebbLike = hebbLike * AvgLLrn[:,np.newaxis] # mult each recv by AvgLLrn
+        hebbLike = hebbLike * AvgLLrn[:,jnp.newaxis]
         dwt = errorDriven + hebbLike
 
-        # Threshold learning for synapses above threshold
         mask1 = send.AvgS < self.LrnThr
         mask2 = send.AvgM < self.LrnThr
-        cond = np.logical_and(mask1, mask2)
-        dwt[:,cond] = 0
-        
-        return dwt  
+        cond = jnp.logical_and(mask1, mask2)
+        dwt = dwt.at[:,cond].set(0)
+        return dwt

@@ -6,17 +6,14 @@ from vivilux.learningRules import CHL
 from vivilux.optimizers import Simple
 
 import matplotlib.pyplot as plt
-import numpy as np
-np.random.seed(seed=0)
-
-# from sklearn import datasets
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 
 from datetime import timedelta
 from time import time, sleep
 
-# np.set_printoptions(precision=3, suppress=True)
-
-
+# mziMapping and barMZI definitions
 mziMapping = [(1,0),
               (1,1),
               (1,3),
@@ -38,16 +35,16 @@ meshArgs = {"mziMapping": mziMapping,
             # "outChannels": [13, 0, 1, 2],
             "outChannels": [2, 1, 0, 13],
             "inChannels": [10,9,8,12],
-            # "inChannels": [12,8,9,10],
             "updateMagnitude": 0.1,
-            # "updateMagnitude": 0.5,
             }
+
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
 netCHL_MZI = RecurNet([
         Layer(4, isInput=True),
         Layer(4, learningRule=CHL),
     ], vl.hardware.HardMZI, FeedbackMesh=vl.photonics.phfbMesh,
-    # optimizer = Adam,
     optimizer = Simple,
     optArgs = optArgs,
     meshArgs=meshArgs,
@@ -58,22 +55,22 @@ mesh = netCHL_MZI.layers[1].excMeshes[0]
 
 inGen = mesh.inGen
 
-perm1 = np.array([[0.,0.,0.,1.],
+perm1 = jnp.array([[0.,0.,0.,1.],
                   [0.,0.,1.,0],
                   [0.,1.,0.,0],
                   [1.,0.,0.,0.]])
 
-perm2 = np.array([[0.,1.,0.,0],
+perm2 = jnp.array([[0.,1.,0.,0],
                   [0.,0.,1.,0],
                   [0.,0.,0.,1.],
                   [1.,0.,0.,0.]])
 
-perm3 = np.array([[0.,0.,1.,0],
+perm3 = jnp.array([[0.,0.,1.,0],
                   [0.,0.,0.,1.],
                   [1.,0.,0.,0.],
                   [0.,1.,0.,0]])
 
-perm4 = np.array([[0.,0.,0.,1.],
+perm4 = jnp.array([[0.,0.,0.,1.],
                   [1.,0.,0.,0.],
                   [0.,1.,0.,0],
                   [0.,0.,1.,0]])
@@ -86,7 +83,7 @@ successes = []
 for iteration in range(3):
     print(f"Iteration: {iteration}")
     for targetMatrix in permutations:
-        mesh.setParams([0.5*np.random.rand(6,1)+2])
+        mesh.setParams([0.5*jrandom.uniform(rngs, (6,1)) + 2])
         startMatrix = mesh.get()
         print(f"Initial (random) matrix:\n{startMatrix}")
         print(f"Initial voltages: {mesh.getParams()}")

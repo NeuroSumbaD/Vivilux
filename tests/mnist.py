@@ -10,11 +10,12 @@ from vivilux.layers import Layer
 from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
 from keras.datasets import mnist
 from skimage.measure import block_reduce
-np.random.seed(seed=0)
 
 from copy import deepcopy
 
@@ -22,14 +23,14 @@ numSamples = 4000
 numEpochs = 100
 (train_X, train_y), (test_X, test_y) = mnist.load_data()
 
-inputs = block_reduce(train_X[:numSamples], (1, 4,4), np.mean) #truncate for training
+rngs = nnx.Rngs(0)
+inputs = block_reduce(train_X[:numSamples], (1, 4,4), jnp.mean) #truncate for training
 inputs = inputs.reshape(len(inputs), -1)/255 # flatten images and normalize
 inputSize = len(inputs[0])
-
 targets = train_y[:numSamples]
-oneHotTargets = np.zeros((len(targets), 10))
+oneHotTargets = jnp.zeros((len(targets), 10))
 for index, number in enumerate(targets):
-    oneHotTargets[index, number] = 1
+    oneHotTargets = oneHotTargets.at[index, number].set(1)
 
 del train_X, train_y, test_X, test_y
 del mnist
@@ -77,7 +78,10 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          EvaluateFirst=False,
                          )
 
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
+baseline = jnp.mean(jnp.array([
+    ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), targets)
+    for entry in jrandom.uniform(rngs["Noise"], (2000,numSamples,inputSize))
+]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("MNIST Classification")

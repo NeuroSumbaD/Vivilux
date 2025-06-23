@@ -4,7 +4,6 @@ import jax
 from jax import lax
 from flax.nnx.nn.linear import _conv_dimension_numbers, default_kernel_init, default_bias_init, canonicalize_padding
 from flax.nnx.nn import dtypes
-import numpy as np
 
 import typing as tp
 from functools import partial

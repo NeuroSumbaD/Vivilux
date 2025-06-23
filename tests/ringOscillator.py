@@ -2,7 +2,7 @@ import vivilux as vl
 from vivilux import ising
 from vivilux import photonics
 
-import numpy as np
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 offsets = [1, 6, 7, 5]
@@ -17,7 +17,7 @@ isingMachine = ising.IsingNet([
     name="Ising Machine")
 
 mesh = isingMachine.layers[0].excMeshes[0]
-mesh.matrix = np.array([[0, 1, 0, 0],
+mesh.matrix = jnp.array([[0, 1, 0, 0],
                         [1, 0, 0, 0],
                         [0, 0, 0, 1],
                         [0, 0, 1, 0]])
@@ -26,7 +26,7 @@ plt.ioff()
 results = isingMachine.Run(5)
 
 size = len(ringOscillator)
-tier = np.arange(size)
+tier = jnp.arange(size)
 plt.plot(results + tier)
 plt.title("Oscillation without external input")
 plt.legend(tier)

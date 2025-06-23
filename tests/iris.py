@@ -6,13 +6,13 @@ from vivilux.layers import Layer
 from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
-import numpy as np    
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 from sklearn import datasets
 import matplotlib.pyplot as plt
 
 from copy import deepcopy
-
-np.random.seed(20)
 
 numEpochs = 50
 inputSize = 25
@@ -21,38 +21,33 @@ outputSize = 25
 patternSize = 6
 numSamples = 25
 
-targetPatterns = np.zeros((3, outputSize))
-targetPatterns[:,:patternSize] = 1
-targetPatterns = np.apply_along_axis(np.random.permutation, axis=1, arr=targetPatterns)
+rngs = nnx.Rngs(20)
+
+# Target patterns
+targetPatterns = jnp.zeros((3, outputSize))
+targetPatterns = targetPatterns.at[:,:patternSize].set(1)
+targetPatterns = jnp.stack([targetPatterns[i][jrandom.permutation(rngs["Params"], outputSize)] for i in range(3)])
 
 def sig(x):
-    return 1/(1+np.exp(-10*(x-0.5)))
+    return 1/(1+jnp.exp(-10*(x-0.5)))
 
 def manyHot(arr, numHot):
-    maxIndices = np.argpartition(arr, kth=1, axis=0)[:,:numHot]
-    arr[:] = 0
-    arr[maxIndices] = 1
+    arr = arr.copy()
+    maxIndices = jnp.argpartition(arr, kth=1, axis=0)[:,:numHot]
+    arr = arr.at[:].set(0)
+    arr = arr.at[maxIndices].set(1)
     return arr
-    # for row in len(arr):
-    #     maxIndices = [0]
-    #     for col, item in enumerate(arr[row]):
-    #         check = [item > arr[row, ind] for ind in maxIndices]
-    #         if np.sum(check) > 0:
-
-    #     arr[:] = 0
-    #     arr[row, maxIndices] = 1
 
 iris = datasets.load_iris()
-inputs = iris.data
-maxMagnitude = np.max(np.sqrt(np.sum(np.square(inputs), axis=1)))
+inputs = jnp.array(iris.data)
+maxMagnitude = jnp.max(jnp.sqrt(jnp.sum(jnp.square(inputs), axis=1)))
 inputs = inputs/maxMagnitude # bound on (0,1]
-inputs = (np.random.rand(inputSize, 4) @ inputs.T).T # project from 4 dimensional input to inputSize
+inputs = (jrandom.uniform(rngs["Params"], (inputSize, 4)) @ inputs.T).T # project from 4D input to inputSize
 inputs = manyHot(inputs, patternSize)
-# inputs *= (6/inputSize)/np.mean(inputs)
 # Assign targets to target pattern
-targets = np.array([targetPatterns[flower] for flower in iris.target])
+targets = jnp.array([targetPatterns[flower] for flower in iris.target])
 #shuffle both arrays in the same manner
-shuffle = np.random.permutation(len(inputs))
+shuffle = jrandom.permutation(rngs["Params"], len(inputs))
 trainInputs, trainTargets = inputs[shuffle][:numSamples], targets[shuffle][:numSamples]
 evalInputs, evalTargets = inputs[shuffle][numSamples:], targets[shuffle][numSamples:]
 
@@ -71,7 +66,8 @@ leabraRunConfig = {
 }
 
 leabraNet = Net(name = "LEABRA_NET",
-                runConfig=leabraRunConfig) # Default Leabra net
+                runConfig=leabraRunConfig,
+                seed=20) # Default Leabra net
 
 # Add layers
 layerList = [Layer(inputSize, isInput=True, name="Input"),
@@ -79,7 +75,6 @@ layerList = [Layer(inputSize, isInput=True, name="Input"),
              Layer(hiddenSize, name="Hidden2"),
              Layer(outputSize, isTarget=True, name="Output")]
 layConfig = deepcopy(layerConfig_std)
-# layConfig["FFFBparams"]["Gi"] = 1.4
 leabraNet.AddLayers(layerList[:-1], layerConfig=layConfig)
 outputConfig = deepcopy(layerConfig_std)
 outputConfig["FFFBparams"]["Gi"] = 1.4
@@ -102,10 +97,10 @@ result = leabraNet.Learn(input=trainInputs, target=trainTargets,
                          shuffle=False,
                          EvaluateFirst=False,
                          )
-time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
+time = jnp.linspace(0,leabraNet.time, len(result['AvgSSE']))
 plt.plot(time, result['AvgSSE'], label="Leabra Net")
 
-baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), trainTargets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
+baseline = jnp.mean(jnp.array([ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), trainTargets) for entry in jrandom.uniform(rngs["Noise"], (2000,numSamples,inputSize))]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Random Input/Output Matching")

@@ -5,12 +5,13 @@ from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 from vivilux.visualize import Record, Heatmap
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 from sklearn import datasets
 import matplotlib.pyplot as plt
 import networkx as nx
 import imageio
-np.random.seed(seed=0)
 
 from copy import deepcopy
 
@@ -22,13 +23,16 @@ inPatternSize = 2
 outPatternSize = 1
 numSamples = 1
 
+# Set up stateful RNGs
+rngs = nnx.Rngs(0)
+
 #define input and output data (must be one-hot encoded)
-inputs = np.zeros((numSamples, inputSize))
-inputs[:,:inPatternSize] = 1
-inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
-targets = np.zeros((numSamples, outputSize))
-targets[:,:outPatternSize] = 1
-targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
+inputs = jnp.zeros((numSamples, inputSize))
+inputs = inputs.at[:,:inPatternSize].set(1)
+inputs = jnp.stack([inputs[i][jrandom.permutation(rngs["Params"], inputSize)] for i in range(numSamples)])
+targets = jnp.zeros((numSamples, outputSize))
+targets = targets.at[:,:outPatternSize].set(1)
+targets = jnp.stack([targets[i][jrandom.permutation(rngs["Params"], outputSize)] for i in range(numSamples)])
 
 leabraRunConfig = {
     "DELTA_TIME": 0.001,
@@ -46,7 +50,8 @@ leabraRunConfig = {
 
 leabraNet = Net(name = "LEABRA_NET",
                 monitoring= True,
-                runConfig=leabraRunConfig) # Default Leabra net
+                runConfig=leabraRunConfig,
+                seed=0) # Default Leabra net
 
 # Add layers
 layerList = [Layer(inputSize, isInput=True, name="Input"),
@@ -63,7 +68,6 @@ for layer in layerList:
         )
     )
 layConfig = deepcopy(layerConfig_std)
-# layConfig["FFFBparams"]["Gi"] = 1.3
 layConfig["FFFBparams"]["FF"] = 1.2
 leabraNet.AddLayers(layerList[:-1], layerConfig=layConfig)
 outputConfig = deepcopy(layerConfig_std)
@@ -97,7 +101,7 @@ heatmap.animate("demoHeatmap")
 # Plot RMSE over time
 plt.figure()
 plt.plot(result["RMSE"], label="net")
-baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
+baseline = jnp.mean(jnp.array([RMSE(entry, targets) for entry in jrandom.uniform(rngs["Noise"], (2000,numSamples,4))]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="uniform guessing")
 plt.title("Local Learning Demo")
 plt.ylabel("RMSE")

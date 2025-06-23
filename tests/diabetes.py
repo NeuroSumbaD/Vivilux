@@ -10,12 +10,16 @@ from vivilux.layers import Layer
 from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 import matplotlib.pyplot as plt
 from sklearn import datasets
-np.random.seed(seed=0)
 
 from copy import deepcopy
+
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
 numEpochs = 1000
 numSamples = 100
@@ -78,9 +82,9 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          )
 plt.plot(result, label="CHL")
 
-guessing = [RMSE(entry, targets) for entry in np.random.uniform(size=(2000,442,1))]
-baseline = np.mean(guessing)
-stddev = np.std(guessing)
+guessing = [RMSE(entry, targets) for entry in jrandom.uniform(rngs, (2000,442,1))]
+baseline = jnp.mean(guessing)
+stddev = jnp.std(guessing)
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 print(f"Baseline guessing: {baseline}, std dev: {stddev}")
 
@@ -94,7 +98,7 @@ print("Done")
 
 
 pred = leabraNet.Infer(inputs)
-print(f"Mean: {np.mean(pred)}, Std dev: {np.std(pred)}")
+print(f"Mean: {jnp.mean(pred)}, Std dev: {jnp.std(pred)}")
 
 print(leabraNet.getWeights())
 

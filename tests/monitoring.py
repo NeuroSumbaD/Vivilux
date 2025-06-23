@@ -5,26 +5,25 @@ from vivilux.learningRules import CHL, GeneRec, ByPass
 from vivilux.optimizers import Adam
 
 import matplotlib.pyplot as plt
-import numpy as np
-np.random.seed(seed=0)
+import jax.numpy as jnp
+import jax.random as jrandom
+from flax import nnx
 
-import pandas as pd
-import seaborn as sns
 
 numSamples = 10
 numEpochs = 50
 
+# Use stateful RNGs for reproducibility
+rngs = nnx.Rngs(0)
 
-
-#define input and output data (must be normalized and positive-valued)
-vecs = np.random.normal(size=(numSamples, 4))
-mags = np.linalg.norm(vecs, axis=-1)
-inputs = np.abs(vecs/mags[...,np.newaxis])
-vecs = np.random.normal(size=(numSamples, 4))
-mags = np.linalg.norm(vecs, axis=-1)
-targets = np.abs(vecs/mags[...,np.newaxis])
+# Define input and output data (must be normalized and positive-valued)
+vecs = jrandom.normal(rngs['Params'], (numSamples, 4))
+mags = jnp.linalg.norm(vecs, axis=-1)
+inputs = jnp.abs(vecs / mags[..., jnp.newaxis])
+vecs = jrandom.normal(rngs['Params'], (numSamples, 4))
+mags = jnp.linalg.norm(vecs, axis=-1)
+targets = jnp.abs(vecs / mags[..., jnp.newaxis])
 del vecs, mags
-
 
 optArgs = {"lr" : 0.05,
             "beta1" : 0.9,
@@ -49,8 +48,6 @@ netMixed_MZI_Adam = FFFB([
 resultMixedMZI_Adam = netMixed_MZI_Adam.Learn(
     inputs, targets, numEpochs=numEpochs, reset=False)
 
-
-                
 plt.title("Random Input/Output Matching with MZI meshes")
 plt.ylabel("RMSE")
 plt.xlabel("Epoch")
