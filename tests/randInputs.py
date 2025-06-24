@@ -26,10 +26,10 @@ rngs = nnx.Rngs(0)
 #define input and output data (must be one-hot encoded)
 inputs = jnp.zeros((numSamples, inputSize))
 inputs = inputs.at[:,:patternSize].set(1)
-inputs = jnp.stack([inputs[i][jrandom.permutation(rngs["Params"], inputSize)] for i in range(numSamples)])
+inputs = jnp.stack([inputs[i][jrandom.permutation(rngs["Params"](), inputSize)] for i in range(numSamples)])
 targets = jnp.zeros((numSamples, outputSize))
 targets = targets.at[:,:patternSize].set(1)
-targets = jnp.stack([targets[i][jrandom.permutation(rngs["Params"], outputSize)] for i in range(numSamples)])
+targets = jnp.stack([targets[i][jrandom.permutation(rngs["Params"](), outputSize)] for i in range(numSamples)])
 
 leabraRunConfig = {
     "DELTA_TIME": 0.001,

@@ -63,10 +63,23 @@ def XX1GainCor(x: jnp.ndarray,
     return out
 
 class NoisyXX1:
-    def __init__(self, Thr=0.5, Gain=100, NVar=1e-5, SigMult=5, SigMultPow=1, SigGain=3.0, InterpRange=1e-5, GainCorRange=10.0, GainCor=0.1, rngs: Optional[nnx.Rngs]=None):
+    def __init__(self,
+                 Thr = 0.5, # threshold value Theta (Q) for firing output activation (.5 is more accurate value based on AdEx biological parameters and normalization
+                 Gain = 100, # gain (gamma) of the rate-coded activation functions -- 100 is default, 80 works better for larger models, and 20 is closer to the actual spiking behavior of the AdEx model -- use lower values for more graded signals, generally in lower input/sensory layers of the network
+                 NVar = 0.005, # variance of the Gaussian noise kernel for convolving with XX1 in NOISY_XX1 and NOISY_LINEAR -- determines the level of curvature of the activation function near the threshold -- increase for more graded responding there -- note that this is not actual stochastic noise, just constant convolved gaussian smoothness to the activation function
+                 VmActThr = 0.01, # threshold on activation below which the direct vm - act.thr is used -- this should be low -- once it gets active should use net - g_e_thr ge-linear dynamics (gelin)
+                 SigMult = 0.33, # multiplier on sigmoid used for computing values for net < thr
+                 SigMultPow = 0.8, # power for computing sig_mult_eff as function of gain * nvar
+                 SigGain = 3.0, # gain multipler on (net - thr) for sigmoid used for computing values for net < thr
+                 InterpRange = 0.01, # interpolation range above zero to use interpolation
+                 GainCorRange = 10.0, # range in units of nvar over which to apply gain correction to compensate for convolution
+                 GainCor = 0.1, # gain correction multiplier -- how much to correct gains
+                 rngs: nnx.Rngs = nnx.Rngs(0)  # Random number generator streams for noise
+                 ):
         self.Thr = Thr
         self.Gain = Gain
         self.NVar = NVar
+        self.VmActThr = VmActThr
         self.SigMult = SigMult
         self.SigMultPow = SigMultPow
         self.SigGain = SigGain
@@ -75,13 +88,37 @@ class NoisyXX1:
         self.GainCor = GainCor
         self.rngs = rngs
 
+        self.SigGainNVar = SigGain / NVar # Sig_gain / nvar
+        self.SigMultEff = SigMult * jnp.power(Gain*NVar, SigMultPow) # overall multiplier on sigmoidal component for values below threshold = sig_mult * pow(gain * nvar, sig_mult_pow)
+        self.SigValAt0 = 0.5 * self.SigMultEff # 0.5 * sig_mult_eff -- used for interpolation portion
+        # function value at interp_range - sig_val_at_0 -- for interpolation
+        self.InterpVal = XX1GainCor_Scalar(InterpRange, Gain, NVar, GainCor,
+                                           GainCorRange) - self.SigValAt0
+        
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # Example: add noise using the 'Noise' stream if rngs is provided
-        if self.rngs is not None:
-            key = self.rngs["Noise"]
-            noise = jrandom.normal(key, x.shape) * jnp.sqrt(self.NVar)
-            x = x + noise
-        return XX1GainCor(x - self.Thr, Gain=self.Gain, NVar=self.NVar, GainCor=self.GainCor, GainCorRange=self.GainCorRange)
+        out = x.copy()
+        mask1 = x < 0
+        mask2 = jnp.logical_and(x < self.InterpRange, x >= 0)
+        mask3 = x >= self.InterpRange
+
+        # if x < 0 // sigmoidal for < 0
+        exp = -(x * self.SigGainNVar)
+        submask = exp > 50
+        out = out.at[mask1].set(self.SigMultEff / (1 + jnp.exp(exp[mask1])))
+        out = out.at[submask].set(0) # zero for small values
+
+        # else if x < self.InterpRange
+        interp = 1 - ((self.InterpRange - x[mask2]) / self.InterpRange)
+        out = out.at[mask2].set(self.SigValAt0 + interp*self.InterpVal)
+
+        # else
+        out = out.at[mask3].set(XX1GainCor(x[mask3],
+                                           Gain = self.Gain,
+                                           NVar = self.NVar,
+                                           GainCor= self.GainCor,
+                                           GainCorRange = self.GainCorRange,
+                                           ))
+        return out
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt

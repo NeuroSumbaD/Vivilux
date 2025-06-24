@@ -170,10 +170,10 @@ class ActAvg(PhasicProcess):
         self.InitAct()
 
     def InitAct(self):
-        self.AvgSS[:] = self.Init
-        self.AvgS[:] = self.Init
-        self.AvgM[:] = self.Init
-        self.AvgL[:] = self.AvgL_Init
+        self.AvgSS = self.AvgSS.at[:].set(self.Init)
+        self.AvgS = self.AvgS.at[:].set(self.Init)
+        self.AvgM = self.AvgM.at[:].set(self.Init)
+        self.AvgL = self.AvgL.at[:].set(self.AvgL_Init)
 
     def StepTime(self):
         '''Updates running averages at every timestep to smooth the activity
@@ -216,7 +216,7 @@ class ActAvg(PhasicProcess):
     def InitTrial(self):
         ## AvgLFmAvgM
         self.UpdateAvgL()
-        self.AvgLLrn[:] *= self.ModAvgLLrn # modifies avgLLrn in ActAvg process
+        self.AvgLLrn *= self.ModAvgLLrn # modifies avgLLrn in ActAvg process
 
         ## ActAvgFmAct
         self.UpdateActPAvg()
@@ -312,7 +312,7 @@ class XCAL(PhasicProcess):
             ## momentum (if applicable).
             self.Norm = jnp.maximum(self.DecayDt * self.Norm, jnp.abs(dwt))
             norm = self.Norm_LrComp / jnp.maximum(self.Norm, self.normMin)
-            norm[self.Norm==0] = 1
+            norm = norm.at[self.Norm==0].set(1)
             # TODO understand what prjn.go:607-620 is doing...
             # TODO enable custom norm procedure (L1, L2, etc.)
 
@@ -374,9 +374,9 @@ class XCAL(PhasicProcess):
         mask3 = jnp.logical_and(not1, not2)
 
         # (x < DThr) ? 0 : (x > th * DRev) ? (x - th) : (-x * ((1-DRev)/DRev))
-        out[mask1] = 0
-        out[mask2] = x[mask2] - th[mask2]
-        out[mask3] = x[mask3] * self.DRevRatio
+        out = out.at[mask1].set(0)
+        out = out.at[mask2].set(x[mask2] - th[mask2])
+        out = out.at[mask3].set(x[mask3] * self.DRevRatio)
 
         return out
 

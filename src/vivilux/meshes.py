@@ -167,7 +167,7 @@ class Mesh:
 
     def setGscale(self):
         # TODO: handle case for inhibitory mesh
-        totalRel = jnp.sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes], dtype=self.dtype)
+        totalRel = jnp.array(sum(mesh.RelScale for mesh in self.rcvLayer.excMeshes), dtype=self.dtype)
         self.Gscale = self.AbsScale * self.RelScale 
         self.Gscale /= totalRel if totalRel > 0 else 1
 
@@ -175,7 +175,7 @@ class Mesh:
         self.avgActP = self.inLayer.ActAvg.ActPAvg
 
         #calculate average number of active neurons in sending layer
-        sendLayActN = jnp.maximum(jnp.round(self.avgActP*len(self.inLayer)), 1, dtype=self.dtype)
+        sendLayActN = jnp.maximum(jnp.round(jnp.array(self.avgActP*len(self.inLayer))), 1)
         sc = 1/sendLayActN # TODO: implement relative importance
         self.Gscale *= sc
 
@@ -199,15 +199,15 @@ class Mesh:
         cond2 = jnp.abs(delta) <= self.OptThreshParams["Delta"]
         mask1 = jnp.logical_or(cond1, cond2)
         notMask1 = jnp.logical_not(mask1)
-        delta[mask1] = 0 # only signal delta above both thresholds
-        self.lastAct[notMask1] = data[notMask1]
+        delta = delta.at[mask1].set(0) # only signal delta above both thresholds
+        self.lastAct = self.lastAct.at[notMask1].set(data[notMask1])
 
         cond3 = self.lastAct > self.OptThreshParams["Send"]
         mask2 = jnp.logical_and(cond3, cond1)
-        delta[mask2] = -self.lastAct[mask2]
-        self.lastAct[mask2] = 0
+        delta = delta.at[mask2].set(-self.lastAct[mask2])
+        self.lastAct = self.lastAct.at[mask2].set(0)
 
-        self.inAct[:] += delta
+        self.inAct += delta
 
         return self.applyTo(self.inAct[:self.shape[1]])
             
@@ -247,31 +247,31 @@ class Mesh:
                 self.wbInc = 1/ (1 + self.wbFact)
                 self.wbDec = 2 - self.wbInc
 
-    def SoftBound(self, delta):
+    def SoftBound(self, delta: jnp.ndarray) -> jnp.ndarray:
         if self.softBound:
             mask1 = delta > 0
             m, n = delta.shape
-            delta[mask1] *= self.wbInc * (1 - self.linMatrix[:m,:n][mask1])
+            delta = delta.at[mask1].multiply(self.wbInc * (1 - self.linMatrix[:m,:n][mask1]))
 
             mask2 = jnp.logical_not(mask1)
-            delta[mask2] *= self.wbDec * self.linMatrix[:m,:n][mask2]
+            delta = delta.at[mask2].multiply(self.wbDec * self.linMatrix[:m,:n][mask2])
         else:
             mask1 = delta > 0
             m, n = delta.shape
-            delta[mask1] *= self.wbInc
+            delta = delta.at[mask1].multiply(self.wbInc)
 
             mask2 = jnp.logical_not(mask1)
-            delta[mask2] *= self.wbDec
+            delta = delta.at[mask2].multiply(self.wbDec)
                     
         return delta
     
     def ClipLinMatrix(self):
         '''Bounds linear weights on range [0-1]'''
         mask1 = self.linMatrix < 0
-        self.linMatrix[mask1] = 0
+        self.linMatrix = self.linMatrix.at[mask1].set(0)
         
         mask2 = self.linMatrix > 1
-        self.linMatrix[mask2] = 1
+        self.linMatrix = self.linMatrix.at[mask2].set(1)
 
     def CalculateUpdate(self,
                         dwtLog = None,
@@ -292,7 +292,7 @@ class Mesh:
 
             Overwrite this function for other learning rule or mesh types.
         '''
-        self.linMatrix[:m, :n] += delta
+        self.linMatrix = self.linMatrix.at[:m, :n].add(delta)
         self.ClipLinMatrix()
         self.SigMatrix()
 
@@ -381,13 +381,13 @@ class Mesh:
             bounded by physical constraints.
         '''
         mask1 = self.linMatrix <= 0
-        self.matrix[mask1] = 0
+        self.matrix = self.matrix.at[mask1].set(0)
 
         mask2 = self.linMatrix >= 1
-        self.matrix[mask2] = 1
+        self.matrix = self.matrix.at[mask2].set(1)
 
         mask3 = jnp.logical_not(jnp.logical_or(mask1, mask2))
-        self.matrix[mask3] = self.sigmoid(self.linMatrix[mask3])
+        self.matrix = self.matrix.at[mask3].set(self.sigmoid(self.linMatrix[mask3]))
 
         return self.matrix
 
@@ -399,13 +399,13 @@ class Mesh:
             ensure that the linear weights (linMatrix) are accurately tracked.
         '''
         mask1 = self.matrix <= 0
-        self.matrix[mask1] = 0
+        self.matrix = self.matrix.at[mask1].set(0)
 
         mask2 = self.matrix >= 1
-        self.matrix[mask2] = 1
+        self.matrix = self.matrix.at[mask2].set(1)
 
         mask3 = jnp.logical_not(jnp.logical_or(mask1, mask2))
-        self.linMatrix[mask3] = self.invSigmoid(self.matrix[mask3])
+        self.linMatrix = self.linMatrix.at[mask3].set(self.invSigmoid(self.matrix[mask3]))
 
         return self.linMatrix
     

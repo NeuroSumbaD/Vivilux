@@ -107,7 +107,7 @@ class Layer:
         # Attach channel params
         self.Gbar = layerConfig["Gbar"]
         self.Erev = layerConfig["Erev"]
-        self.Vm[:] = layerConfig["VmInit"] # initialize Vm
+        self.Vm = self.Vm.at[:].set(layerConfig["VmInit"]) # initialize Vm
         self.VmInit = layerConfig["VmInit"]
 
         # Attach DtParams
@@ -143,7 +143,7 @@ class Layer:
         self.RunProcesses()
 
         # Update conductances from raw inputs
-        self.Ge[:] += (self.DtParams["Integ"] *
+        self.Ge += (self.DtParams["Integ"] *
                        self.DtParams["GDt"] * 
                        (self.GeRaw - self.Ge)
                        )
@@ -151,11 +151,11 @@ class Layer:
         # Call FFFB to update GiRaw
         self.FFFB.StepTime()
 
-        self.GiSyn[:] += (self.DtParams["Integ"] *
+        self.GiSyn += (self.DtParams["Integ"] *
                        self.DtParams["GDt"] * 
                        (self.GiRaw - self.GiSyn)
                        )
-        self.Gi[:] = self.GiSyn + self.Gi_FFFB # Add synaptic Gi to FFFB contribution
+        self.Gi = self.GiSyn + self.Gi_FFFB # Add synaptic Gi to FFFB contribution
     
     def StepTime(self, time: float, debugData = None):
         # self.UpdateConductance() ## Moved to nets StepPhase
@@ -177,7 +177,7 @@ class Layer:
                 Gbar["L"] * (Erev["L"] - Vm) +
                 self.Gi * Gbar["I"] * (Erev["I"] - Vm)
                 )
-        self.Vm[:] += self.DtParams["VmDt"] * self.Inet
+        self.Vm += self.DtParams["VmDt"] * self.Inet
 
         # Calculate conductance threshold
         geThr = (self.Gi * Gbar["I"] * (Erev["I"] - Thr) +
@@ -193,10 +193,10 @@ class Layer:
             self.Act < self.actFn.VmActThr,
             self.Vm <= self.actFn.Thr
             )
-        newAct[mask] = self.actFn(self.Vm[mask] - Thr)
+        newAct = newAct.at[mask].set(self.actFn(self.Vm[mask] - Thr))
 
         # Update layer activities
-        self.Act[:] += self.DtParams["VmDt"] * (newAct - self.Act)
+        self.Act += self.DtParams["VmDt"] * (newAct - self.Act)
 
         self.neuralEnergy += self.neuron(self.Act)
 
@@ -208,10 +208,10 @@ class Layer:
             in a time integrated manner.
         '''
         for mesh in self.excMeshes:
-            self.GeRaw[:] += mesh.apply()[:len(self)]
+            self.GeRaw += mesh.apply()[:len(self)]
 
         for mesh in self.inhMeshes:
-            self.GiRaw[:] += mesh.apply()[:len(self)]
+            self.GiRaw += mesh.apply()[:len(self)]
 
     def InitTrial(self, Train: bool):
         if Train:
@@ -225,8 +225,8 @@ class Layer:
             mesh.setGscale()
 
         ## InitGInc
-        self.GeRaw[:] = 0 # reset
-        self.GiRaw[:] = 0 # reset
+        self.GeRaw = self.GeRaw.at[:].set(0) # reset
+        self.GiRaw = self.GiRaw.at[:].set(0) # reset
 
         self.EXTERNAL = None
     
@@ -287,8 +287,8 @@ class Layer:
 
         # TODO: Improve readability of this line (end of trial code?)
         ## these lines may need to change when Delta-Sender mechanism is included
-        self.GeRaw[:] = 0
-        self.GiRaw[:] = 0
+        self.GeRaw = self.GeRaw.at[:].set(0)
+        self.GiRaw = self.GiRaw.at[:].set(0)
 
     def getActivity(self):
         return self.Act
@@ -298,14 +298,14 @@ class Layer:
     
     def resetActivity(self):
         '''Resets all activation traces to zero vectors.'''
-        self.Act[:] = 0
-        self.Vm[:] = self.VmInit
+        self.Act = self.Act.at[:].set(0)
+        self.Vm = self.Vm.at[:].set(self.VmInit)
 
-        self.GeRaw[:] = 0
-        self.Ge[:] = 0
-        self.GiRaw[:] = 0
-        self.GiSyn[:] = 0
-        self.Gi[:] = 0
+        self.GeRaw = self.GeRaw.at[:].set(0)
+        self.Ge = self.Ge.at[:].set(0)
+        self.GiRaw = self.GiRaw.at[:].set(0)
+        self.GiSyn = self.GiSyn.at[:].set(0)
+        self.Gi = self.Gi.at[:].set(0)
 
         self.FFFB.Reset()
         self.ActAvg.Reset()
@@ -314,12 +314,12 @@ class Layer:
             mesh.XCAL.Reset()
 
 
-    def Clamp(self, data, time: float, monitoring = False, debugData=None):
+    def Clamp(self, data: jnp.ndarray, time: float, monitoring = False, debugData=None):
         clampData = data.copy()
 
         # truncate extrema
-        clampData[clampData > self.clampMax] = self.clampMax
-        clampData[clampData < self.clampMin] = self.clampMin
+        clampData = clampData.at[clampData > self.clampMax].set(self.clampMax)
+        clampData = clampData.at[clampData < self.clampMin].set(self.clampMin)
         #Update activity
         self.Act = clampData
         
