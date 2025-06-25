@@ -5,7 +5,7 @@ from flax import nnx
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from vivilux import Layer
+    from vivilux.layers import Layer
     from flax import nnx
 
 def CHL(inLayer: 'Layer', outLayer: 'Layer') -> jnp.ndarray:
@@ -45,7 +45,7 @@ def Nonsense(inLayer: 'Layer', outLayer: 'Layer', rngs: Optional[nnx.Rngs]=None)
     '''Learning rule with completely random behavior.'''
     shape = (len(outLayer), len(inLayer))
     if rngs is not None:
-        key = rngs["Noise"]
+        key = rngs["Noise"]()
         return jrandom.normal(key, shape)
     else:
         # fallback to jax default random
@@ -57,7 +57,7 @@ def NoisyLLR(baseLLR, noiseLevel = 1e-2, rngs: Optional[nnx.Rngs]=None):
         delta = baseLLR(inLayer, outLayer)
         shape = delta.shape
         if rngs is not None:
-            key = rngs["Noise"]
+            key = rngs["Noise"]()
             noise = noiseLevel * jrandom.normal(key, shape)
         else:
             noise = noiseLevel * jrandom.normal(jrandom.PRNGKey(0), shape)

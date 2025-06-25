@@ -3,7 +3,7 @@
 
 # type checking
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from .nets import Net
     from .layers import Layer
@@ -40,7 +40,7 @@ class Mesh(nnx.Module):
                  WtBalInterval = 10,
                  softBound = True,
                  device = Generic(),
-                 rngs: nnx.Rngs = None,
+                 rngs: nnx.Rngs = nnx.Rngs(0),
                  **kwargs):
         self.shape = (size, len(inLayer))
         self.size = size if size > len(inLayer) else len(inLayer)
@@ -69,7 +69,7 @@ class Mesh(nnx.Module):
         low = InitMean - InitVar
         high = InitMean + InitVar
         if self.rngs is not None:
-            matrix_init = jrandom.uniform(self.rngs["Params"], shape=(size, len(inLayer)), minval=low, maxval=high, dtype=dtype)
+            matrix_init = jrandom.uniform(self.rngs["Params"](), shape=(size, len(inLayer)), minval=low, maxval=high, dtype=dtype)
         else:
             matrix_init = jnp.ones((size, len(inLayer)), dtype=dtype) * InitMean
         
@@ -100,7 +100,7 @@ class Mesh(nnx.Module):
 
         self.AttachDevice(device)
 
-    def GetEnergy(self, device: Device = None):
+    def GetEnergy(self, device: Optional[Device] = None):
         '''Returns integrated energy over the course of the simulation.
             If a device is provided, it calculates the energy from the given
             device, otherwise it uses device parameters previously set.
@@ -171,14 +171,14 @@ class Mesh(nnx.Module):
         # TODO: handle case for inhibitory mesh
         totalRel = jnp.array(sum(mesh.RelScale.value for mesh in self.rcvLayer.excMeshes), dtype=self.dtype)
         self.Gscale.value = self.AbsScale.value * self.RelScale.value 
-        self.Gscale.value = self.Gscale.value / (totalRel if totalRel > 0 else 1)
+        self.Gscale.value = float(self.Gscale.value / jnp.where(totalRel > 0, totalRel, 1))
 
         # calculate average from input layer on last trial
         self.avgActP = self.inLayer.ActAvg.ActPAvg.value
 
         #calculate average number of active neurons in sending layer
         sendLayActN = jnp.maximum(jnp.round(jnp.array(self.avgActP*len(self.inLayer))), 1)
-        sc = 1/sendLayActN # TODO: implement relative importance
+        sc = float(1/sendLayActN) # TODO: implement relative importance
         self.Gscale.value = self.Gscale.value * sc
 
     def get(self):
@@ -240,7 +240,7 @@ class Mesh(nnx.Module):
         should_balance = self.WtBalCtr.value >= self.WtBalInterval.value
         
         # Reset counter if needed
-        self.WtBalCtr.value = jnp.where(should_balance, 0, self.WtBalCtr.value)
+        self.WtBalCtr.value = int(jnp.where(should_balance, 0, self.WtBalCtr.value))
         
         # Only proceed if weight balancing is on and counter threshold reached
         proceed = jnp.logical_and(self.wbOn.value, should_balance)
@@ -273,9 +273,9 @@ class Mesh(nnx.Module):
                               jnp.where(is_high, wbDec_high, self.wbDec.value))
         
         # Update values only if proceeding
-        self.wbFact.value = jnp.where(proceed, new_wbFact, self.wbFact.value)
-        self.wbInc.value = jnp.where(proceed, new_wbInc, self.wbInc.value)
-        self.wbDec.value = jnp.where(proceed, new_wbDec, self.wbDec.value)
+        self.wbFact.value = float(jnp.where(proceed, new_wbFact, self.wbFact.value))
+        self.wbInc.value = int(jnp.where(proceed, new_wbInc, self.wbInc.value))
+        self.wbDec.value = int(jnp.where(proceed, new_wbDec, self.wbDec.value))
 
     def SoftBound(self, delta: jnp.ndarray) -> jnp.ndarray:
         mask_positive = delta > 0
@@ -351,8 +351,10 @@ class Mesh(nnx.Module):
         #TODO: This function is very messy, truncate if possible
         if "dwtLog" not in kwargs: return
         if kwargs["dwtLog"] is None: return #empty data
+        if self.inLayer.net is None:
+            raise RuntimeError("Layer has not been attached to a net.")
         net = self.inLayer.net
-        time = net.time
+        time = net.time.value
 
         viviluxData = {}
         viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]

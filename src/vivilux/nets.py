@@ -4,7 +4,7 @@
 
 # type checking
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from .layers import Layer
     from .meshes import Mesh
@@ -22,7 +22,7 @@ from .meshes import Mesh, TransposeMesh
 from .metrics import RMSE
 from .optimizers import Simple
 from .visualize import Monitor
-from .photonics.devices import Device
+from .devices import Device
 
 
 
@@ -239,7 +239,7 @@ class Net(nnx.Module):
                       sending: Layer, # closer to source
                       receiving: Layer, # further from source
                       meshConfig = None,
-                      device: Device = None,
+                      device: Optional[Device] = None,
                       ) -> Mesh:
         '''Adds a connection from the sending layer to the receiving layer.
         '''
@@ -259,7 +259,7 @@ class Net(nnx.Module):
                        sendings: list[Layer], # closer to source
                        receivings: list[Layer], # further from source
                        meshConfig = None,
-                       device: Device = None,
+                       device: Optional[Device] = None,
                        ) -> list[Mesh]:
         '''Helper function for generating multiple connections at once.
         '''
@@ -274,7 +274,7 @@ class Net(nnx.Module):
                       receiving: Layer, # further from source
                       ffMeshConfig = None,
                       fbMeshConfig = None,
-                      ) -> Mesh:
+                      ) -> tuple[Mesh, Mesh]:
         '''Adds a set of bidirectional connections from the sending layer to
             the receiving layer. The feedback mesh is assumed to be a transpose
             of the feedforward mesh.
@@ -505,7 +505,7 @@ class Net(nnx.Module):
         self.outputs.value = {key: [] for key in self.runConfig["outputLayers"]}
 
         # suffle indices if necessary
-        sampleIndices = jnp.random.permutation(numSamples) if shuffle else range(numSamples)
+        sampleIndices = jax.random.permutation(self.rngs["Shuffle"](), numSamples) if shuffle else jnp.arange(numSamples)
         
         # TODO: find a faster way to iterate through datasets
         for sampleCount, sampleIndex in enumerate(sampleIndices):
@@ -568,7 +568,7 @@ class Net(nnx.Module):
               EvaluateFirst = True,
               Jit = False,
               debugData = {},
-              **dataset: dict[str, jnp.ndarray]) -> dict[str: list]:
+              **dataset: dict[str, jnp.ndarray]) -> dict[str, list]:
         '''Training loop that runs a specified number of epochs.
 
                 - verbosity: specifies how much is printed to the console
@@ -679,30 +679,11 @@ class Net(nnx.Module):
         return neuralEnergy, meshEnergy
     def printActivity(self):
         for layer in self.layers:
-            "\n".join(layer.printActivity())
+            "\n".join([str(act) for act in layer.printActivity()])
 
     def resetActivity(self):
         for layer in self.layers:
             layer.resetActivity()
-
-    def setLearningRule(self, rule, layerIndex: int = -1):
-        '''Sets the learning rule for all forward meshes to 'rule'.
-        '''
-        if layerIndex == -1 :
-            for layer in self.layers:
-                layer.rule = rule
-        else:
-            self.layers[layerIndex].rule = rule
-
-    # Example: parameter initialization using the 'Params' stream
-    def initialize_params(self, shape):
-        key = self.rngs["Params"]
-        return jax.random.normal(key, shape, dtype=self.dtype)
-
-    # Example: noise generation using the 'Noise' stream
-    def add_noise(self, shape):
-        key = self.rngs["Noise"]
-        return jax.random.normal(key, shape, dtype=self.dtype)
 
     def __str__(self) -> str:
         strs = []

@@ -3,7 +3,7 @@
 
 # type checking
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from .nets import Net
     from .meshes import Mesh
@@ -36,8 +36,8 @@ class Layer(nnx.Module):
                  clampMin = 0,
                  dtype: jnp.dtype = jnp.float32,
                  name = None,
-                 neuron: 'Neuron' = None,
-                 rngs: nnx.Rngs = None,
+                 neuron: Optional['Neuron'] = None,
+                 rngs: nnx.Rngs = nnx.Rngs(0),
                  ):
         
         self.isFloating = nnx.Variable(True) # Not attached to net
@@ -64,7 +64,7 @@ class Layer(nnx.Module):
         # self.deltas = [] # only used during batched training
 
         # Initialize layer variables
-        self.net = None
+        self.net: Optional[Net] = None
 
         self.GeRaw = nnx.Variable(jnp.zeros(length, dtype=dtype))
         self.Ge = nnx.Variable(jnp.zeros(length, dtype=dtype))
@@ -290,6 +290,8 @@ class Layer(nnx.Module):
         self.monitors[monitor.name] = monitor
 
     def UpdateMonitors(self):
+        if self.net is None:
+            raise RuntimeError("Layer has not been attached to a net.")
         if not self.net.monitoring: return
         for monitor in self.monitors.values():
             monitor.update(self.snapshot)
@@ -351,7 +353,7 @@ class Layer(nnx.Module):
     def getActivity(self):
         return self.Act.value
 
-    def printActivity(self):
+    def printActivity(self) -> list[jnp.ndarray]:
         return [self.Act.value]
     
     def resetActivity(self):
@@ -453,7 +455,7 @@ class Layer(nnx.Module):
             total, hold, update = mesh.GetEnergy(device=synDevice)
             synapticEnergy += total
 
-        return jnp.sum(self.neuralEnergy.value), synapticEnergy
+        return float(jnp.sum(self.neuralEnergy.value)), float(synapticEnergy)
     
     def SetDtype(self, dtype: jnp.dtype):
         self.dtype = dtype
@@ -485,7 +487,6 @@ class Layer(nnx.Module):
 
     def __str__(self) -> str:
         layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.actFn}\n\tLearning"
-        layStr += f"Rule = {self.rule}"
         layStr += f"\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
         layStr += f"\n\tActivity: \n\t\t{self.Act.value}"
         return layStr
