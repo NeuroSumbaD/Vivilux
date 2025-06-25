@@ -4,7 +4,7 @@
 
 # type checking
 from __future__ import annotations
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Any
 if TYPE_CHECKING:
     from .layers import Layer
     from .meshes import Mesh
@@ -168,8 +168,9 @@ class Net(nnx.Module):
         self.DELTA_TIME = runConfig["DELTA_TIME"]
         self.time = nnx.Variable(0.0)
 
-        self.layers: list[Layer] = [] # list of layer objects
-        self.layerDict: dict[str, Layer] = {} # dict of named layers
+        # Initialize collections for layers
+        self.layers: list[Layer] = []
+        self.layerDict: dict[str, Any] = {}
 
         self.results = nnx.Variable({metric: [] for metric in self.runConfig["metrics"]})
         self.outputs = nnx.Variable({key: [] for key in self.runConfig["outputLayers"]})
@@ -208,7 +209,7 @@ class Net(nnx.Module):
         for dataName, index in self.runConfig["outputLayers"].items():
             self.layerDict["outputLayers"][dataName] = self.layers[index]
                 
-    def AddLayer(self, layer: Layer, layerConfig: dict = None):
+    def AddLayer(self, layer: Layer, layerConfig: Optional[dict] = None):
         # index = len(self.layers)
         # size = len(layer)
 
@@ -613,7 +614,7 @@ class Net(nnx.Module):
                 break
                 
         print(f"Finished training [{self.name}]")
-        return self.results
+        return self.results.value
 
     def Evaluate(self,
               verbosity = 1,
@@ -627,10 +628,10 @@ class Net(nnx.Module):
         if verbosity > 0:
             primaryMetric = [key for key in self.runConfig["metrics"]][0]
             print(f" metric[{primaryMetric}]"
-                f" = {self.results[primaryMetric][-1]:0.4f}")
+                f" = {self.results.value[primaryMetric][-1]:0.4f}")
             
         print(f"Evaluation complete.")
-        return self.results
+        return self.results.value
     
     def Evaluate_jit(self,
               verbosity = 1,
@@ -644,10 +645,10 @@ class Net(nnx.Module):
         if verbosity > 0:
             primaryMetric = [key for key in self.runConfig["metrics"]][0]
             print(f" metric[{primaryMetric}]"
-                f" = {self.results[primaryMetric][-1]:0.4f}")
+                f" = {self.results.value[primaryMetric][-1]:0.4f}")
             
         print(f"Evaluation complete.")
-        return self.results
+        return self.results.value
     
     def Infer(self,
               verbosity = 1,
