@@ -156,6 +156,7 @@ class Net(nnx.Module):
             applied sequentially during inference.
         '''
 
+        # Store configuration dictionaries as regular attributes (not nnx state)
         self.runConfig = runConfig # Simulation-level configurations
         self.phaseConfig = phaseConfig # Dictionary of phase definitions
         self.layerConfig = layerConfig # Stereotyped layer definition
@@ -168,14 +169,14 @@ class Net(nnx.Module):
         self.DELTA_TIME = runConfig["DELTA_TIME"]
         self.time = nnx.Variable(0.0)
 
-        # Initialize collections for layers
+        # Initialize collections for layers as regular attributes (not nnx state)
         self.layers: list[Layer] = []
         self.layerDict: dict[str, Any] = {}
 
         self.results = nnx.Variable({metric: [] for metric in self.runConfig["metrics"]})
         self.outputs = nnx.Variable({key: [] for key in self.runConfig["outputLayers"]})
 
-        self.name =  f"NET_{Net.count}" if name == None else name
+        self.name = f"NET_{Net.count}" if name == None else name
         self.epochIndex = nnx.Variable(0)
         Net.count += 1
 

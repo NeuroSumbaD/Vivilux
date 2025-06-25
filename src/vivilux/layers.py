@@ -47,10 +47,12 @@ class Layer(nnx.Module):
             # Import here to avoid circular import
             from .neurons import YunJhuModel
             neuron = YunJhuModel
+        # Store as regular attribute (not nnx state)
         self.neuron = neuron
         self.neuralEnergy = nnx.Variable(0.0) # increment for each timestep
 
         self.modified = nnx.Variable(False)
+        # Store as regular attributes (not nnx state)
         self.actFn = activation
         self.dtype = dtype
         self.rngs = rngs
@@ -63,7 +65,7 @@ class Layer(nnx.Module):
         # self.batchMode = batchMode
         # self.deltas = [] # only used during batched training
 
-        # Initialize layer variables
+        # Initialize layer variables as regular attributes (not nnx state)
         self.net: Optional[Net] = None
 
         self.GeRaw = nnx.Variable(jnp.zeros(length, dtype=dtype))
@@ -76,7 +78,7 @@ class Layer(nnx.Module):
         self.Act = nnx.Variable(jnp.zeros(length, dtype=dtype))
         self.Vm = nnx.Variable(jnp.zeros(length, dtype=dtype))
 
-        # Empty initial excitatory and inhibitory meshes
+        # Empty initial excitatory and inhibitory meshes as regular attributes (not nnx state)
         self.excMeshes: list[Mesh] = []
         self.inhMeshes: list[Mesh] = []
         self.neuralProcesses: list[NeuralProcess]  = []
@@ -84,7 +86,8 @@ class Layer(nnx.Module):
         self.phaseHist = {}
         # self.ActPAvg = np.mean(self.outAct) # initialize for Gscale
 
-        self.name =  f"LAYER_{Layer.count}" if name == None else name
+        # Store as regular attribute (not nnx state)
+        self.name = f"LAYER_{Layer.count}" if name == None else name
         if isInput and name == None: self.name = "INPUT_" + self.name
         self.isInput = nnx.Variable(isInput)
         self.isTarget = nnx.Variable(isTarget)
@@ -104,23 +107,23 @@ class Layer(nnx.Module):
         # self.DELTA_TIME = net.runConfig["DELTA_TIME"]
         # self.DELTA_Vm = layerConfig["DELTA_VM"]
 
-        # Attach channel params
+        # Store configuration dictionaries as regular attributes (not nnx state)
         self.Gbar = layerConfig["Gbar"]
         self.Erev = layerConfig["Erev"]
         self.Vm.value = self.Vm.value.at[:].set(layerConfig["VmInit"]) # initialize Vm
         self.VmInit = nnx.Variable(layerConfig["VmInit"])
 
-        # Attach DtParams
+        # Store configuration dictionaries as regular attributes (not nnx state)
         self.DtParams = layerConfig["DtParams"]
         self.DtParams["VmDt"] = 1/layerConfig["DtParams"]["VmTau"] # nominal rate = Integ / tau
         self.DtParams["GDt"] = 1/layerConfig["DtParams"]["GTau"] # rate = Integ / tau
         self.DtParams["AvgDt"] = 1/layerConfig["DtParams"]["AvgTau"] # rate = 1 / tau
 
-        # Attach FFFB Params
+        # Store configuration dictionaries as regular attributes (not nnx state)
         self.FFFBparams = layerConfig["FFFBparams"]
         self.FFFBparams["FBDt"] = 1/layerConfig["FFFBparams"]["FBTau"] # rate = 1 / FBTau
 
-        # Attach OptThreshParams
+        # Store configuration dictionaries as regular attributes (not nnx state)
         self.OptThreshParams = layerConfig["OptThreshParams"]
 
         # Attach Averaging Process

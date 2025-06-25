@@ -171,14 +171,14 @@ class Mesh(nnx.Module):
         # TODO: handle case for inhibitory mesh
         totalRel = jnp.array(sum(mesh.RelScale.value for mesh in self.rcvLayer.excMeshes), dtype=self.dtype)
         self.Gscale.value = self.AbsScale.value * self.RelScale.value 
-        self.Gscale.value = float(self.Gscale.value / jnp.where(totalRel > 0, totalRel, 1))
+        self.Gscale.value = self.Gscale.value / jnp.where(totalRel > 0, totalRel, 1)
 
         # calculate average from input layer on last trial
         self.avgActP = self.inLayer.ActAvg.ActPAvg.value
 
         #calculate average number of active neurons in sending layer
         sendLayActN = jnp.maximum(jnp.round(jnp.array(self.avgActP*len(self.inLayer))), 1)
-        sc = float(1/sendLayActN) # TODO: implement relative importance
+        sc = 1/sendLayActN # TODO: implement relative importance
         self.Gscale.value = self.Gscale.value * sc
 
     def get(self):
@@ -273,7 +273,7 @@ class Mesh(nnx.Module):
                               jnp.where(is_high, wbDec_high, self.wbDec.value))
         
         # Update values only if proceeding
-        self.wbFact.value = float(jnp.where(proceed, new_wbFact, self.wbFact.value))
+        self.wbFact.value = jnp.where(proceed, new_wbFact, self.wbFact.value)
         self.wbInc.value = int(jnp.where(proceed, new_wbInc, self.wbInc.value))
         self.wbDec.value = int(jnp.where(proceed, new_wbDec, self.wbDec.value))
 

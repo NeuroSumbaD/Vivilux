@@ -147,7 +147,8 @@ class ActAvg(PhasicProcess):
 
         self.AttachLayer(layer)
 
-        self.phases = nnx.Variable(["plus"])
+        # Store as regular attribute (not nnx state) to avoid storing strings
+        self.phases = ["plus"]
 
     def AttachLayer(self, layer: Layer):
         self.pool = layer
@@ -280,7 +281,8 @@ class XCAL(PhasicProcess):
         self.MDt = nnx.Variable(1/MTau)
         self.DecayDt = nnx.Variable(1/DecayTau)
 
-        self.phases = nnx.Variable(["plus"])
+        # Store as regular attribute (not nnx state) to avoid storing strings
+        self.phases = ["plus"]
         
     def StepPhase(self):
         pass
