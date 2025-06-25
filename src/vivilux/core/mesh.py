@@ -8,22 +8,24 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from jax import jit
+from jax.random import PRNGKey
+from dataclasses import replace as dataclass_replace
 
-@jit
-def create_mesh_matrix(size: int, in_layer_size: int, config, key: jrandom.PRNGKey) -> jnp.ndarray:
+def create_mesh_matrix(size: int, in_layer_size: int, config, key: Any) -> jnp.ndarray:
     """
     Create initial mesh matrix from configuration.
     Args:
         size: int, output size
         in_layer_size: int, input layer size
         config: MeshConfig
-        key: jrandom.PRNGKey
+        key: Any, JAX PRNG key
     Returns:
         jnp.ndarray: Initial weight matrix
     """
     low = config.InitMean - config.InitVar
     high = config.InitMean + config.InitVar
-    return jrandom.uniform(key, shape=(size, in_layer_size), minval=low, maxval=high, dtype=config.dtype)
+    dtype = jnp.float32  # Use float32 to avoid warnings
+    return jrandom.uniform(key, shape=(size, in_layer_size), minval=low, maxval=high, dtype=dtype)
 
 @jit
 def sigmoid(data: jnp.ndarray) -> jnp.ndarray:
@@ -47,8 +49,7 @@ def inv_sigmoid(data: jnp.ndarray) -> jnp.ndarray:
     """
     return jnp.log(data / (1 - data))
 
-@jit
-def apply_mesh(state, config, input_data: jnp.ndarray, dt: float, key: jrandom.PRNGKey) -> Any:
+def apply_mesh(state, config, input_data: jnp.ndarray, dt: float, key: Any) -> Any:
     """
     Apply mesh computation to input data.
     Args:
@@ -56,7 +57,7 @@ def apply_mesh(state, config, input_data: jnp.ndarray, dt: float, key: jrandom.P
         config: MeshConfig
         input_data: jnp.ndarray, input activity
         dt: float, time step
-        key: jrandom.PRNGKey
+        key: Any, JAX PRNG key
     Returns:
         Updated MeshState
     """
@@ -65,39 +66,38 @@ def apply_mesh(state, config, input_data: jnp.ndarray, dt: float, key: jrandom.P
     new_hold_integration = state.holdIntegration + jnp.sum(state.matrix)
     new_hold_time = state.holdTime + dt
     
-    # Get padded input
-    pad = state.size - input_data.size
-    padded_input = jnp.pad(input_data, pad_width=(0, pad))
+    # Use input data directly (no padding needed)
+    # The mesh matrix should be (output_size, input_size) and input_data should be (input_size,)
+    # So matrix multiplication gives (output_size,)
     
     # Delta-sender behavior
-    delta = padded_input - state.lastAct
-    cond1 = padded_input <= config.OptThreshParams["Send"]
+    delta = input_data - state.lastAct[:len(input_data)] if state.lastAct is not None else input_data
+    cond1 = input_data <= config.OptThreshParams["Send"]
     cond2 = jnp.abs(delta) <= config.OptThreshParams["Delta"]
     mask1 = jnp.logical_or(cond1, cond2)
     
     # Apply thresholding
-    thresholded_input = jnp.where(mask1, 0.0, padded_input)
+    thresholded_input = jnp.where(mask1, 0.0, input_data)
     
-    # Matrix multiplication
+    # Matrix multiplication: (output_size, input_size) @ (input_size,) -> (output_size,)
     output = jnp.dot(state.matrix, thresholded_input)
     
-    return state.replace(
+    return dataclass_replace(state,
         holdEnergy=new_hold_energy,
         holdIntegration=new_hold_integration,
         holdTime=new_hold_time,
-        lastAct=padded_input,
+        lastAct=input_data,
         inAct=thresholded_input
     )
 
-@jit
-def update_mesh(state, config, delta: jnp.ndarray, key: jrandom.PRNGKey) -> Any:
+def update_mesh(state, config, delta: jnp.ndarray, key: Any) -> Any:
     """
     Update mesh weights with delta.
     Args:
         state: MeshState
         config: MeshConfig
         delta: jnp.ndarray, weight update
-        key: jrandom.PRNGKey
+        key: Any, JAX PRNG key
     Returns:
         Updated MeshState
     """
@@ -106,7 +106,7 @@ def update_mesh(state, config, delta: jnp.ndarray, key: jrandom.PRNGKey) -> Any:
     
     # Apply soft bounds if enabled
     if config.softBound:
-        new_lin_matrix = soft_bound(new_lin_matrix, config)
+        new_lin_matrix = soft_bound(new_lin_matrix, config.Off, config.Gain)
     
     new_matrix = sigmoid(new_lin_matrix)
     
@@ -115,7 +115,7 @@ def update_mesh(state, config, delta: jnp.ndarray, key: jrandom.PRNGKey) -> Any:
     new_set_integration = state.setIntegration + jnp.sum(curr_mat)
     new_reset_integration = state.resetIntegration + jnp.sum(new_matrix)
     
-    return state.replace(
+    return dataclass_replace(state,
         matrix=new_matrix,
         linMatrix=new_lin_matrix,
         updateEnergy=new_update_energy,
@@ -125,25 +125,25 @@ def update_mesh(state, config, delta: jnp.ndarray, key: jrandom.PRNGKey) -> Any:
     )
 
 @jit
-def soft_bound(lin_matrix: jnp.ndarray, config) -> jnp.ndarray:
+def soft_bound(lin_matrix: jnp.ndarray, off: float, gain: float) -> jnp.ndarray:
     """
     Apply soft bounds to linear matrix.
     Args:
         lin_matrix: jnp.ndarray
-        config: MeshConfig
+        off: float, offset value
+        gain: float, gain value
     Returns:
         jnp.ndarray: Bounded linear matrix
     """
-    return jnp.clip(lin_matrix, config.Off, config.Off + config.Gain)
+    return jnp.clip(lin_matrix, off, off + gain)
 
-@jit
-def weight_balance(state, config, key: jrandom.PRNGKey) -> Any:
+def weight_balance(state, config, key: Any) -> Any:
     """
     Apply weight balancing.
     Args:
         state: MeshState
         config: MeshConfig
-        key: jrandom.PRNGKey
+        key: Any, JAX PRNG key
     Returns:
         Updated MeshState
     """
@@ -166,16 +166,15 @@ def weight_balance(state, config, key: jrandom.PRNGKey) -> Any:
         new_lin_matrix = state.linMatrix + wb_fact * config.wbInc
         new_matrix = sigmoid(new_lin_matrix)
         
-        return state.replace(
+        return dataclass_replace(state,
             matrix=new_matrix,
             linMatrix=new_lin_matrix,
             WtBalCtr=0,
             wbFact=wb_fact
         )
     
-    return state.replace(WtBalCtr=new_wt_bal_ctr)
+    return dataclass_replace(state, WtBalCtr=new_wt_bal_ctr)
 
-@jit
 def get_mesh_output(state, config) -> jnp.ndarray:
     """
     Get mesh output with scaling.
@@ -187,21 +186,23 @@ def get_mesh_output(state, config) -> jnp.ndarray:
     """
     return config.Gscale * state.matrix
 
-@jit
-def calculate_update(state, config, learning_rate: float, key: jrandom.PRNGKey) -> jnp.ndarray:
+def calculate_update(state, config, learning_rate: float, key: Any) -> jnp.ndarray:
     """
     Calculate weight update based on learning rule.
+    This function should never be called - learning rules should be applied directly.
     Args:
         state: MeshState
         config: MeshConfig
         learning_rate: float
-        key: jrandom.PRNGKey
+        key: Any, JAX PRNG key
     Returns:
         jnp.ndarray: Weight update delta
     """
-    # This is a placeholder - actual learning rule implementation would go here
-    # For now, return zero update
-    return jnp.zeros_like(state.matrix)
+    raise RuntimeError(
+        f"calculate_update() called - this indicates a learning rule failure. "
+        f"Learning rules should be applied directly in Mesh.Update(). "
+        f"Check that the learning rule is properly configured and phase history is populated."
+    )
 
 @jit
 def clip_linear_matrix(state, config) -> Any:
@@ -214,4 +215,4 @@ def clip_linear_matrix(state, config) -> Any:
         Updated MeshState
     """
     clipped_lin_matrix = jnp.clip(state.linMatrix, config.Off, config.Off + config.Gain)
-    return state.replace(linMatrix=clipped_lin_matrix) 
+    return dataclass_replace(state, linMatrix=clipped_lin_matrix) 

@@ -4,7 +4,7 @@ All pure, stateless logic is in core.layer; this file manages state/config and p
 
 from __future__ import annotations
 from typing import Optional, Dict, List, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import jax.numpy as jnp
 import jax.random as jrandom
 from flax import nnx
@@ -64,7 +64,7 @@ class LayerConfig:
     optimizer: str = "Simple"
     optArgs: Dict[str, Any] = field(default_factory=dict)
     neuron: str = "YunJhuModel"
-    dtype: jnp.dtype = jnp.float64
+    dtype: jnp.dtype = jnp.float32
     name: Optional[str] = None
     def __post_init__(self):
         self.DtParams["VmInit"] = self.VmInit
@@ -72,6 +72,37 @@ class LayerConfig:
         self.DtParams["GDt"] = 1 / self.DtParams["GTau"]
         self.DtParams["AvgDt"] = 1 / self.DtParams["AvgTau"]
         self.FFFBparams["FBDt"] = 1 / self.FFFBparams["FBTau"]
+
+    def get_activation_state(self):
+        from vivilux.activations import create_relu_state, create_sigmoid_state, create_xx1_state, create_xx1_gaincor_state, create_noisy_xx1_state
+        if self.activation == "ReLu":
+            return create_relu_state()
+        elif self.activation == "Sigmoid":
+            return create_sigmoid_state()
+        elif self.activation == "XX1":
+            return create_xx1_state()
+        elif self.activation == "XX1GainCor":
+            return create_xx1_gaincor_state()
+        elif self.activation == "NoisyXX1":
+            return create_noisy_xx1_state()
+        else:
+            raise ValueError(f"Unknown activation: {self.activation}")
+
+    def apply_activation(self, x, act_state, key):
+        """Apply the configured activation function to input x."""
+        from vivilux.activations import relu, sigmoid, xx1, xx1_gaincor, noisy_xx1
+        if self.activation == "ReLu":
+            return relu(x, act_state)
+        elif self.activation == "Sigmoid":
+            return sigmoid(x, act_state)
+        elif self.activation == "XX1":
+            return xx1(x, act_state)
+        elif self.activation == "XX1GainCor":
+            return xx1_gaincor(x, act_state)
+        elif self.activation == "NoisyXX1":
+            return noisy_xx1(x, act_state)
+        else:
+            raise ValueError(f"Unknown activation: {self.activation}")
 
 def create_layer_state(config: LayerConfig, key: jrandom.PRNGKey) -> LayerState:
     """Create initial layer state from configuration."""
@@ -133,7 +164,7 @@ class Layer:
         self.freeze = kwargs.get('freeze', False)
         self.clampMax = kwargs.get('clampMax', 0.95)
         self.clampMin = kwargs.get('clampMin', 0.0)
-        self.dtype = kwargs.get('dtype', jnp.float64)
+        self.dtype = kwargs.get('dtype', jnp.float32)
         
     def AttachNet(self, net, layerConfig):
         """Attach layer to network and initialize from config."""
@@ -190,6 +221,19 @@ class Layer:
         if self.state is None:
             return jnp.zeros(self.config.length)
         return core_layer.get_activity(self.state)
+        
+    @property
+    def phaseHist(self):
+        """Get phase history from layer state."""
+        if self.state is None:
+            return {}
+        return self.state.phaseHist
+        
+    @phaseHist.setter
+    def phaseHist(self, value):
+        """Set phase history in layer state."""
+        if self.state is not None:
+            self.state = replace(self.state, phaseHist=value)
         
     def resetActivity(self):
         """Reset layer activity."""

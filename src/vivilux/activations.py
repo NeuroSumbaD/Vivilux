@@ -10,17 +10,20 @@ class SigmoidState:
     A: float = 1.0
     B: float = 4.0
     C: float = 0.5
+    VmActThr: float = 0.01
 
 @dataclass
 class ReLUState:
     """State for ReLU activation parameters"""
     m: float = 1.0
-    b: float = 0.0
+    Thr: float = 0.0
+    VmActThr: float = 0.01
 
 @dataclass
 class XX1State:
     """State for XX1 activation parameters"""
     thr: float = 0.0
+    VmActThr: float = 0.01
 
 @dataclass
 class XX1GainCorState:
@@ -29,6 +32,7 @@ class XX1GainCorState:
     NVar: float = 0.005
     GainCor: float = 0.1
     GainCorRange: float = 10.0
+    VmActThr: float = 0.01
 
 @dataclass
 class NoisyXX1State:
@@ -45,17 +49,14 @@ class NoisyXX1State:
     GainCor: float = 0.1
 
 # JIT-compiled activation functions that take state
-@jax.jit
 def sigmoid(x: jnp.ndarray, state: SigmoidState) -> jnp.ndarray:
     """Sigmoid activation: A / (1 + exp(-B * (x - C)))"""
     return state.A / (1 + jnp.exp(-state.B * (x - state.C)))
 
-@jax.jit
 def relu(x: jnp.ndarray, state: ReLUState) -> jnp.ndarray:
-    """Rectified Linear Unit: max(m * (x - b), 0)"""
-    return jnp.maximum(state.m * (x - state.b), 0)
+    """Rectified Linear Unit: max(m * (x - Thr), 0)"""
+    return jnp.maximum(state.m * (x - state.Thr), 0)
 
-@jax.jit
 def xx1(x: jnp.ndarray, state: XX1State) -> jnp.ndarray:
     """Computes X/(X+1) for X > 0 and returns 0 elsewhere."""
     x = jnp.asarray(x)
@@ -64,7 +65,6 @@ def xx1(x: jnp.ndarray, state: XX1State) -> jnp.ndarray:
     out = jnp.where(inp > 0, out, 0.0)
     return out
 
-@jax.jit
 def xx1_gaincor(x: jnp.ndarray, state: XX1GainCorState) -> jnp.ndarray:
     """XX1 with gain correction, fully vectorized."""
     x = jnp.asarray(x)
@@ -76,7 +76,6 @@ def xx1_gaincor(x: jnp.ndarray, state: XX1GainCorState) -> jnp.ndarray:
     out = jnp.where(mask, out2, out1)
     return out
 
-@jax.jit
 def noisy_xx1(x: jnp.ndarray, state: NoisyXX1State) -> jnp.ndarray:
     """
     Noisy XX1 activation, vectorized and stateless.
@@ -115,9 +114,9 @@ def create_sigmoid_state(A: float = 1.0, B: float = 4.0, C: float = 0.5) -> Sigm
     """Create a SigmoidState with the given parameters"""
     return SigmoidState(A=A, B=B, C=C)
 
-def create_relu_state(m: float = 1.0, b: float = 0.0) -> ReLUState:
+def create_relu_state(m: float = 1.0, Thr: float = 0.0) -> ReLUState:
     """Create a ReLUState with the given parameters"""
-    return ReLUState(m=m, b=b)
+    return ReLUState(m=m, Thr=Thr)
 
 def create_xx1_state(thr: float = 0.0) -> XX1State:
     """Create an XX1State with the given parameters"""
@@ -145,9 +144,9 @@ def sigmoid_legacy(x: jnp.ndarray, A: float = 1.0, B: float = 4.0, C: float = 0.
     return sigmoid(x, state)
 
 @jax.jit
-def relu_legacy(x: jnp.ndarray, m: float = 1.0, b: float = 0.0) -> jnp.ndarray:
+def relu_legacy(x: jnp.ndarray, m: float = 1.0, Thr: float = 0.0) -> jnp.ndarray:
     """Legacy ReLU function for backward compatibility"""
-    state = ReLUState(m=m, b=b)
+    state = ReLUState(m=m, Thr=Thr)
     return relu(x, state)
 
 @jax.jit

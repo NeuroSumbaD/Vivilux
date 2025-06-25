@@ -33,6 +33,8 @@ class MeshState:
     setIntegration: float = 0.0
     resetIntegration: float = 0.0
     avgActP: float = 0.0
+    is_feedback: bool = False
+    name: str = ""
 
 @dataclass
 class MeshConfig:
@@ -45,7 +47,7 @@ class MeshConfig:
     InitVar: float = 0.25
     Off: float = 1.0
     Gain: float = 6.0
-    dtype: jnp.dtype = jnp.float64
+    dtype: jnp.dtype = jnp.float32
     wbOn: bool = True
     wbAvgThr: float = 0.25
     wbHiThr: float = 0.4
@@ -68,9 +70,13 @@ class MeshConfig:
     def shape(self) -> tuple:
         return (self.size, self.in_layer_size)
 
-def create_mesh_state(config: MeshConfig, key: jrandom.PRNGKey) -> MeshState:
+def create_mesh_state(config: MeshConfig, key: jrandom.PRNGKey = None, is_feedback: bool = False, name: str = "") -> MeshState:
     """Create initial mesh state from configuration."""
+    if key is None:
+        key = jrandom.PRNGKey(0)
+    print(f"[DEBUG] Creating mesh state: size={config.size}, in_layer_size={config.in_layer_size}")
     matrix = core_mesh.create_mesh_matrix(config.size, config.in_layer_size, config, key)
+    print(f"[DEBUG] Created matrix shape: {matrix.shape}")
     lin_matrix = core_mesh.inv_sigmoid(matrix)
     
     return MeshState(
@@ -79,7 +85,9 @@ def create_mesh_state(config: MeshConfig, key: jrandom.PRNGKey) -> MeshState:
         size=config.size,
         shape=(config.size, config.in_layer_size),
         lastAct=jnp.zeros(config.size, dtype=config.dtype),
-        inAct=jnp.zeros(config.size, dtype=config.dtype)
+        inAct=jnp.zeros(config.size, dtype=config.dtype),
+        is_feedback=is_feedback,
+        name=name
     )
 
 class Mesh:
@@ -99,6 +107,7 @@ class Mesh:
         self.state = None
         self.inLayer = inLayer
         self.rcvLayer = None
+        self.is_feedback = False
         
         # Set name
         self.name = f"MESH_{Mesh.count}"
@@ -118,7 +127,7 @@ class Mesh:
             # Get key from network's RNGs
             net = self.inLayer.net if hasattr(self.inLayer, 'net') else None
             key = net.rngs.get_key() if net else jrandom.PRNGKey(0)
-            self.state = create_mesh_state(self.config, key)
+            self.state = create_mesh_state(self.config, key, is_feedback=self.is_feedback, name=self.name)
             
         input_data = self.inLayer.getActivity()
         dt = self.inLayer.net.DELTA_TIME if hasattr(self.inLayer, 'net') else 0.001
@@ -134,7 +143,7 @@ class Mesh:
             # Get key from network's RNGs
             net = self.inLayer.net if hasattr(self.inLayer, 'net') else None
             key = net.rngs.get_key() if net else jrandom.PRNGKey(0)
-            self.state = create_mesh_state(self.config, key)
+            self.state = create_mesh_state(self.config, key, is_feedback=self.is_feedback, name=self.name)
             
         dt = 0.001  # Default time step
         
@@ -161,7 +170,7 @@ class Mesh:
             # Get key from network's RNGs
             net = self.inLayer.net if hasattr(self.inLayer, 'net') else None
             key = net.rngs.get_key() if net else jrandom.PRNGKey(0)
-            self.state = create_mesh_state(self.config, key)
+            self.state = create_mesh_state(self.config, key, is_feedback=self.is_feedback, name=self.name)
             
         self.state = replace(self.state,
             matrix=matrix,
@@ -187,20 +196,44 @@ class Mesh:
             self.state = replace(self.state, avgActP=self.inLayer.ActAvg.ActPAvg)
             
     def Update(self, dwtLog=None):
-        """Update mesh weights."""
+        """Update mesh weights using the correct learning rule."""
+        print(f"[DEBUG] Mesh {self.name}: Update() called")
         if self.state is None:
+            print(f"[DEBUG] Mesh {self.name}: No state, returning")
             return
-            
-        # Calculate update
-        learning_rate = 0.01  # Default learning rate
-        
         # Get key from network's RNGs
         net = self.inLayer.net if hasattr(self.inLayer, 'net') else None
         key = net.rngs.get_key() if net else jrandom.PRNGKey(0)
-        delta = core_mesh.calculate_update(self.state, self.config, learning_rate, key)
-        
+        # Try to get learning rule from receiving layer config
+        learning_rule_name = getattr(self.rcvLayer.config, 'learningRule', 'CHL') if self.rcvLayer else 'CHL'
+        print(f"[DEBUG] Mesh {self.name}: Applying learning rule {learning_rule_name}")
+        # Check phase history availability
+        in_phase_hist = getattr(self.inLayer, 'phaseHist', None)
+        rcv_phase_hist = getattr(self.rcvLayer, 'phaseHist', None)
+        print(f"[DEBUG] Mesh {self.name}: inLayer phaseHist keys: {list(in_phase_hist.keys()) if in_phase_hist else 'No phaseHist'}")
+        print(f"[DEBUG] Mesh {self.name}: rcvLayer phaseHist keys: {list(rcv_phase_hist.keys()) if rcv_phase_hist else 'No phaseHist'}")
+        try:
+            from vivilux import learningRules
+            learning_rule_fn = getattr(learningRules, learning_rule_name)
+            # Use phaseHist from inLayer and rcvLayer directly
+            delta = learning_rule_fn(self.inLayer, self.rcvLayer)
+            print(f"[DEBUG] Mesh {self.name}: Learning rule {learning_rule_name} returned delta shape: {delta.shape}")
+            print(f"[DEBUG] Mesh {self.name}: Delta range: [{delta.min():.6f}, {delta.max():.6f}]")
+            print(f"[DEBUG] Mesh {self.name}: Delta mean: {delta.mean():.6f}")
+        except Exception as e:
+            print(f"[WARNING] Could not apply learning rule {learning_rule_name}: {e}. Falling back to default update.")
+            import traceback
+            traceback.print_exc()
+            learning_rate = 0.01
+            delta = core_mesh.calculate_update(self.state, self.config, learning_rate, key)
+        # Store old matrix for comparison
+        old_matrix = self.state.matrix.copy()
         # Apply update
         self.state = core_mesh.update_mesh(self.state, self.config, delta, key)
+        # Check if weights changed
+        weight_change = jnp.abs(self.state.matrix - old_matrix).max()
+        print(f"[DEBUG] Mesh {self.name}: Max weight change: {weight_change:.6f}")
+        print(f"[DEBUG] Mesh {self.name}: Weights changed: {weight_change > 1e-6}")
         
     def WtBalance(self):
         """Apply weight balancing."""
@@ -240,6 +273,7 @@ class TransposeMesh(Mesh):
     def __init__(self, mesh: Mesh, inLayer, **kwargs):
         super().__init__(mesh.config.size, inLayer, **kwargs)
         self.original_mesh = mesh
+        self.is_feedback = True
         
     def set(self):
         """Set matrix to transpose of original mesh."""

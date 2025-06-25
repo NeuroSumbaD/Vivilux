@@ -13,14 +13,14 @@ from dataclasses import replace as dataclass_replace
 # These imports are expected to be from the main module
 # LayerState, LayerConfig, and activation helpers should be imported from their respective modules
 
-def update_conductance(state, config, dt: float, key: jrandom.PRNGKey) -> Any:
+def update_conductance(state, config, dt: float, key: Any) -> Any:
     """
     Update conductance values using pure functional computation.
     Args:
         state: LayerState
         config: LayerConfig
         dt: float, time step
-        key: jrandom.PRNGKey
+        key: Any, JAX PRNG key
     Returns:
         Updated LayerState
     """
@@ -39,7 +39,7 @@ def update_conductance(state, config, dt: float, key: jrandom.PRNGKey) -> Any:
         Gi_FFFB=new_Gi_FFFB
     )
 
-def step_time(state, config, time: float, dt: float, key: jrandom.PRNGKey) -> Any:
+def step_time(state, config, time: float, dt: float, key: Any) -> Any:
     """
     Step layer state forward in time using pure functional computation.
     Args:
@@ -47,45 +47,98 @@ def step_time(state, config, time: float, dt: float, key: jrandom.PRNGKey) -> An
         config: LayerConfig
         time: float
         dt: float
-        key: jrandom.PRNGKey
+        key: Any, JAX PRNG key
     Returns:
         Updated LayerState
     """
     if state.EXTERNAL is not None:
-        return clamp_layer(state, config, state.EXTERNAL, time, key)
+        # For output clamped layers: implement Clamp and EndStep behavior
+        # This mimics the original Layer.StepTime behavior for clamped layers
+        
+        # Clamp behavior: apply the external data with clipping
+        clamp_data = jnp.clip(state.EXTERNAL, config.clampMin, config.clampMax)
+        
+        # Update activity and membrane potential
+        # For output layers, Vm is calculated from activity using activation function parameters
+        act_state = config.get_activation_state()
+        new_Vm = act_state.Thr + clamp_data / act_state.Gain
+        
+        # EndStep behavior: return the clamped state
+        return dataclass_replace(state,
+            Act=clamp_data,
+            Vm=new_Vm,
+            # Keep EXTERNAL set for the duration of the phase
+            EXTERNAL=state.EXTERNAL
+        )
+    
+    # Normal layer stepping for non-clamped layers
     Erev = config.Erev
     Gbar = config.Gbar
     act_state = config.get_activation_state()  # Should be a method or helper
     Thr = act_state.Thr
     Vm = state.Vm
+    
+    # Calculate net current using only the conductances that exist in LayerState
+    # Gl and Gk are constants from Gbar, not state variables
     Inet = (state.Ge * Gbar["E"] * (Erev["E"] - Vm) +
-            Gbar["L"] * (Erev["L"] - Vm) +
-            state.Gi * Gbar["I"] * (Erev["I"] - Vm))
-    new_Vm = Vm + config.DtParams["VmDt"] * Inet
+            state.Gi * Gbar["I"] * (Erev["I"] - Vm) +
+            Gbar["L"] * (Erev["L"] - Vm))  # Leak conductance is constant
+    
+    # Update membrane potential
+    VmTau = config.DtParams["VmTau"]
+    VmDt = config.DtParams["VmDt"]
+    new_Vm = Vm + (Inet * VmDt / VmTau)
+    
+    # Update conductances
+    GTau = config.DtParams["GTau"]
+    GDt = config.DtParams["GDt"]
+    new_Ge = state.Ge + (state.GeRaw * GDt / GTau)
+    new_Gi = state.Gi + (state.GiRaw * GDt / GTau)
+    
+    # Update activity using activation function
     geThr = (state.Gi * Gbar["I"] * (Erev["I"] - Thr) +
              Gbar["L"] * (Erev["L"] - Thr))
     geThr /= (Thr - Erev["E"])
-    newAct = config.apply_activation(state.Ge * Gbar["E"] - geThr, act_state, key)
+    new_Act = config.apply_activation(state.Ge * Gbar["E"] - geThr, act_state, key)
+    
+    # Handle below threshold activity
     mask = jnp.logical_and(
         state.Act < act_state.VmActThr,
         new_Vm <= Thr
     )
     below_thresh_act = config.apply_activation(new_Vm - Thr, act_state, key)
-    newAct = jnp.where(mask, below_thresh_act, newAct)
-    act_delta = config.DtParams["VmDt"] * (newAct - state.Act)
-    new_Act = state.Act + act_delta
+    new_Act = jnp.where(mask, below_thresh_act, new_Act)
+    
+    # Update activity with delta
+    act_delta = config.DtParams["VmDt"] * (new_Act - state.Act)
+    final_Act = state.Act + act_delta
+    
     return dataclass_replace(state,
         Vm=new_Vm,
-        Act=new_Act
+        Ge=new_Ge,
+        Gi=new_Gi,
+        Act=final_Act
     )
 
-def integrate_inputs(state, config, key: jrandom.PRNGKey) -> Any:
+def integrate_inputs(state, config, key: Any) -> Any:
     """
-    Integrate inputs from connected meshes. (Stub)
+    Integrate inputs from connected meshes.
+    Args:
+        state: LayerState
+        config: LayerConfig
+        key: Any, JAX PRNG key
+    Returns:
+        Updated LayerState with integrated inputs
     """
+    # For now, we'll need to pass mesh information from the network level
+    # This is a simplified implementation that assumes the layer has access to its meshes
+    # In a full implementation, this would be passed as parameters
+    
+    # Since we can't easily access meshes from here, we'll return the state unchanged
+    # The actual integration will need to happen at the network level
     return state
 
-def run_processes(state, config, key: jrandom.PRNGKey) -> Any:
+def run_processes(state, config, key: Any) -> Any:
     """
     Run neural and phase processes. (Stub)
     """
@@ -97,7 +150,7 @@ def update_fffb(state, config, dt: float) -> float:
     """
     return state.Gi_FFFB
 
-def clamp_layer(state, config, data: jnp.ndarray, time: float, key: jrandom.PRNGKey) -> Any:
+def clamp_layer(state, config, data: jnp.ndarray, time: float, key: Any) -> Any:
     """
     Clamp layer to external data.
     """
@@ -109,7 +162,7 @@ def clamp_layer(state, config, data: jnp.ndarray, time: float, key: jrandom.PRNG
         EXTERNAL=data
     )
 
-def learn_layer(state, config, batch_complete: bool, key: jrandom.PRNGKey) -> Any:
+def learn_layer(state, config, batch_complete: bool, key: Any) -> Any:
     """
     Apply learning rule to layer. (Stub)
     """
@@ -121,19 +174,20 @@ def get_activity(state) -> jnp.ndarray:
     """
     return state.Act
 
-def reset_activity(state, config, key: jrandom.PRNGKey) -> Any:
+def reset_activity(state, config, key: Any) -> Any:
     """
     Reset layer activity to initial state.
     """
     length = config.length
+    dtype = jnp.float32  # Use float32 to avoid warnings
     return dataclass_replace(state,
-        GeRaw=jnp.zeros(length, dtype=config.dtype),
-        Ge=jnp.zeros(length, dtype=config.dtype),
-        GiRaw=jnp.zeros(length, dtype=config.dtype),
-        GiSyn=jnp.zeros(length, dtype=config.dtype),
-        Gi=jnp.zeros(length, dtype=config.dtype),
-        Act=jnp.zeros(length, dtype=config.dtype),
-        Vm=jnp.full(length, config.DtParams["VmInit"], dtype=config.dtype),
+        GeRaw=jnp.zeros(length, dtype=dtype),
+        Ge=jnp.zeros(length, dtype=dtype),
+        GiRaw=jnp.zeros(length, dtype=dtype),
+        GiSyn=jnp.zeros(length, dtype=dtype),
+        Gi=jnp.zeros(length, dtype=dtype),
+        Act=jnp.zeros(length, dtype=dtype),
+        Vm=jnp.full(length, config.DtParams["VmInit"], dtype=dtype),
         neuralEnergy=0.0,
         Gi_FFFB=0.0
     ) 

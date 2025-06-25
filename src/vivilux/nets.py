@@ -85,13 +85,15 @@ class NetConfig:
             "numTimeSteps": 75,
             "isOutput": True,
             "isLearn": False,
-            "clampLayers": {"input": 0},
+            "inputClamped": {"input": 0},
+            "outputClamped": {},
         },
         "plus": {
             "numTimeSteps": 25,
             "isOutput": False,
             "isLearn": True,
-            "clampLayers": {"input": 0, "target": -1},
+            "inputClamped": {"input": 0},
+            "outputClamped": {"target": -1},
         },
     })
     
@@ -132,7 +134,7 @@ class NetConfig:
     
     # Basic properties
     monitoring: bool = False
-    dtype: jnp.dtype = jnp.float64
+    dtype: jnp.dtype = jnp.float32
     name: Optional[str] = None
 
 def create_net_state(config: NetConfig, key: jrandom.PRNGKey, layers: List[Any]) -> NetState:
@@ -140,8 +142,20 @@ def create_net_state(config: NetConfig, key: jrandom.PRNGKey, layers: List[Any])
     # Create layer states for each layer
     from .layers import create_layer_state
     layer_states = [create_layer_state(layer.config, key) for layer in layers]
+    
+    # Create mesh states for all meshes
+    mesh_states = []
+    for layer in layers:
+        for mesh in layer.excMeshes:
+            from .meshes import create_mesh_state
+            mesh_states.append(create_mesh_state(mesh.config, key))
+        for mesh in layer.inhMeshes:
+            from .meshes import create_mesh_state
+            mesh_states.append(create_mesh_state(mesh.config, key))
+    
     return NetState(
         layerStates=layer_states,
+        meshStates=mesh_states,
         results={metric: [] for metric in config.runConfig["metrics"]},
         outputs={key: [] for key in config.runConfig["outputLayers"]}
     )
@@ -208,6 +222,8 @@ class Net:
         self.layerDict[layer.name] = layer
         # Re-initialize state with all layers
         self.state = create_net_state(self.config, self.rngs.get_key(), self.layers)
+        self._sync_layer_states()
+        self._sync_mesh_states()
         
     def AddLayers(self, layers, layerConfig=None):
         """Add multiple layers to the network."""
@@ -225,11 +241,18 @@ class Net:
         if device is not None:
             mesh_args["device"] = device
             
+        print(f"[DEBUG] Creating mesh: size={len(receiving)}, in_layer_size={len(sending)}")
         mesh = mesh_type(len(receiving), sending, **mesh_args)
+        print(f"[DEBUG] Mesh config: size={mesh.config.size}, in_layer_size={mesh.config.in_layer_size}")
         mesh.AttachLayer(receiving)
         
         # Add to legacy lists
         receiving.addMesh(mesh, excitatory=True)
+        
+        # Recreate network state to include the new mesh
+        self.state = create_net_state(self.config, self.rngs.get_key(), self.layers)
+        self._sync_layer_states()
+        self._sync_mesh_states()
         
         return mesh
         
@@ -264,8 +287,10 @@ class Net:
         if dataVectors:
             self.state = core_net.clamp_layers(self.state, self.config, phaseName, dataVectors, self.rngs.get_key(), layer_configs)
         dt = self.config.runConfig["DELTA_TIME"]
-        self.state = core_net.step_phase(self.state, self.config, phaseName, dt, self.rngs.get_key(), layer_configs)
+        self.state = core_net.step_phase(self.state, self.config, phaseName, dt, self.rngs.get_key(), layer_configs, self.layers)
         self.time = self.state.time
+        self._sync_layer_states()
+        self._sync_mesh_states()
         
     def StepTrial(self, runType, debugData={}, **dataVectors):
         """Step through a complete trial."""
@@ -273,8 +298,11 @@ class Net:
             self.state = create_net_state(self.config, self.rngs.get_key(), self.layers)
         layer_configs = [layer.config for layer in self.layers]
         dt = self.config.runConfig["DELTA_TIME"]
-        self.state = core_net.step_trial(self.state, self.config, runType, dt, self.rngs.get_key(), layer_configs)
+        # Pass dataVectors to the core function for proper clamping
+        self.state = core_net.step_trial(self.state, self.config, runType, dt, self.rngs.get_key(), layer_configs, self.layers, dataVectors)
         self.time = self.state.time
+        self._sync_layer_states()
+        self._sync_mesh_states()
         
     def RunEpoch(self, runType, verbosity=1, reset=False, shuffle=False, debugData={}, **dataset):
         """Run a complete epoch."""
@@ -284,8 +312,12 @@ class Net:
         if reset:
             self.state = core_net.reset_activity(self.state, self.config, self.rngs.get_key(), layer_configs)
         dt = self.config.runConfig["DELTA_TIME"]
-        self.state = core_net.run_epoch(self.state, self.config, runType, dt, self.rngs.get_key(), layer_configs)
+        # Pass dataset as dataVectors to the core function for proper clamping
+        self.state = core_net.run_epoch(self.state, self.config, runType, dt, self.rngs.get_key(), layer_configs, self.layers, dataset)
         self.time = self.state.time
+        
+        self._sync_layer_states()
+        self._sync_mesh_states()
         
     def Learn(self, numEpochs=50, verbosity=1, reset=True, shuffle=False, 
               batchSize=1, repeat=1, EvaluateFirst=True, debugData={}, **dataset):
@@ -338,6 +370,32 @@ class Net:
             layer_configs = [layer.config for layer in self.layers]
             self.state = core_net.reset_activity(self.state, self.config, self.rngs.get_key(), layer_configs)
             self.time = self.state.time
+            self._sync_layer_states()
+            self._sync_mesh_states()
+            
+    def _sync_layer_states(self):
+        """Synchronize layer states from network state to layer objects."""
+        if self.state is not None and len(self.layers) == len(self.state.layerStates):
+            for layer, layer_state in zip(self.layers, self.state.layerStates):
+                layer.state = layer_state
+            
+    def _sync_mesh_states(self):
+        """Synchronize mesh states from network state to mesh objects."""
+        if self.state is None:
+            return
+            
+        mesh_state_index = 0
+        for layer in self.layers:
+            # Sync excitatory meshes
+            for mesh in layer.excMeshes:
+                if mesh_state_index < len(self.state.meshStates):
+                    mesh.state = self.state.meshStates[mesh_state_index]
+                    mesh_state_index += 1
+            # Sync inhibitory meshes
+            for mesh in layer.inhMeshes:
+                if mesh_state_index < len(self.state.meshStates):
+                    mesh.state = self.state.meshStates[mesh_state_index]
+                    mesh_state_index += 1
             
     def __str__(self):
         return f"Net({self.name}, layers={len(self.layers)})"
