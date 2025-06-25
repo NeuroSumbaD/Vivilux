@@ -149,7 +149,7 @@ class Net(nnx.Module):
                  runConfig = runConfig_std,
                  phaseConfig = phaseConfig_std,
                  layerConfig = layerConfig_std,
-                 dtype: jnp.dtype = jnp.float64,
+                 dtype: jnp.dtype = jnp.float32,
                  seed: int = 0,
                  **kwargs):
         '''Instanstiates an ordered list of layers that will be

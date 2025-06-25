@@ -34,7 +34,7 @@ class Layer(nnx.Module):
                  isTarget = False, # Specifies the layer is an output layer
                  clampMax = 0.95,
                  clampMin = 0,
-                 dtype: jnp.dtype = jnp.float64,
+                 dtype: jnp.dtype = jnp.float32,
                  name = None,
                  neuron: 'Neuron' = None,
                  rngs: nnx.Rngs = None,
@@ -91,12 +91,6 @@ class Layer(nnx.Module):
         self.freeze = nnx.Variable(False)
 
         Layer.count += 1
-
-        # Default OptThreshParams (will be overridden when attached to net)
-        self.OptThreshParams = {
-            "Send": 0.1,
-            "Delta": 0.005,
-        }
 
         ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
         self.EXTERNAL = None
@@ -335,7 +329,7 @@ class Layer(nnx.Module):
     def Learn(self, batchComplete=False, dwtLog = {}):
         if self.isInput.value or self.freeze.value: return
         for mesh in self.excMeshes:
-            if not mesh.trainable: continue
+            if not mesh.trainable.value: continue
             mesh.Update(dwtLog=dwtLog)
         
     def Debug(self, **kwargs):

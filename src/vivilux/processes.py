@@ -77,7 +77,7 @@ class FFFB(NeuralProcess):
         self.fbi.value = self.fbi.value + FFFBparams["FBDt"] * FFFBparams["FB"] * (avgAct - self.fbi.value)
 
         # Add inhibition to the inhibition
-        self.pool.Gi_FFFB = FFFBparams["Gi"] * (ffi + self.fbi.value)
+        self.pool.Gi_FFFB.value = FFFBparams["Gi"] * (ffi + self.fbi.value)
 
     def UpdateAct(self):
         self.poolAct.value = self.pool.getActivity()
@@ -184,7 +184,7 @@ class ActAvg(PhasicProcess):
         '''Updates longer term running averages for the sake of the learning rule
         '''
         ####----CosDiffFmActs (end of Plus phase)----####
-        if self.pool.isTarget:
+        if self.pool.isTarget.value:
             self.ModAvgLLrn.value = jnp.zeros_like(self.ModAvgLLrn.value)
             return
 
@@ -302,7 +302,7 @@ class XCAL(PhasicProcess):
     def GetDeltas(self,
                   dwtLog = None,
                   ) -> jnp.ndarray:
-        if self.recv.isTarget:
+        if self.recv.isTarget.value:
             dwt = self.ErrorDriven()
         else:
             dwt = self.MixedLearn()

@@ -28,7 +28,7 @@ class Mesh(nnx.Module):
                  InitVar: float = 0.25,
                  Off: float = 1,
                  Gain: float = 6,
-                 dtype: jnp.dtype = jnp.float64,
+                 dtype: jnp.dtype = jnp.float32,
                  wbOn = True,
                  wbAvgThr = 0.25,
                  wbHiThr = 0.4,
