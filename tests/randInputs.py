@@ -75,6 +75,7 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          reset=False,
                          shuffle=False,
                          EvaluateFirst=False,
+                         Jit=True,
                          )
 time = jnp.linspace(0,leabraNet.time, len(result['AvgSSE']))
 plt.plot(time, result['AvgSSE'], label="Leabra Net")

@@ -32,6 +32,9 @@ class PhasicProcess(Process):
     '''A base class for various high-level processes which affect the neuron in
         some structural aspect such as learning, pruning, etc.
     '''
+    def __init__(self):
+        self.phases = nnx.Variable([])
+        
     @abstractmethod
     def StepPhase(self):
         pass

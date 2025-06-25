@@ -202,6 +202,52 @@ class Layer(nnx.Module):
 
         self.EndStep(time, debugData=debugData)
 
+    @nnx.jit
+    def StepTime_jit(self, time: float):
+        # self.UpdateConductance() ## Moved to nets StepPhase
+
+        if self.EXTERNAL is not None: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
+            self.Clamp_jit(self.EXTERNAL, time)
+            self.EndStep_jit(time)
+            return
+            
+
+        # Aliases for readability
+        Erev = self.Erev
+        Gbar = self.Gbar
+        Thr = self.actFn.Thr.value
+        
+        # Update layer potentials
+        Vm = self.Vm.value
+        self.Inet = (self.Ge.value * Gbar["E"] * (Erev["E"] - Vm) +
+                Gbar["L"] * (Erev["L"] - Vm) +
+                self.Gi.value * Gbar["I"] * (Erev["I"] - Vm)
+                )
+        self.Vm.value = self.Vm.value + self.DtParams["VmDt"] * self.Inet
+
+        # Calculate conductance threshold
+        geThr = (self.Gi.value * Gbar["I"] * (Erev["I"] - Thr) +
+                 Gbar["L"] * (Erev["L"] - Thr)
+                )
+        geThr /= (Thr - Erev["E"])
+
+        # Firing rate above threshold governed by conductance-based rate coding
+        newAct = self.actFn(self.Ge.value*Gbar["E"] - geThr)
+        
+        # Activity below threshold is nearly zero
+        mask = jnp.logical_and(
+            self.Act.value < self.actFn.VmActThr.value,
+            self.Vm.value <= Thr
+            )
+        newAct = newAct.at[mask].set(self.actFn(self.Vm.value[mask] - Thr))
+
+        # Update layer activities
+        self.Act.value = self.Act.value + self.DtParams["VmDt"] * (newAct - self.Act.value)
+
+        self.neuralEnergy.value = self.neuralEnergy.value + self.neuron(self.Act.value)
+
+        self.EndStep_jit(time)
+
     def Integrate(self):
         '''Integrates raw conductances from incoming synaptic connections.
             These raw values are then used to update the overall conductance
@@ -290,6 +336,18 @@ class Layer(nnx.Module):
         self.GeRaw.value = self.GeRaw.value.at[:].set(0)
         self.GiRaw.value = self.GiRaw.value.at[:].set(0)
 
+    @nnx.jit
+    def EndStep_jit(self, time):
+        self.ActAvg.StepTime()
+        self.FFFB.UpdateAct()
+        self.UpdateSnapshot()
+        self.UpdateMonitors()
+
+        # TODO: Improve readability of this line (end of trial code?)
+        ## these lines may need to change when Delta-Sender mechanism is included
+        self.GeRaw.value = self.GeRaw.value.at[:].set(0)
+        self.GiRaw.value = self.GiRaw.value.at[:].set(0)
+
     def getActivity(self):
         return self.Act.value
 
@@ -315,6 +373,19 @@ class Layer(nnx.Module):
 
 
     def Clamp(self, data: jnp.ndarray, time: float, monitoring = False, debugData=None):
+        clampData = jnp.array(data)  # Use jnp.array instead of .copy() for JAX compatibility
+
+        # truncate extrema
+        clampData = clampData.at[clampData > self.clampMax.value].set(self.clampMax.value)
+        clampData = clampData.at[clampData < self.clampMin.value].set(self.clampMin.value)
+        #Update activity
+        self.Act.value = clampData
+        
+        # Update other internal variables according to activity
+        self.Vm.value = self.actFn.Thr.value + self.Act.value/self.actFn.Gain.value
+
+    @nnx.jit
+    def Clamp_jit(self, data: jnp.ndarray, time: float):
         clampData = jnp.array(data)  # Use jnp.array instead of .copy() for JAX compatibility
 
         # truncate extrema

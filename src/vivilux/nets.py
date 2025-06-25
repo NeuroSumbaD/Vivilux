@@ -326,6 +326,7 @@ class Net(nnx.Module):
         # Else return number of samples in dataset
         return numSamples
 
+    @nnx.jit
     def EvaluateMetrics(self, **dataset):
         '''Evaluates each metric with respect to each output layer and its
             corresponding target in the dataset. The results are stored in a
@@ -419,6 +420,33 @@ class Net(nnx.Module):
                 if phaseName in process.phases or "all" in process.phases:
                     process.StepPhase()
 
+    @nnx.jit(static_argnames=["phaseName"])
+    def StepPhase_jit(self, phaseName: str, **dataVectors):
+        '''Compute a phase of execution for the neural network. A phase is a 
+            set of timesteps related to some process in the network such as 
+            the generation of an expectation versus observation of outcome in
+            Prof. O'Reilly's error-driven local learning framework.
+        '''
+        numTimeSteps = self.phaseConfig[phaseName]["numTimeSteps"]
+        
+        self.ClampLayers(phaseName, **dataVectors)
+
+        for timeStep in range(numTimeSteps):
+            self.UpdateConductances()
+            self.UpdateActivity(phaseName, **dataVectors)
+
+            self.time.value += self.DELTA_TIME
+
+        # Execute phasic processes (including XCAL)
+        for layer in self.layers:
+            #record phase activity at the end of each phase
+            layer.phaseHist[phaseName] = layer.getActivity().copy()
+
+            #Execute phasic processes (including XCAL)
+            for process in layer.phaseProcesses:
+                if phaseName in process.phases or "all" in process.phases:
+                    process.StepPhase()
+
     def StepTrial(self, runType: str, debugData = {}, **dataVectors):
         Train = runType=="Learn"
         for layer in self.layers:
@@ -437,6 +465,25 @@ class Net(nnx.Module):
                 for layer in self.layers:
                     dwtLog = debugData["dwtLog"] if "dwtLog" in debugData else None
                     layer.Learn(dwtLog=dwtLog)
+
+    @nnx.jit(static_argnames=["runType"])
+    def StepTrial_jit(self, runType: str, **dataVectors):
+        Train = runType=="Learn"
+        for layer in self.layers:
+            layer.InitTrial(Train)
+            
+        for phaseName in self.runConfig[runType]:
+            self.StepPhase_jit(phaseName, **dataVectors)
+
+            # Store layer activity for each output layer during output phases
+            if self.phaseConfig[phaseName]["isOutput"]:
+                for dataName, layer in self.layerDict["outputLayers"].items():
+                    # TODO use pre-allocated numpy array to speed up execution
+                    self.outputs.value[dataName].append(layer.getActivity())
+
+            if self.phaseConfig[phaseName]["isLearn"] and Train:
+                for layer in self.layers:
+                    layer.Learn()
 
     def RunEpoch(self,
                  runType: str,
@@ -473,6 +520,42 @@ class Net(nnx.Module):
             if reset : self.resetActivity()
 
         return numSamples
+    
+    def RunEpoch_jit(self,
+                     runType: str,
+                     verbosity = 1,
+                     reset: bool = False,
+                     shuffle: bool = False,
+                     **dataset: dict[str, jnp.ndarray]):
+        '''Runs an epoch (iteration through all samples of a dataset) using a
+            specified run type mathing a key from self.runConfig.
+
+                - verbosity: specifies how much is printed to the console
+                - reset: specifies if layer activity is returned to zero each epoch
+                - shuffle: determines if the dataset is shuffled each epoch
+        '''
+        numSamples = self.ValidateDataset(**dataset)
+
+        # TODO use pre-allocated numpy array to speed up execution
+        self.outputs.value = {key: [] for key in self.runConfig["outputLayers"]}
+
+        # suffle indices if necessary
+        sampleIndices = jax.random.permutation(self.rngs["Shuffle"](), numSamples) if shuffle \
+            else range(numSamples)
+        
+        # TODO: find a faster way to iterate through datasets
+        for sampleCount, sampleIndex in enumerate(sampleIndices):
+            if verbosity > 0:
+                print(f"\rEpoch: {self.epochIndex.value}, "
+                      f"sample: ({sampleCount+1}/{numSamples}), ", end=""#"\r"
+                      )
+
+            dataVectors = {key:value[sampleIndex] for key, value in dataset.items()}
+            self.StepTrial_jit(runType, **dataVectors)
+
+            if reset : self.resetActivity()
+
+        return numSamples
 
     
     def Learn(self,
@@ -483,6 +566,7 @@ class Net(nnx.Module):
               batchSize = 1, # TODO: Implement batch training (average delta weights over some number of training examples)
               repeat=1, # TODO: Implement repeated sample training (train muliple times for a single input sample before moving on to the next one)
               EvaluateFirst = True,
+              Jit = False,
               debugData = {},
               **dataset: dict[str, jnp.ndarray]) -> dict[str: list]:
         '''Training loop that runs a specified number of epochs.
@@ -509,8 +593,14 @@ class Net(nnx.Module):
         print(f"Begin training [{self.name}]...")
         for epochIndex in range(numEpochs):
             self.epochIndex.value = int(EvaluateFirst) + epochIndex
-            numSamples = self.RunEpoch("Learn", verbosity, reset, shuffle,
-                                       debugData=debugData, **dataset)
+            if Jit:
+                self.RunEpoch_jit("Learn", verbosity, reset, shuffle,
+                                  **dataset)
+            else:
+                numSamples = self.RunEpoch("Learn", verbosity,
+                                           reset, shuffle,
+                                           debugData=debugData,
+                                           **dataset)
             isFinished = self.EvaluateMetrics(**dataset)
             if verbosity > 0:
                 primaryMetric = [key for key in self.runConfig["metrics"]][0]
@@ -533,6 +623,23 @@ class Net(nnx.Module):
 
         if verbosity > 0: print(f"Evaluating [{self.name}] without training...")
         self.RunEpoch("Infer", verbosity, reset, shuffle, **dataset)
+        self.EvaluateMetrics(**dataset)
+        if verbosity > 0:
+            primaryMetric = [key for key in self.runConfig["metrics"]][0]
+            print(f" metric[{primaryMetric}]"
+                f" = {self.results[primaryMetric][-1]:0.4f}")
+            
+        print(f"Evaluation complete.")
+        return self.results
+    
+    def Evaluate_jit(self,
+              verbosity = 1,
+              reset: bool = True,
+              shuffle: bool = True,
+              **dataset: dict[str, jnp.ndarray]):
+
+        if verbosity > 0: print(f"Evaluating [{self.name}] without training...")
+        self.RunEpoch_jit("Infer", verbosity, reset, shuffle, **dataset)
         self.EvaluateMetrics(**dataset)
         if verbosity > 0:
             primaryMetric = [key for key in self.runConfig["metrics"]][0]
