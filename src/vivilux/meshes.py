@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from flax import nnx
 
-class Mesh:
+class Mesh(nnx.Module):
     '''Base class for meshes of synaptic elements.
     '''
     count = 0
@@ -44,57 +44,59 @@ class Mesh:
                  **kwargs):
         self.shape = (size, len(inLayer))
         self.size = size if size > len(inLayer) else len(inLayer)
-        self.Off = Off
-        self.Gain = Gain
+        self.Off = nnx.Variable(Off)
+        self.Gain = nnx.Variable(Gain)
         self.dtype = dtype
         self.rngs = rngs
 
         # Weight Balance Parameters
-        self.wbOn = wbOn
-        self.wbAvgThr = wbAvgThr
-        self.wbHiThr = wbHiThr
-        self.wbHiGain = wbHiGain
-        self.wbLoThr = wbLoThr
-        self.wbLoGain = wbLoGain
-        self.wbInc = wbInc
-        self.wbDec = wbDec
-        self.WtBalInterval = 0
-        self.softBound = softBound
+        self.wbOn = nnx.Variable(wbOn)
+        self.wbAvgThr = nnx.Variable(wbAvgThr)
+        self.wbHiThr = nnx.Variable(wbHiThr)
+        self.wbHiGain = nnx.Variable(wbHiGain)
+        self.wbLoThr = nnx.Variable(wbLoThr)
+        self.wbLoGain = nnx.Variable(wbLoGain)
+        self.wbInc = nnx.Variable(wbInc)
+        self.wbDec = nnx.Variable(wbDec)
+        self.WtBalInterval = nnx.Variable(WtBalInterval)
+        self.softBound = nnx.Variable(softBound)
 
         # Weight Balance variables
-        self.WtBalCtr = 0
-        self.wbFact = 0
+        self.WtBalCtr = nnx.Variable(0)
+        self.wbFact = nnx.Variable(0.0)
 
         # Generate from uniform distribution
         low = InitMean - InitVar
         high = InitMean + InitVar
         if self.rngs is not None:
-            self.matrix = jrandom.uniform(self.rngs["Params"], shape=(size, len(inLayer)), minval=low, maxval=high, dtype=self.dtype)
+            matrix_init = jrandom.uniform(self.rngs["Params"], shape=(size, len(inLayer)), minval=low, maxval=high, dtype=dtype)
         else:
-            self.matrix = jnp.ones((size, len(inLayer)), dtype=self.dtype) * InitMean
-        self.linMatrix = jnp.copy(self.matrix) # initialize linear weight
+            matrix_init = jnp.ones((size, len(inLayer)), dtype=dtype) * InitMean
+        
+        self.matrix = nnx.Variable(matrix_init)
+        self.linMatrix = nnx.Variable(jnp.array(matrix_init)) # initialize linear weight
         self.InvSigMatrix() # correct linear weight
 
         # Other initializations
-        self.Gscale = 1#/len(inLayer)
+        self.Gscale = nnx.Variable(1.0) #/len(inLayer)
         self.inLayer = inLayer
         self.OptThreshParams = inLayer.OptThreshParams
-        self.lastAct = jnp.zeros(self.size, dtype=self.dtype)
-        self.inAct = jnp.zeros(self.size, dtype=self.dtype)
+        self.lastAct = nnx.Variable(jnp.zeros(self.size, dtype=dtype))
+        self.inAct = nnx.Variable(jnp.zeros(self.size, dtype=dtype))
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
-        self.modified = False
+        self.modified = nnx.Variable(False)
 
         self.name = f"MESH_{Mesh.count}"
         Mesh.count += 1
 
-        self.trainable = True
+        self.trainable = nnx.Variable(True)
         self.sndActAvg = inLayer.ActAvg
         self.rcvActAvg = None
 
         # external matrix scaling parameters (constant synaptic gain)
-        self.AbsScale = AbsScale
-        self.RelScale = RelScale
+        self.AbsScale = nnx.Variable(AbsScale)
+        self.RelScale = nnx.Variable(RelScale)
 
         self.AttachDevice(device)
 
@@ -104,13 +106,13 @@ class Mesh:
             device, otherwise it uses device parameters previously set.
         '''
         if device is None:
-            self.totalEnergy = self.holdEnergy + self.updateEnergy
-            return self.totalEnergy, self.holdEnergy, self.updateEnergy
+            totalEnergy = self.holdEnergy.value + self.updateEnergy.value
+            return totalEnergy, self.holdEnergy.value, self.updateEnergy.value
         else:
-            holdEnergy = device.Hold(self.holdIntegration, self.holdTime)
+            holdEnergy = device.Hold(self.holdIntegration.value, self.holdTime.value)
             
-            updateEnergy = device.Set(self.setIntegration)
-            updateEnergy += device.Reset(self.resetIntegration)
+            updateEnergy = device.Set(self.setIntegration.value)
+            updateEnergy += device.Reset(self.resetIntegration.value)
 
             totalEnergy = holdEnergy + updateEnergy
             return totalEnergy, holdEnergy, updateEnergy
@@ -122,14 +124,14 @@ class Mesh:
             parameter structures.
         '''
         self.device = device
-        self.holdEnergy = 0
-        self.updateEnergy = 0
+        self.holdEnergy = nnx.Variable(0.0)
+        self.updateEnergy = nnx.Variable(0.0)
 
         # integration variables for calculating energy of other devices
-        self.holdIntegration = 0
-        self.holdTime = 0
-        self.setIntegration = 0
-        self.resetIntegration = 0
+        self.holdIntegration = nnx.Variable(0.0)
+        self.holdTime = nnx.Variable(0.0)
+        self.setIntegration = nnx.Variable(0.0)
+        self.resetIntegration = nnx.Variable(0.0)
 
     def DeviceHold(self):
         '''Calls the hold function for each device in the mesh according
@@ -139,10 +141,10 @@ class Mesh:
             parameter structures.
         '''
         DT = self.inLayer.net.DELTA_TIME
-        self.holdEnergy += self.device.Hold(self.matrix, DT)
+        self.holdEnergy.value = self.holdEnergy.value + self.device.Hold(self.matrix.value, DT)
 
-        self.holdIntegration += jnp.sum(self.matrix)
-        self.holdTime += DT
+        self.holdIntegration.value = self.holdIntegration.value + jnp.sum(self.matrix.value)
+        self.holdTime.value = self.holdTime.value + DT
 
 
     def DeviceUpdate(self, delta):
@@ -152,35 +154,35 @@ class Mesh:
             This function should be overwritten for meshses with different
             parameter structures.
         '''
-        currMat = self.matrix
-        newMat = self.sigmoid(self.linMatrix + delta)
-        self.updateEnergy += self.device.Reset(currMat)
-        self.updateEnergy += self.device.Set(newMat)
+        currMat = self.matrix.value
+        newMat = self.sigmoid(self.linMatrix.value + delta)
+        self.updateEnergy.value = self.updateEnergy.value + self.device.Reset(currMat)
+        self.updateEnergy.value = self.updateEnergy.value + self.device.Set(newMat)
 
-        self.setIntegration += jnp.sum(currMat)
-        self.resetIntegration += jnp.sum(newMat)
+        self.setIntegration.value = self.setIntegration.value + jnp.sum(currMat)
+        self.resetIntegration.value = self.resetIntegration.value + jnp.sum(newMat)
     
     def set(self, matrix):
-        self.modified = True
-        self.matrix = matrix
+        self.modified.value = True
+        self.matrix.value = matrix
         self.InvSigMatrix()
 
     def setGscale(self):
         # TODO: handle case for inhibitory mesh
-        totalRel = jnp.array(sum(mesh.RelScale for mesh in self.rcvLayer.excMeshes), dtype=self.dtype)
-        self.Gscale = self.AbsScale * self.RelScale 
-        self.Gscale /= totalRel if totalRel > 0 else 1
+        totalRel = jnp.array(sum(mesh.RelScale.value for mesh in self.rcvLayer.excMeshes), dtype=self.dtype)
+        self.Gscale.value = self.AbsScale.value * self.RelScale.value 
+        self.Gscale.value = self.Gscale.value / (totalRel if totalRel > 0 else 1)
 
         # calculate average from input layer on last trial
-        self.avgActP = self.inLayer.ActAvg.ActPAvg
+        self.avgActP = self.inLayer.ActAvg.ActPAvg.value
 
         #calculate average number of active neurons in sending layer
         sendLayActN = jnp.maximum(jnp.round(jnp.array(self.avgActP*len(self.inLayer))), 1)
         sc = 1/sendLayActN # TODO: implement relative importance
-        self.Gscale *= sc
+        self.Gscale.value = self.Gscale.value * sc
 
     def get(self):
-        return self.Gscale * self.matrix
+        return self.Gscale.value * self.matrix.value
     
     def getInput(self):
         act = self.inLayer.getActivity()
@@ -193,23 +195,29 @@ class Mesh:
 
         # Implement delta-sender behavior (thresholds changes in conductance)
         ## NOTE: this does not reduce matrix multiplications like it does in Leabra
-        delta = data - self.lastAct
+        delta = data - self.lastAct.value
 
+        # Check conditions for zeroing delta
         cond1 = data <= self.OptThreshParams["Send"]
         cond2 = jnp.abs(delta) <= self.OptThreshParams["Delta"]
-        mask1 = jnp.logical_or(cond1, cond2)
-        notMask1 = jnp.logical_not(mask1)
-        delta = delta.at[mask1].set(0) # only signal delta above both thresholds
-        self.lastAct = self.lastAct.at[notMask1].set(data[notMask1])
+        should_zero = jnp.logical_or(cond1, cond2)
+        should_update = jnp.logical_not(should_zero)
+        
+        # Zero delta where conditions are met, update lastAct where not
+        delta = jnp.where(should_zero, 0.0, delta)
+        self.lastAct.value = jnp.where(should_update, data, self.lastAct.value)
 
-        cond3 = self.lastAct > self.OptThreshParams["Send"]
-        mask2 = jnp.logical_and(cond3, cond1)
-        delta = delta.at[mask2].set(-self.lastAct[mask2])
-        self.lastAct = self.lastAct.at[mask2].set(0)
+        # Handle case where lastAct > threshold but data <= threshold
+        cond3 = self.lastAct.value > self.OptThreshParams["Send"]
+        reset_lastAct = jnp.logical_and(cond3, cond1)
+        
+        # Set delta to negative lastAct where reset is needed
+        delta = jnp.where(reset_lastAct, -self.lastAct.value, delta)
+        self.lastAct.value = jnp.where(reset_lastAct, 0.0, self.lastAct.value)
 
-        self.inAct += delta
+        self.inAct.value = self.inAct.value + delta
 
-        return self.applyTo(self.inAct[:self.shape[1]])
+        return self.applyTo(self.inAct.value[:self.shape[1]])
             
     def applyTo(self, data):
         try:
@@ -228,50 +236,73 @@ class Mesh:
     def WtBalance(self):
         '''Updates the weight balancing factors used by XCAL.
         '''
-        self.WtBalCtr += 1
-        if self.WtBalCtr >= self.WtBalInterval:
-            self.WtBalCtr = 0
-
-            ####----WtBalFmWt----####
-            if not self.WtBalance: return
-            wbAvg = jnp.mean(self.matrix)
-
-            if wbAvg < self.wbLoThr:
-                if wbAvg < self.wbAvgThr:
-                    wbAvg = self.wbAvgThr
-                self.wbFact = self.wbLoGain * (self.wbLoThr - wbAvg)
-                self.wbDec = 1/ (1 + self.wbFact)
-                self.wbInc = 2 - self.wbDec
-            elif wbAvg > self.wbHiThr:
-                self.wbFact = self.wbHiGain * (wbAvg - self.wbHiThr)
-                self.wbInc = 1/ (1 + self.wbFact)
-                self.wbDec = 2 - self.wbInc
+        self.WtBalCtr.value = self.WtBalCtr.value + 1
+        should_balance = self.WtBalCtr.value >= self.WtBalInterval.value
+        
+        # Reset counter if needed
+        self.WtBalCtr.value = jnp.where(should_balance, 0, self.WtBalCtr.value)
+        
+        # Only proceed if weight balancing is on and counter threshold reached
+        proceed = jnp.logical_and(self.wbOn.value, should_balance)
+        
+        # Calculate wbAvg
+        wbAvg = jnp.mean(self.matrix.value)
+        # Ensure wbAvg is at least wbAvgThr
+        wbAvg = jnp.maximum(wbAvg, self.wbAvgThr.value)
+        
+        # Check conditions
+        is_low = wbAvg < self.wbLoThr.value
+        is_high = wbAvg > self.wbHiThr.value
+        
+        # Low threshold case
+        wbFact_low = self.wbLoGain.value * (self.wbLoThr.value - wbAvg)
+        wbDec_low = 1.0 / (1.0 + wbFact_low)
+        wbInc_low = 2.0 - wbDec_low
+        
+        # High threshold case
+        wbFact_high = self.wbHiGain.value * (wbAvg - self.wbHiThr.value)
+        wbInc_high = 1.0 / (1.0 + wbFact_high)
+        wbDec_high = 2.0 - wbInc_high
+        
+        # Select values based on conditions
+        new_wbFact = jnp.where(is_low, wbFact_low, 
+                               jnp.where(is_high, wbFact_high, self.wbFact.value))
+        new_wbInc = jnp.where(is_low, wbInc_low,
+                              jnp.where(is_high, wbInc_high, self.wbInc.value))
+        new_wbDec = jnp.where(is_low, wbDec_low,
+                              jnp.where(is_high, wbDec_high, self.wbDec.value))
+        
+        # Update values only if proceeding
+        self.wbFact.value = jnp.where(proceed, new_wbFact, self.wbFact.value)
+        self.wbInc.value = jnp.where(proceed, new_wbInc, self.wbInc.value)
+        self.wbDec.value = jnp.where(proceed, new_wbDec, self.wbDec.value)
 
     def SoftBound(self, delta: jnp.ndarray) -> jnp.ndarray:
-        if self.softBound:
-            mask1 = delta > 0
-            m, n = delta.shape
-            delta = delta.at[mask1].multiply(self.wbInc * (1 - self.linMatrix[:m,:n][mask1]))
-
-            mask2 = jnp.logical_not(mask1)
-            delta = delta.at[mask2].multiply(self.wbDec * self.linMatrix[:m,:n][mask2])
+        mask_positive = delta > 0
+        m, n = delta.shape
+        
+        if self.softBound.value:
+            # For positive deltas
+            factor_pos = self.wbInc.value * (1 - self.linMatrix.value[:m,:n])
+            delta_pos = delta * factor_pos
+            
+            # For negative deltas  
+            factor_neg = self.wbDec.value * self.linMatrix.value[:m,:n]
+            delta_neg = delta * factor_neg
         else:
-            mask1 = delta > 0
-            m, n = delta.shape
-            delta = delta.at[mask1].multiply(self.wbInc)
-
-            mask2 = jnp.logical_not(mask1)
-            delta = delta.at[mask2].multiply(self.wbDec)
-                    
+            # For positive deltas
+            delta_pos = delta * self.wbInc.value
+            
+            # For negative deltas
+            delta_neg = delta * self.wbDec.value
+        
+        # Select based on sign
+        delta = jnp.where(mask_positive, delta_pos, delta_neg)
         return delta
     
     def ClipLinMatrix(self):
         '''Bounds linear weights on range [0-1]'''
-        mask1 = self.linMatrix < 0
-        self.linMatrix = self.linMatrix.at[mask1].set(0)
-        
-        mask2 = self.linMatrix > 1
-        self.linMatrix = self.linMatrix.at[mask2].set(1)
+        self.linMatrix.value = jnp.clip(self.linMatrix.value, 0.0, 1.0)
 
     def CalculateUpdate(self,
                         dwtLog = None,
@@ -292,7 +323,7 @@ class Mesh:
 
             Overwrite this function for other learning rule or mesh types.
         '''
-        self.linMatrix = self.linMatrix.at[:m, :n].add(delta)
+        self.linMatrix.value = self.linMatrix.value.at[:m, :n].add(delta)
         self.ClipLinMatrix()
         self.SigMatrix()
 
@@ -310,8 +341,8 @@ class Mesh:
         self.WtBalance()
 
         if dwtLog is not None:
-            self.Debug(lwt = self.linMatrix,
-                       wt = self.matrix,
+            self.Debug(lwt = self.linMatrix.value,
+                       wt = self.matrix.value,
                        dwtLog = dwtLog)
 
     def Debug(self,
@@ -363,9 +394,8 @@ class Mesh:
             vlDatum = vlDatum[:shape[0],:shape[1]]
             lbDatum = leabraData[key]
             percentError = 100 * (vlDatum - lbDatum) / lbDatum
-            mask = lbDatum == 0
-            mask = jnp.logical_and(mask, vlDatum==0)
-            percentError[mask] = 0
+            mask = jnp.logical_and(lbDatum == 0, vlDatum == 0)
+            percentError = jnp.where(mask, 0, percentError)
             isEqual = jnp.all(jnp.abs(percentError) < 2)
             
             allEqual[key] = isEqual
@@ -380,37 +410,43 @@ class Mesh:
             purely linearly since the maximum and minimum possible weight is
             bounded by physical constraints.
         '''
-        mask1 = self.linMatrix <= 0
-        self.matrix = self.matrix.at[mask1].set(0)
-
-        mask2 = self.linMatrix >= 1
-        self.matrix = self.matrix.at[mask2].set(1)
-
-        mask3 = jnp.logical_not(jnp.logical_or(mask1, mask2))
-        self.matrix = self.matrix.at[mask3].set(self.sigmoid(self.linMatrix[mask3]))
-
-        return self.matrix
+        # Use jnp.where for conditional assignment instead of boolean indexing
+        self.matrix.value = jnp.where(
+            self.linMatrix.value <= 0, 
+            0.0,
+            jnp.where(
+                self.linMatrix.value >= 1,
+                1.0,
+                self.sigmoid(self.linMatrix.value)
+            )
+        )
+        return self.matrix.value
 
     def sigmoid(self, data):
-        return 1 / (1 + jnp.power(self.Off*(1-data)/data, self.Gain))
+        return 1 / (1 + jnp.power(self.Off.value*(1-data)/data, self.Gain.value))
     
     def InvSigMatrix(self):
         '''This function is only called when the weights are set manually to
             ensure that the linear weights (linMatrix) are accurately tracked.
         '''
-        mask1 = self.matrix <= 0
-        self.matrix = self.matrix.at[mask1].set(0)
-
-        mask2 = self.matrix >= 1
-        self.matrix = self.matrix.at[mask2].set(1)
-
-        mask3 = jnp.logical_not(jnp.logical_or(mask1, mask2))
-        self.linMatrix = self.linMatrix.at[mask3].set(self.invSigmoid(self.matrix[mask3]))
-
-        return self.linMatrix
+        # Clip matrix values to [0, 1] first
+        clipped_matrix = jnp.clip(self.matrix.value, 0.0, 1.0)
+        self.matrix.value = clipped_matrix
+        
+        # Use jnp.where for conditional assignment
+        self.linMatrix.value = jnp.where(
+            clipped_matrix <= 0,
+            0.0,
+            jnp.where(
+                clipped_matrix >= 1,
+                1.0,
+                self.invSigmoid(clipped_matrix)
+            )
+        )
+        return self.linMatrix.value
     
     def invSigmoid(self, data):
-        return 1 / (1 + jnp.power((1/self.Off)*(1-data)/data, (1/self.Gain)))
+        return 1 / (1 + jnp.power((1/self.Off.value)*(1-data)/data, (1/self.Gain.value)))
 
     def __len__(self):
         return self.size
@@ -431,13 +467,13 @@ class TransposeMesh(Mesh):
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
 
-        self.trainable = False
+        self.trainable = nnx.Variable(False)
 
     def set(self):
         raise Exception("Feedback mesh has no 'set' method.")
 
     def get(self):
-        return self.Gscale * self.mesh.get().T 
+        return self.Gscale.value * self.mesh.get().T 
     
     def getInput(self):
         act = self.mesh.inLayer.getActivity()

@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from .nets import Net
     from .meshes import Mesh
     from .processes import Process, NeuralProcess, PhasicProcess
+    from .neurons import Neuron, YunJhuModel
 
 from .processes import ActAvg, FFFB
 
@@ -17,12 +18,9 @@ from flax import nnx
 
 # import defaults
 from .activations import NoisyXX1
-from .learningRules import CHL
-from .optimizers import Simple
 from .visualize import Monitor
-from .photonics.neurons import Neuron, YunJhuModel
 
-class Layer:
+class Layer(nnx.Module):
     '''Base class for a layer that includes input matrices and activation
         function pairings. Each layer retains a seperate state for predict
         and observe phases, along with a list of input meshes applied to
@@ -32,33 +30,35 @@ class Layer:
     def __init__(self,
                  length,
                  activation=NoisyXX1(),
-                 learningRule=CHL,
                  isInput = False,
                  isTarget = False, # Specifies the layer is an output layer
                  clampMax = 0.95,
                  clampMin = 0,
                  dtype: jnp.dtype = jnp.float64,
                  name = None,
-                 neuron: Neuron = YunJhuModel,
+                 neuron: 'Neuron' = None,
                  rngs: nnx.Rngs = None,
                  ):
         
-        self.isFloating = True # Not attached to net
+        self.isFloating = nnx.Variable(True) # Not attached to net
         
         # initialize energy accounting 
+        if neuron is None:
+            # Import here to avoid circular import
+            from .neurons import YunJhuModel
+            neuron = YunJhuModel
         self.neuron = neuron
-        self.neuralEnergy = 0 # increment for each timestep
+        self.neuralEnergy = nnx.Variable(0.0) # increment for each timestep
 
-        self.modified = False 
+        self.modified = nnx.Variable(False)
         self.actFn = activation
-        self.rule = learningRule
         self.dtype = dtype
         self.rngs = rngs
         self.monitors: dict[str, Monitor] = {}
         self.snapshot = {}
 
-        self.clampMax = clampMax
-        self.clampMin = clampMin
+        self.clampMax = nnx.Variable(clampMax)
+        self.clampMin = nnx.Variable(clampMin)
 
         # self.batchMode = batchMode
         # self.deltas = [] # only used during batched training
@@ -66,15 +66,15 @@ class Layer:
         # Initialize layer variables
         self.net = None
 
-        self.GeRaw = jnp.zeros(length, dtype=self.dtype)
-        self.Ge = jnp.zeros(length, dtype=self.dtype)
+        self.GeRaw = nnx.Variable(jnp.zeros(length, dtype=dtype))
+        self.Ge = nnx.Variable(jnp.zeros(length, dtype=dtype))
 
-        self.GiRaw = jnp.zeros(length, dtype=self.dtype)
-        self.GiSyn = jnp.zeros(length, dtype=self.dtype)
-        self.Gi = jnp.zeros(length, dtype=self.dtype)
+        self.GiRaw = nnx.Variable(jnp.zeros(length, dtype=dtype))
+        self.GiSyn = nnx.Variable(jnp.zeros(length, dtype=dtype))
+        self.Gi = nnx.Variable(jnp.zeros(length, dtype=dtype))
 
-        self.Act = jnp.zeros(length, dtype=self.dtype)
-        self.Vm = jnp.zeros(length, dtype=self.dtype)
+        self.Act = nnx.Variable(jnp.zeros(length, dtype=dtype))
+        self.Vm = nnx.Variable(jnp.zeros(length, dtype=dtype))
 
         # Empty initial excitatory and inhibitory meshes
         self.excMeshes: list[Mesh] = []
@@ -86,11 +86,17 @@ class Layer:
 
         self.name =  f"LAYER_{Layer.count}" if name == None else name
         if isInput and name == None: self.name = "INPUT_" + self.name
-        self.isInput = isInput
-        self.isTarget = isTarget
-        self.freeze = False
+        self.isInput = nnx.Variable(isInput)
+        self.isTarget = nnx.Variable(isTarget)
+        self.freeze = nnx.Variable(False)
 
         Layer.count += 1
+
+        # Default OptThreshParams (will be overridden when attached to net)
+        self.OptThreshParams = {
+            "Send": 0.1,
+            "Delta": 0.005,
+        }
 
         ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
         self.EXTERNAL = None
@@ -107,8 +113,8 @@ class Layer:
         # Attach channel params
         self.Gbar = layerConfig["Gbar"]
         self.Erev = layerConfig["Erev"]
-        self.Vm = self.Vm.at[:].set(layerConfig["VmInit"]) # initialize Vm
-        self.VmInit = layerConfig["VmInit"]
+        self.Vm.value = self.Vm.value.at[:].set(layerConfig["VmInit"]) # initialize Vm
+        self.VmInit = nnx.Variable(layerConfig["VmInit"])
 
         # Attach DtParams
         self.DtParams = layerConfig["DtParams"]
@@ -131,31 +137,31 @@ class Layer:
         ##NOTE: special process, executed after Ge update, before Gi update
         if layerConfig["hasInhib"]:
             self.FFFB = FFFB(self)
-            self.Gi_FFFB = 0
+            self.Gi_FFFB = nnx.Variable(0.0)
 
         # Attach optimizer
         self.optimizer = layerConfig["optimizer"](**layerConfig["optArgs"])
 
-        self.isFloating = False
+        self.isFloating.value = False
 
     def UpdateConductance(self):
         self.Integrate()
         self.RunProcesses()
 
         # Update conductances from raw inputs
-        self.Ge += (self.DtParams["Integ"] *
+        self.Ge.value = self.Ge.value + (self.DtParams["Integ"] *
                        self.DtParams["GDt"] * 
-                       (self.GeRaw - self.Ge)
+                       (self.GeRaw.value - self.Ge.value)
                        )
         
         # Call FFFB to update GiRaw
         self.FFFB.StepTime()
 
-        self.GiSyn += (self.DtParams["Integ"] *
+        self.GiSyn.value = self.GiSyn.value + (self.DtParams["Integ"] *
                        self.DtParams["GDt"] * 
-                       (self.GiRaw - self.GiSyn)
+                       (self.GiRaw.value - self.GiSyn.value)
                        )
-        self.Gi = self.GiSyn + self.Gi_FFFB # Add synaptic Gi to FFFB contribution
+        self.Gi.value = self.GiSyn.value + self.Gi_FFFB.value # Add synaptic Gi to FFFB contribution
     
     def StepTime(self, time: float, debugData = None):
         # self.UpdateConductance() ## Moved to nets StepPhase
@@ -169,36 +175,36 @@ class Layer:
         # Aliases for readability
         Erev = self.Erev
         Gbar = self.Gbar
-        Thr = self.actFn.Thr
+        Thr = self.actFn.Thr.value
         
         # Update layer potentials
-        Vm = self.Vm
-        self.Inet = (self.Ge * Gbar["E"] * (Erev["E"] - Vm) +
+        Vm = self.Vm.value
+        self.Inet = (self.Ge.value * Gbar["E"] * (Erev["E"] - Vm) +
                 Gbar["L"] * (Erev["L"] - Vm) +
-                self.Gi * Gbar["I"] * (Erev["I"] - Vm)
+                self.Gi.value * Gbar["I"] * (Erev["I"] - Vm)
                 )
-        self.Vm += self.DtParams["VmDt"] * self.Inet
+        self.Vm.value = self.Vm.value + self.DtParams["VmDt"] * self.Inet
 
         # Calculate conductance threshold
-        geThr = (self.Gi * Gbar["I"] * (Erev["I"] - Thr) +
+        geThr = (self.Gi.value * Gbar["I"] * (Erev["I"] - Thr) +
                  Gbar["L"] * (Erev["L"] - Thr)
                 )
         geThr /= (Thr - Erev["E"])
 
         # Firing rate above threshold governed by conductance-based rate coding
-        newAct = self.actFn(self.Ge*Gbar["E"] - geThr)
+        newAct = self.actFn(self.Ge.value*Gbar["E"] - geThr)
         
         # Activity below threshold is nearly zero
         mask = jnp.logical_and(
-            self.Act < self.actFn.VmActThr,
-            self.Vm <= self.actFn.Thr
+            self.Act.value < self.actFn.VmActThr.value,
+            self.Vm.value <= Thr
             )
-        newAct = newAct.at[mask].set(self.actFn(self.Vm[mask] - Thr))
+        newAct = newAct.at[mask].set(self.actFn(self.Vm.value[mask] - Thr))
 
         # Update layer activities
-        self.Act += self.DtParams["VmDt"] * (newAct - self.Act)
+        self.Act.value = self.Act.value + self.DtParams["VmDt"] * (newAct - self.Act.value)
 
-        self.neuralEnergy += self.neuron(self.Act)
+        self.neuralEnergy.value = self.neuralEnergy.value + self.neuron(self.Act.value)
 
         self.EndStep(time, debugData=debugData)
 
@@ -208,10 +214,10 @@ class Layer:
             in a time integrated manner.
         '''
         for mesh in self.excMeshes:
-            self.GeRaw += mesh.apply()[:len(self)]
+            self.GeRaw.value = self.GeRaw.value + mesh.apply()[:len(self)]
 
         for mesh in self.inhMeshes:
-            self.GiRaw += mesh.apply()[:len(self)]
+            self.GiRaw.value = self.GiRaw.value + mesh.apply()[:len(self)]
 
     def InitTrial(self, Train: bool):
         if Train:
@@ -225,8 +231,8 @@ class Layer:
             mesh.setGscale()
 
         ## InitGInc
-        self.GeRaw = self.GeRaw.at[:].set(0) # reset
-        self.GiRaw = self.GiRaw.at[:].set(0) # reset
+        self.GeRaw.value = self.GeRaw.value.at[:].set(0) # reset
+        self.GiRaw.value = self.GiRaw.value.at[:].set(0) # reset
 
         self.EXTERNAL = None
     
@@ -253,12 +259,12 @@ class Layer:
 
     def UpdateSnapshot(self):
         self.snapshot = {
-            "activity": self.Act,
-            "GeRaw": self.GeRaw,
-            "Ge": self.Ge,
-            "GiRaw": self.GiRaw,
-            "Gi": self.Gi,
-            "Vm": self.Vm
+            "activity": self.Act.value,
+            "GeRaw": self.GeRaw.value,
+            "Ge": self.Ge.value,
+            "GiRaw": self.GiRaw.value,
+            "Gi": self.Gi.value,
+            "Vm": self.Vm.value
         }
 
     def EndStep(self, time, debugData = None):
@@ -271,41 +277,41 @@ class Layer:
         # TODO: check how this affects execution time
         if bool(debugData): #check if debugData is empty
             self.Debug(time=time,
-                       Act = self.Act,
-                       AvgS = self.ActAvg.AvgS,
-                       AvgSS = self.ActAvg.AvgSS,
-                       AvgM = self.ActAvg.AvgM,
-                       AvgL = self.ActAvg.AvgL,
+                       Act = self.Act.value,
+                       AvgS = self.ActAvg.AvgS.value,
+                       AvgSS = self.ActAvg.AvgSS.value,
+                       AvgM = self.ActAvg.AvgM.value,
+                       AvgL = self.ActAvg.AvgL.value,
                     #    AvgLLrn = self.ActAvg.AvgLLrn,
-                       AvgSLrn = self.ActAvg.AvgSLrn,
-                       Ge=self.Ge,
-                       GeRaw=self.GeRaw,
-                       Gi=self.Gi,
-                       GiRaw=self.GiRaw,
+                       AvgSLrn = self.ActAvg.AvgSLrn.value,
+                       Ge=self.Ge.value,
+                       GeRaw=self.GeRaw.value,
+                       Gi=self.Gi.value,
+                       GiRaw=self.GiRaw.value,
                        debugData = debugData,
                        )
 
         # TODO: Improve readability of this line (end of trial code?)
         ## these lines may need to change when Delta-Sender mechanism is included
-        self.GeRaw = self.GeRaw.at[:].set(0)
-        self.GiRaw = self.GiRaw.at[:].set(0)
+        self.GeRaw.value = self.GeRaw.value.at[:].set(0)
+        self.GiRaw.value = self.GiRaw.value.at[:].set(0)
 
     def getActivity(self):
-        return self.Act
+        return self.Act.value
 
     def printActivity(self):
-        return [self.Act]
+        return [self.Act.value]
     
     def resetActivity(self):
         '''Resets all activation traces to zero vectors.'''
-        self.Act = self.Act.at[:].set(0)
-        self.Vm = self.Vm.at[:].set(self.VmInit)
+        self.Act.value = self.Act.value.at[:].set(0)
+        self.Vm.value = self.Vm.value.at[:].set(self.VmInit.value)
 
-        self.GeRaw = self.GeRaw.at[:].set(0)
-        self.Ge = self.Ge.at[:].set(0)
-        self.GiRaw = self.GiRaw.at[:].set(0)
-        self.GiSyn = self.GiSyn.at[:].set(0)
-        self.Gi = self.Gi.at[:].set(0)
+        self.GeRaw.value = self.GeRaw.value.at[:].set(0)
+        self.Ge.value = self.Ge.value.at[:].set(0)
+        self.GiRaw.value = self.GiRaw.value.at[:].set(0)
+        self.GiSyn.value = self.GiSyn.value.at[:].set(0)
+        self.Gi.value = self.Gi.value.at[:].set(0)
 
         self.FFFB.Reset()
         self.ActAvg.Reset()
@@ -315,19 +321,19 @@ class Layer:
 
 
     def Clamp(self, data: jnp.ndarray, time: float, monitoring = False, debugData=None):
-        clampData = data.copy()
+        clampData = jnp.array(data)  # Use jnp.array instead of .copy() for JAX compatibility
 
         # truncate extrema
-        clampData = clampData.at[clampData > self.clampMax].set(self.clampMax)
-        clampData = clampData.at[clampData < self.clampMin].set(self.clampMin)
+        clampData = clampData.at[clampData > self.clampMax.value].set(self.clampMax.value)
+        clampData = clampData.at[clampData < self.clampMin.value].set(self.clampMin.value)
         #Update activity
-        self.Act = clampData
+        self.Act.value = clampData
         
         # Update other internal variables according to activity
-        self.Vm = self.actFn.Thr + self.Act/self.actFn.Gain
+        self.Vm.value = self.actFn.Thr.value + self.Act.value/self.actFn.Gain.value
 
     def Learn(self, batchComplete=False, dwtLog = {}):
-        if self.isInput or self.freeze: return
+        if self.isInput.value or self.freeze.value: return
         for mesh in self.excMeshes:
             if not mesh.trainable: continue
             mesh.Update(dwtLog=dwtLog)
@@ -382,25 +388,25 @@ class Layer:
             total, hold, update = mesh.GetEnergy(device=synDevice)
             synapticEnergy += total
 
-        return jnp.sum(self.neuralEnergy), synapticEnergy
+        return jnp.sum(self.neuralEnergy.value), synapticEnergy
     
     def SetDtype(self, dtype: jnp.dtype):
         self.dtype = dtype
-        self.GeRaw = self.GeRaw.astype(dtype)
-        self.Ge = self.Ge.astype(dtype)
+        self.GeRaw.value = self.GeRaw.value.astype(dtype)
+        self.Ge.value = self.Ge.value.astype(dtype)
 
-        self.GiRaw = self.GiRaw.astype(dtype)
-        self.GiSyn = self.GiSyn.astype(dtype)
-        self.Gi = self.Gi.astype(dtype)
+        self.GiRaw.value = self.GiRaw.value.astype(dtype)
+        self.GiSyn.value = self.GiSyn.value.astype(dtype)
+        self.Gi.value = self.Gi.value.astype(dtype)
 
-        self.Act = self.Act.astype(dtype)
-        self.Vm = self.Act.astype(dtype)
+        self.Act.value = self.Act.value.astype(dtype)
+        self.Vm.value = self.Vm.value.astype(dtype)
 
     def Freeze(self):
-        self.freeze = True
+        self.freeze.value = True
 
     def Unfreeze(self):
-        self.freeze = False
+        self.freeze.value = False
     
     def addMesh(self, mesh: Mesh, excitatory = True):
         mesh.AttachLayer(self)
@@ -410,11 +416,11 @@ class Layer:
             self.inhMeshes.append(mesh)
     
     def __len__(self):
-        return len(self.Act)
+        return len(self.Act.value)
 
     def __str__(self) -> str:
-        layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
+        layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.actFn}\n\tLearning"
         layStr += f"Rule = {self.rule}"
         layStr += f"\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
-        layStr += f"\n\tActivity: \n\t\t{self.Act}"
+        layStr += f"\n\tActivity: \n\t\t{self.Act.value}"
         return layStr

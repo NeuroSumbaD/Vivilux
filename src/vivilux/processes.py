@@ -9,14 +9,9 @@ if TYPE_CHECKING:
 from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
+from flax import nnx
 
-# import defaults
-# from .activations import Sigmoid
-# from .learningRules import CHL
-# from .optimizers import Simple
-# from .visualize import Monitor
-
-class Process(ABC):
+class Process(ABC, nnx.Module):
     @abstractmethod
     def AttachLayer(self, layer: Layer):
         pass
@@ -54,42 +49,42 @@ class FFFB(NeuralProcess):
         smooths the activity over time.
     '''
     def __init__(self, layer: Layer):
-        self.isFloating = True
+        self.isFloating = nnx.Variable(True)
 
         self.AttachLayer(layer)
 
     def AttachLayer(self, layer: Layer):
         self.pool = layer
-        self.poolAct = jnp.zeros(len(layer))
+        self.poolAct = nnx.Variable(jnp.zeros(len(layer)))
         self.FFFBparams = layer.FFFBparams
 
-        self.fbi = 0
+        self.fbi = nnx.Variable(0.0)
 
-        self.isFloating = False
+        self.isFloating = nnx.Variable(False)
 
     def StepTime(self):
         FFFBparams = self.FFFBparams
-        poolGe = self.pool.Ge
+        poolGe = self.pool.Ge.value
         avgGe = jnp.mean(poolGe)
         maxGe = jnp.max(poolGe)
-        avgAct = jnp.mean(self.poolAct)
+        avgAct = jnp.mean(self.poolAct.value)
 
         # Scalar feedforward inhibition proportional to max and avg Ge
         ffNetin = avgGe + FFFBparams["MaxVsAvg"] * (maxGe - avgGe)
         ffi = FFFBparams["FF"] * jnp.maximum(ffNetin - FFFBparams["FF0"], 0)
 
         # Scalar feedback inhibition based on average activity in the pool
-        self.fbi += FFFBparams["FBDt"] * FFFBparams["FB"] * (avgAct - self.fbi)
+        self.fbi.value = self.fbi.value + FFFBparams["FBDt"] * FFFBparams["FB"] * (avgAct - self.fbi.value)
 
         # Add inhibition to the inhibition
-        self.pool.Gi_FFFB = FFFBparams["Gi"] * (ffi + self.fbi)
+        self.pool.Gi_FFFB = FFFBparams["Gi"] * (ffi + self.fbi.value)
 
     def UpdateAct(self):
-        self.poolAct = self.pool.getActivity()
+        self.poolAct.value = self.pool.getActivity()
 
     def Reset(self):
-        self.fbi = 0
-        self.poolAct[:] = 0
+        self.fbi.value = 0.0
+        self.poolAct.value = jnp.zeros_like(self.poolAct.value)
 
 class ActAvg(PhasicProcess):
     '''A process for calculating average neuron activities for learning.
@@ -117,39 +112,39 @@ class ActAvg(PhasicProcess):
                  ActPAvg_Tau = 100,
                  ActPAvg_Adjust = 1,
                  ):
-        self.Init = Init
-        self.Fixed = Fixed
-        self.SSTau = SSTau
-        self.STau = STau
-        self.MTau = MTau
-        self.Tau = Tau
+        self.Init = nnx.Variable(Init)
+        self.Fixed = nnx.Variable(Fixed)
+        self.SSTau = nnx.Variable(SSTau)
+        self.STau = nnx.Variable(STau)
+        self.MTau = nnx.Variable(MTau)
+        self.Tau = nnx.Variable(Tau)
         # self.ActAvgTau = ActAvgTau
-        self.AvgL_Init = AvgL_Init
-        self.Gain = Gain
-        self.Min = Min
-        self.LrnM = LrnM
-        self.ModMin = ModMin
-        self.LrnMax = LrnMax
-        self.LrnMin = LrnMin
-        self.UseFirst = UseFirst
+        self.AvgL_Init = nnx.Variable(AvgL_Init)
+        self.Gain = nnx.Variable(Gain)
+        self.Min = nnx.Variable(Min)
+        self.LrnM = nnx.Variable(LrnM)
+        self.ModMin = nnx.Variable(ModMin)
+        self.LrnMax = nnx.Variable(LrnMax)
+        self.LrnMin = nnx.Variable(LrnMin)
+        self.UseFirst = nnx.Variable(UseFirst)
         # self.ActPAvg_Init = ActPAvg_Init
-        self.ActPAvg_Tau = ActPAvg_Tau
-        self.ActPAvg_Adjust = ActPAvg_Adjust
+        self.ActPAvg_Tau = nnx.Variable(ActPAvg_Tau)
+        self.ActPAvg_Adjust = nnx.Variable(ActPAvg_Adjust)
 
-        self.SSdt = 1/SSTau
-        self.Sdt = 1/STau
-        self.Mdt = 1/MTau
-        self.Dt = 1/Tau
-        self.ActPAvg_Dt = 1/self.ActPAvg_Tau
-        self.LrnFact = (LrnMax - LrnMin) / (Gain - Min)
+        self.SSdt = nnx.Variable(1/SSTau)
+        self.Sdt = nnx.Variable(1/STau)
+        self.Mdt = nnx.Variable(1/MTau)
+        self.Dt = nnx.Variable(1/Tau)
+        self.ActPAvg_Dt = nnx.Variable(1/ActPAvg_Tau)
+        self.LrnFact = nnx.Variable((LrnMax - LrnMin) / (Gain - Min))
 
-        self.layCosDiffAvg = 0
-        self.ActPAvg = self.Init #TODO: compare with Leabra
-        self.ActPAvgEff = self.Init
+        self.layCosDiffAvg = nnx.Variable(0.0)
+        self.ActPAvg = nnx.Variable(Init) #TODO: compare with Leabra
+        self.ActPAvgEff = nnx.Variable(Init)
 
         self.AttachLayer(layer)
 
-        self.phases = ["plus"]
+        self.phases = nnx.Variable(["plus"])
 
     def AttachLayer(self, layer: Layer):
         self.pool = layer
@@ -157,40 +152,40 @@ class ActAvg(PhasicProcess):
         # layer.neuralProcesses.append(self) # Layer calls this process directly
         # layer.phaseProcesses.append(self) # Layer calls this directly at trial start
 
-        # Pre-allocate Numpy
-        self.AvgSS = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgS = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgM = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgL = jnp.zeros(len(self.pool), dtype=layer.dtype)
+        # Pre-allocate JAX arrays as Variables
+        self.AvgSS = nnx.Variable(jnp.zeros(len(self.pool), dtype=layer.dtype))
+        self.AvgS = nnx.Variable(jnp.zeros(len(self.pool), dtype=layer.dtype))
+        self.AvgM = nnx.Variable(jnp.zeros(len(self.pool), dtype=layer.dtype))
+        self.AvgL = nnx.Variable(jnp.zeros(len(self.pool), dtype=layer.dtype))
 
-        self.AvgSLrn = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.ModAvgLLrn = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgLLrn = jnp.zeros(len(self.pool), dtype=layer.dtype)
+        self.AvgSLrn = nnx.Variable(jnp.zeros(len(self.pool), dtype=layer.dtype))
+        self.ModAvgLLrn = nnx.Variable(jnp.zeros(len(self.pool), dtype=layer.dtype))
+        self.AvgLLrn = nnx.Variable(jnp.zeros(len(self.pool), dtype=layer.dtype))
 
         self.InitAct()
 
     def InitAct(self):
-        self.AvgSS = self.AvgSS.at[:].set(self.Init)
-        self.AvgS = self.AvgS.at[:].set(self.Init)
-        self.AvgM = self.AvgM.at[:].set(self.Init)
-        self.AvgL = self.AvgL.at[:].set(self.AvgL_Init)
+        self.AvgSS.value = self.AvgSS.value.at[:].set(self.Init.value)
+        self.AvgS.value = self.AvgS.value.at[:].set(self.Init.value)
+        self.AvgM.value = self.AvgM.value.at[:].set(self.Init.value)
+        self.AvgL.value = self.AvgL.value.at[:].set(self.AvgL_Init.value)
 
     def StepTime(self):
         '''Updates running averages at every timestep to smooth the activity
             to serve as input for learning rules and other processes.
         '''
         Act = self.pool.getActivity()
-        self.AvgSS += self.SSdt * (Act - self.AvgSS)
-        self.AvgS += self.Sdt * (self.AvgSS - self.AvgS)
-        self.AvgM += self.Mdt * (self.AvgS - self.AvgM)
-        self.AvgSLrn = (1-self.LrnM) * self.AvgS + self.LrnM * self.AvgM
+        self.AvgSS.value = self.AvgSS.value + self.SSdt.value * (Act - self.AvgSS.value)
+        self.AvgS.value = self.AvgS.value + self.Sdt.value * (self.AvgSS.value - self.AvgS.value)
+        self.AvgM.value = self.AvgM.value + self.Mdt.value * (self.AvgS.value - self.AvgM.value)
+        self.AvgSLrn.value = (1-self.LrnM.value) * self.AvgS.value + self.LrnM.value * self.AvgM.value
 
     def StepPhase(self):
         '''Updates longer term running averages for the sake of the learning rule
         '''
         ####----CosDiffFmActs (end of Plus phase)----####
         if self.pool.isTarget:
-            self.ModAvgLLrn = 0
+            self.ModAvgLLrn.value = jnp.zeros_like(self.ModAvgLLrn.value)
             return
 
         plus = self.pool.phaseHist["plus"]
@@ -203,43 +198,52 @@ class ActAvg(PhasicProcess):
 
         cosv = jnp.dot(plus, minus)
         dist = jnp.sqrt(magPlus*magMinus)
-        cosv = cosv/dist if dist != 0 else cosv
+        cosv = jnp.where(dist != 0, cosv/dist, cosv)
 
-        if self.layCosDiffAvg == 0:
-            self.layCosDiffAvg = cosv
-        else:
-            self.layCosDiffAvg += self.ActPAvg_Dt * (cosv - self.layCosDiffAvg)
+        self.layCosDiffAvg.value = jnp.where(
+            self.layCosDiffAvg.value == 0,
+            cosv,
+            self.layCosDiffAvg.value + self.ActPAvg_Dt.value * (cosv - self.layCosDiffAvg.value)
+        )
         
-        self.ModAvgLLrn = jnp.maximum(1 - self.layCosDiffAvg, self.ModMin)
+        self.ModAvgLLrn.value = jnp.maximum(1 - self.layCosDiffAvg.value, self.ModMin.value)
 
 
     def InitTrial(self):
         ## AvgLFmAvgM
         self.UpdateAvgL()
-        self.AvgLLrn *= self.ModAvgLLrn # modifies avgLLrn in ActAvg process
+        self.AvgLLrn.value = self.AvgLLrn.value * self.ModAvgLLrn.value # modifies avgLLrn in ActAvg process
 
         ## ActAvgFmAct
         self.UpdateActPAvg()
 
     def UpdateAvgL(self):
         '''Updates AvgL, and initializes AvgLLrn'''
-        self.AvgL += self.Dt * (self.Gain * self.AvgM - self.AvgL)
-        self.AvgL = jnp.maximum(self.AvgL, self.Min)
-        self.AvgLLrn = self.LrnFact * (self.AvgL - self.Min)
+        self.AvgL.value = self.AvgL.value + self.Dt.value * (self.Gain.value * self.AvgM.value - self.AvgL.value)
+        self.AvgL.value = jnp.maximum(self.AvgL.value, self.Min.value)
+        self.AvgLLrn.value = self.LrnFact.value * (self.AvgL.value - self.Min.value)
 
     def UpdateActPAvg(self):
         '''Update plus phase ActPAvg and ActPAvgEff'''
         Act = jnp.mean(self.pool.getActivity())
-        if Act >= 0.0001:
-            self.ActPAvg += 0.5 * (Act-self.ActPAvg) if self.UseFirst else self.ActPAvg_Dt * (Act-self.ActPAvg)
-        self.ActPAvgEff = self.ActPAvg_Adjust * self.ActPAvg if not self.Fixed else self.Init
+        update_val = jnp.where(
+            self.UseFirst.value,
+            0.5 * (Act - self.ActPAvg.value),
+            self.ActPAvg_Dt.value * (Act - self.ActPAvg.value)
+        )
+        self.ActPAvg.value = jnp.where(Act >= 0.0001, self.ActPAvg.value + update_val, self.ActPAvg.value)
+        self.ActPAvgEff.value = jnp.where(
+            self.Fixed.value,
+            self.Init.value,
+            self.ActPAvg_Adjust.value * self.ActPAvg.value
+        )
 
     def Reset(self):
         self.InitAct()
-        self.ActPAvg = self.Init
-        self.ActPAvgEff = self.Init
-        self.AvgLLrn[:] = 0
-        self.layCosDiffAvg = 0
+        self.ActPAvg.value = self.Init.value
+        self.ActPAvgEff.value = self.Init.value
+        self.AvgLLrn.value = jnp.zeros_like(self.AvgLLrn.value)
+        self.layCosDiffAvg.value = 0.0
 
 
 class XCAL(PhasicProcess):
@@ -256,33 +260,31 @@ class XCAL(PhasicProcess):
                  LrnThr = 0.01,
                  Lrate = 0.04,
                  ):
-        self.DRev = DRev
-        self.DThr = DThr
-        self.DRevRatio = -((1-self.DRev)/self.DRev)
-        self.hasNorm = hasNorm
-        self.Norm = 1 # TODO: Check for correct initilization
-        self.Norm_LrComp = Norm_LrComp
-        self.normMin = normMin
-        self.DecayTau = DecayTau
-        self.hasMomentum = hasMomentum
-        self.MTau = MTau
-        self.Momentum_LrComp = Momentum_LrComp
-        self.LrnThr = LrnThr
-        self.Lrate = Lrate
+        self.DRev = nnx.Variable(DRev)
+        self.DThr = nnx.Variable(DThr)
+        self.DRevRatio = nnx.Variable(-((1-DRev)/DRev))
+        self.hasNorm = nnx.Variable(hasNorm)
+        self.Norm = nnx.Variable(1.0) # TODO: Check for correct initilization
+        self.Norm_LrComp = nnx.Variable(Norm_LrComp)
+        self.normMin = nnx.Variable(normMin)
+        self.DecayTau = nnx.Variable(DecayTau)
+        self.hasMomentum = nnx.Variable(hasMomentum)
+        self.MTau = nnx.Variable(MTau)
+        self.Momentum_LrComp = nnx.Variable(Momentum_LrComp)
+        self.LrnThr = nnx.Variable(LrnThr)
+        self.Lrate = nnx.Variable(Lrate)
 
-        self.MDt = 1/MTau
-        self.DecayDt = 1/DecayTau
+        self.MDt = nnx.Variable(1/MTau)
+        self.DecayDt = nnx.Variable(1/DecayTau)
 
-        self.phases = ["plus"]
+        self.phases = nnx.Variable(["plus"])
         
     def StepPhase(self):
         pass
         
     def AttachLayer(self, sndLayer: Layer, rcvLayer: Layer):
         self.send = sndLayer
-        sndLayerLen = len(sndLayer)
         self.recv = rcvLayer
-        rcvLayerLen = len(rcvLayer)
 
         # Initialize variables
         self.Init()
@@ -291,8 +293,8 @@ class XCAL(PhasicProcess):
         sndLayerLen = len(self.send)
         rcvLayerLen = len(self.recv)
 
-        self.Norm = jnp.zeros((rcvLayerLen, sndLayerLen))
-        self.moment = jnp.zeros((rcvLayerLen, sndLayerLen))
+        self.Norm = nnx.Variable(jnp.zeros((rcvLayerLen, sndLayerLen)))
+        self.moment = nnx.Variable(jnp.zeros((rcvLayerLen, sndLayerLen)))
 
     def Reset(self):
         self.Init()
@@ -306,25 +308,25 @@ class XCAL(PhasicProcess):
             dwt = self.MixedLearn()
 
         # Implement Dwt Norm (similar to gradient norms in DNN)
-        norm  = 1
-        if self.hasNorm:
+        norm = 1.0
+        if self.hasNorm.value:
             # it seems like norm must be calculated first, but applied after 
             ## momentum (if applicable).
-            self.Norm = jnp.maximum(self.DecayDt * self.Norm, jnp.abs(dwt))
-            norm = self.Norm_LrComp / jnp.maximum(self.Norm, self.normMin)
-            norm = norm.at[self.Norm==0].set(1)
+            self.Norm.value = jnp.maximum(self.DecayDt.value * self.Norm.value, jnp.abs(dwt))
+            norm = self.Norm_LrComp.value / jnp.maximum(self.Norm.value, self.normMin.value)
+            norm = norm.at[self.Norm.value==0].set(1.0)
             # TODO understand what prjn.go:607-620 is doing...
             # TODO enable custom norm procedure (L1, L2, etc.)
 
         # Implement momentum optimiziation
-        if self.hasMomentum:
-            self.moment = self.MDt * self.moment + dwt
-            dwt = norm * self.Momentum_LrComp * self.moment
+        if self.hasMomentum.value:
+            self.moment.value = self.MDt.value * self.moment.value + dwt
+            dwt = norm * self.Momentum_LrComp.value * self.moment.value
             # TODO allow other optimizers (momentum, adam, etc.) from optimizers.py
         else:
             dwt *= norm
 
-        Dwt = self.Lrate * dwt # TODO implment Leabra and generalized learning rate schedules
+        Dwt = self.Lrate.value * dwt # TODO implment Leabra and generalized learning rate schedules
 
         # Implment contrast enhancement mechanism
         # TODO figure out a way to use contrast enhancement without requiring the current weight...
@@ -363,11 +365,11 @@ class XCAL(PhasicProcess):
         '''
         out = jnp.zeros(x.shape)
         
-        cond1 = x < self.DThr
+        cond1 = x < self.DThr.value
         not1 = jnp.logical_not(cond1)
         mask1 = cond1
 
-        cond2 = (x > th * self.DRev)
+        cond2 = (x > th * self.DRev.value)
         mask2 = jnp.logical_and(cond2, not1)
         not2 = jnp.logical_not(cond2)
 
@@ -376,7 +378,7 @@ class XCAL(PhasicProcess):
         # (x < DThr) ? 0 : (x > th * DRev) ? (x - th) : (-x * ((1-DRev)/DRev))
         out = out.at[mask1].set(0)
         out = out.at[mask2].set(x[mask2] - th[mask2])
-        out = out.at[mask3].set(x[mask3] * self.DRevRatio)
+        out = out.at[mask3].set(x[mask3] * self.DRevRatio.value)
 
         return out
 
@@ -386,8 +388,8 @@ class XCAL(PhasicProcess):
         '''
         send = self.send.ActAvg
         recv = self.recv.ActAvg
-        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
-        srm = recv.AvgM[:,jnp.newaxis] @ send.AvgM[jnp.newaxis,:]
+        srs = recv.AvgSLrn.value[:,jnp.newaxis] @ send.AvgSLrn.value[jnp.newaxis,:]
+        srm = recv.AvgM.value[:,jnp.newaxis] @ send.AvgM.value[jnp.newaxis,:]
         dwt = self.xcal(srs, srm)
 
         return dwt
@@ -395,8 +397,8 @@ class XCAL(PhasicProcess):
     def BCM(self) -> jnp.ndarray:
         send = self.send.ActAvg
         recv = self.recv.ActAvg
-        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
-        AvgL = jnp.repeat(recv.AvgL[:,jnp.newaxis], len(self.send), axis=1)
+        srs = recv.AvgSLrn.value[:,jnp.newaxis] @ send.AvgSLrn.value[jnp.newaxis,:]
+        AvgL = jnp.repeat(recv.AvgL.value[:,jnp.newaxis], len(self.send), axis=1)
         dwt = self.xcal(srs, AvgL)
 
         return dwt
@@ -404,18 +406,18 @@ class XCAL(PhasicProcess):
     def MixedLearn(self) -> jnp.ndarray:
         send = self.send.ActAvg
         recv = self.recv.ActAvg
-        AvgLLrn = recv.AvgLLrn
-        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
-        srm = recv.AvgM[:,jnp.newaxis] @ send.AvgM[jnp.newaxis,:]
-        AvgL = jnp.repeat(recv.AvgL[:,jnp.newaxis], len(self.send), axis=1)
+        AvgLLrn = recv.AvgLLrn.value
+        srs = recv.AvgSLrn.value[:,jnp.newaxis] @ send.AvgSLrn.value[jnp.newaxis,:]
+        srm = recv.AvgM.value[:,jnp.newaxis] @ send.AvgM.value[jnp.newaxis,:]
+        AvgL = jnp.repeat(recv.AvgL.value[:,jnp.newaxis], len(self.send), axis=1)
 
         errorDriven = self.xcal(srs, srm)
         hebbLike = self.xcal(srs, AvgL)
         hebbLike = hebbLike * AvgLLrn[:,jnp.newaxis]
         dwt = errorDriven + hebbLike
 
-        mask1 = send.AvgS < self.LrnThr
-        mask2 = send.AvgM < self.LrnThr
+        mask1 = send.AvgS.value < self.LrnThr.value
+        mask2 = send.AvgM.value < self.LrnThr.value
         cond = jnp.logical_and(mask1, mask2)
         dwt = dwt.at[:,cond].set(0)
         return dwt

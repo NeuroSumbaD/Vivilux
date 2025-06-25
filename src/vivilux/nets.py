@@ -139,7 +139,7 @@ runConfig_std = {
 
 
 ###<------ NET CLASSES ------>###
-class Net:
+class Net(nnx.Module):
     '''Base class for neural networks with Hebbian-like learning
     '''
     count = 0
@@ -166,20 +166,20 @@ class Net:
 
         # For time keeping
         self.DELTA_TIME = runConfig["DELTA_TIME"]
-        self.time = 0
+        self.time = nnx.Variable(0.0)
 
         self.layers: list[Layer] = [] # list of layer objects
         self.layerDict: dict[str, Layer] = {} # dict of named layers
 
-        self.results = {metric: [] for metric in self.runConfig["metrics"]}
-        self.outputs = {key: [] for key in self.runConfig["outputLayers"]}
+        self.results = nnx.Variable({metric: [] for metric in self.runConfig["metrics"]})
+        self.outputs = nnx.Variable({key: [] for key in self.runConfig["outputLayers"]})
 
         self.name =  f"NET_{Net.count}" if name == None else name
-        self.epochIndex = 0
+        self.epochIndex = nnx.Variable(0)
         Net.count += 1
 
         # For early stopping learning process
-        self.lrnThresh = 0
+        self.lrnThresh = nnx.Variable(0)
 
     def PreallocateResultDict(self):
         '''Pre-allocate a dict to store the results
@@ -247,7 +247,7 @@ class Net:
         meshConfig = self.layerConfig["ffMeshConfig"] if meshConfig is None else meshConfig
         size = len(receiving)
         meshArgs = meshConfig["meshArgs"]
-        mesh = meshConfig["meshType"](size, sending, dtype=self.dtype, **meshArgs)
+        mesh: Mesh = meshConfig["meshType"](size, sending, dtype=self.dtype, **meshArgs)
         receiving.addMesh(mesh)
 
         if device is not None:
@@ -335,8 +335,8 @@ class Net:
         first = True
         for metricName, metric in self.runConfig["metrics"].items():
             for dataName in self.layerDict["outputLayers"]:
-                result = metric(jnp.array(self.outputs[dataName]), dataset[dataName])
-                self.results[metricName].append(result)
+                result = metric(jnp.array(self.outputs.value[dataName]), dataset[dataName])
+                self.results.value[metricName].append(result)
 
                 # Check the first metric for if it passes the end condition
                 if first: #TODO: optimize for execution time
@@ -344,18 +344,18 @@ class Net:
                     if "End" in self.runConfig:
                         if self.runConfig["End"]["isLower"]:
                             if result <= self.runConfig["End"]["threshold"]:
-                                self.lrnThresh += 1
-                                if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
+                                self.lrnThresh.value += 1
+                                if self.lrnThresh.value >= self.runConfig["End"]["numEpochs"]:
                                     isFinished = True
                             else:
-                                self.lrnThresh = 0
+                                self.lrnThresh.value = 0
                         else:
                             if result >= self.runConfig["End"]["threshold"]:
-                                self.lrnThresh += 1
-                                if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
+                                self.lrnThresh.value += 1
+                                if self.lrnThresh.value >= self.runConfig["End"]["numEpochs"]:
                                     isFinished = True
                             else:
-                                self.lrnThresh = 0
+                                self.lrnThresh.value = 0
 
         return isFinished
 
@@ -369,7 +369,7 @@ class Net:
         first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
         for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
                 if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                    clampedLayer.Clamp(dataVectors[dataName], self.time, debugData=debugData)
+                    clampedLayer.Clamp(dataVectors[dataName], self.time.value, debugData=debugData)
                     first = False
                 else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
                     clampedLayer.EXTERNAL = dataVectors[dataName]
@@ -380,7 +380,7 @@ class Net:
         # StepTime for each unclamped layer
         for layer in self.layerDict[phaseName]["unclamped"]:
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
-            layer.StepTime(self.time, debugData=debugData)
+            layer.StepTime(self.time.value, debugData=debugData)
 
         # Update internal variables of clamped layers
         first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
@@ -388,10 +388,10 @@ class Net:
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
             # layer.UpdateConductance()
             if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                layer.EndStep(self.time, debugData=debugData)
+                layer.EndStep(self.time.value, debugData=debugData)
                 first = False
             else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                layer.StepTime(self.time, debugData=debugData)
+                layer.StepTime(self.time.value, debugData=debugData)
     
     def StepPhase(self, phaseName: str, debugData = {}, **dataVectors):
         '''Compute a phase of execution for the neural network. A phase is a 
@@ -407,7 +407,7 @@ class Net:
             self.UpdateConductances()
             self.UpdateActivity(phaseName, debugData=debugData, **dataVectors)
 
-            self.time += self.DELTA_TIME
+            self.time.value += self.DELTA_TIME
 
         # Execute phasic processes (including XCAL)
         for layer in self.layers:
@@ -431,7 +431,7 @@ class Net:
             if self.phaseConfig[phaseName]["isOutput"]:
                 for dataName, layer in self.layerDict["outputLayers"].items():
                     # TODO use pre-allocated numpy array to speed up execution
-                    self.outputs[dataName].append(layer.getActivity())
+                    self.outputs.value[dataName].append(layer.getActivity())
 
             if self.phaseConfig[phaseName]["isLearn"] and Train:
                 for layer in self.layers:
@@ -455,7 +455,7 @@ class Net:
         numSamples = self.ValidateDataset(**dataset)
 
         # TODO use pre-allocated numpy array to speed up execution
-        self.outputs = {key: [] for key in self.runConfig["outputLayers"]}
+        self.outputs.value = {key: [] for key in self.runConfig["outputLayers"]}
 
         # suffle indices if necessary
         sampleIndices = jnp.random.permutation(numSamples) if shuffle else range(numSamples)
@@ -463,7 +463,7 @@ class Net:
         # TODO: find a faster way to iterate through datasets
         for sampleCount, sampleIndex in enumerate(sampleIndices):
             if verbosity > 0:
-                print(f"\rEpoch: {self.epochIndex}, "
+                print(f"\rEpoch: {self.epochIndex.value}, "
                       f"sample: ({sampleCount+1}/{numSamples}), ", end=""#"\r"
                       )
 
@@ -498,26 +498,26 @@ class Net:
             # Evaluate without training
             monitoring = self.monitoring
             self.monitoring = False # Temporarily pause monitoring
-            if self.epochIndex == 0: # only if net has never been trained
+            if self.epochIndex.value == 0: # only if net has never been trained
                 self.Evaluate(verbosity, reset=True, shuffle=False, **dataset)
                 self.resetActivity()
             self.monitoring = monitoring # Resume normal monitoring
 
-            self.time = 0 #TODO: allow choice to reset the timer?
+            self.time.value = 0 #TODO: allow choice to reset the timer?
             
         # Training loop
         print(f"Begin training [{self.name}]...")
         for epochIndex in range(numEpochs):
-            self.epochIndex = int(EvaluateFirst) + epochIndex
+            self.epochIndex.value = int(EvaluateFirst) + epochIndex
             numSamples = self.RunEpoch("Learn", verbosity, reset, shuffle,
                                        debugData=debugData, **dataset)
             isFinished = self.EvaluateMetrics(**dataset)
             if verbosity > 0:
                 primaryMetric = [key for key in self.runConfig["metrics"]][0]
-                print(f"\rEpoch: {self.epochIndex}, "
+                print(f"\rEpoch: {self.epochIndex.value}, "
                       f"sample: ({numSamples}/{numSamples}), "
                       f" metric[{primaryMetric}]"
-                      f" = {self.results[primaryMetric][-1]}")
+                      f" = {self.results.value[primaryMetric][-1]}")
                 
             if isFinished:
                 break
@@ -552,7 +552,7 @@ class Net:
         self.RunEpoch("Infer", verbosity, reset, shuffle= False, **dataset)
             
         if verbosity > 0: print(f"Inference complete.")
-        return self.outputs
+        return self.outputs.value
 
     def getWeights(self, ffOnly = True):
         weights = []
