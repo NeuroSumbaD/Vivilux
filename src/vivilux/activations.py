@@ -1,132 +1,214 @@
+import jax
 import jax.numpy as jnp
-import jax.random as jrandom
-from flax import nnx
-from typing import Optional
+from typing import Optional, Dict, Any
+from dataclasses import dataclass
 
-class Sigmoid:
-    def __init__(self, A=1, B=4, C=0.5):
-        self.A = A
-        self.B = B
-        self.C = C
+# State containers for activation parameters
+@dataclass
+class SigmoidState:
+    """State for Sigmoid activation parameters"""
+    A: float = 1.0
+    B: float = 4.0
+    C: float = 0.5
 
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        return self.A/(1 + jnp.exp(-self.B*(x-self.C)))
+@dataclass
+class ReLUState:
+    """State for ReLU activation parameters"""
+    m: float = 1.0
+    b: float = 0.0
 
-class ReLu:
-    def __init__(self, m=1, b=0):
-        self.m = m
-        self.b = b
+@dataclass
+class XX1State:
+    """State for XX1 activation parameters"""
+    thr: float = 0.0
 
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        return jnp.maximum(self.m*(x-self.b), 0)
+@dataclass
+class XX1GainCorState:
+    """State for XX1GainCor activation parameters"""
+    Gain: float = 100.0
+    NVar: float = 0.005
+    GainCor: float = 0.1
+    GainCorRange: float = 10.0
 
-# TODO: Check how thr is passed around
-def XX1_Scalar(x, thr=0):
-    x -= thr
-    if x > 0:
-        return x/(x+1)
-    else:
-        return 0    
+@dataclass
+class NoisyXX1State:
+    """State for NoisyXX1 activation parameters"""
+    Thr: float = 0.5
+    Gain: float = 100.0
+    NVar: float = 0.005
+    VmActThr: float = 0.01
+    SigMult: float = 0.33
+    SigMultPow: float = 0.8
+    SigGain: float = 3.0
+    InterpRange: float = 0.01
+    GainCorRange: float = 10.0
+    GainCor: float = 0.1
 
-def XX1(x: jnp.ndarray, thr=0) -> jnp.ndarray:
-    '''Computes X/(X+1) for X > 0 and returns 0 elsewhere.'''
-    inp = x.copy()
-    inp -= thr
-    out = inp/(inp+1)
-    mask = inp <= 0
-    out = out.at[mask].set(0)
+# JIT-compiled activation functions that take state
+@jax.jit
+def sigmoid(x: jnp.ndarray, state: SigmoidState) -> jnp.ndarray:
+    """Sigmoid activation: A / (1 + exp(-B * (x - C)))"""
+    return state.A / (1 + jnp.exp(-state.B * (x - state.C)))
+
+@jax.jit
+def relu(x: jnp.ndarray, state: ReLUState) -> jnp.ndarray:
+    """Rectified Linear Unit: max(m * (x - b), 0)"""
+    return jnp.maximum(state.m * (x - state.b), 0)
+
+@jax.jit
+def xx1(x: jnp.ndarray, state: XX1State) -> jnp.ndarray:
+    """Computes X/(X+1) for X > 0 and returns 0 elsewhere."""
+    x = jnp.asarray(x)
+    inp = x - state.thr
+    out = inp / (inp + 1)
+    out = jnp.where(inp > 0, out, 0.0)
     return out
 
-def XX1GainCor_Scalar(x,
-                      Gain = 100,
-                      NVar = 0.005,
-                      GainCor = 0.1,
-                      GainCorRange = 10,
-               ):
-    gainCorFact = (GainCorRange - (x / NVar)) / GainCorRange
-    if gainCorFact < 0 :
-        return XX1_Scalar(Gain * x)
-    newGain = Gain * (1 - GainCor*gainCorFact)
-    return XX1_Scalar(newGain * x)
-
-def XX1GainCor(x: jnp.ndarray,
-               Gain = 100,
-               NVar = 0.005,
-               GainCor = 0.1,
-               GainCorRange = 10,
-               ) -> jnp.ndarray:
-    gainCorFact = (GainCorRange - (x / NVar)) / GainCorRange
-    out = XX1(Gain * x)
+@jax.jit
+def xx1_gaincor(x: jnp.ndarray, state: XX1GainCorState) -> jnp.ndarray:
+    """XX1 with gain correction, fully vectorized."""
+    x = jnp.asarray(x)
+    gainCorFact = (state.GainCorRange - (x / state.NVar)) / state.GainCorRange
+    out1 = xx1(state.Gain * x, XX1State(thr=0.0))
+    newGain = state.Gain * (1 - state.GainCor * gainCorFact)
+    out2 = xx1(newGain * x, XX1State(thr=0.0))
     mask = gainCorFact > 0
-    newGain = Gain * (1 - GainCor*gainCorFact[mask])
-    out = out.at[mask].set(XX1(newGain * x[mask]))
+    out = jnp.where(mask, out2, out1)
     return out
 
-class NoisyXX1:
-    def __init__(self,
-                 Thr = 0.5, # threshold value Theta (Q) for firing output activation (.5 is more accurate value based on AdEx biological parameters and normalization
-                 Gain = 100, # gain (gamma) of the rate-coded activation functions -- 100 is default, 80 works better for larger models, and 20 is closer to the actual spiking behavior of the AdEx model -- use lower values for more graded signals, generally in lower input/sensory layers of the network
-                 NVar = 0.005, # variance of the Gaussian noise kernel for convolving with XX1 in NOISY_XX1 and NOISY_LINEAR -- determines the level of curvature of the activation function near the threshold -- increase for more graded responding there -- note that this is not actual stochastic noise, just constant convolved gaussian smoothness to the activation function
-                 VmActThr = 0.01, # threshold on activation below which the direct vm - act.thr is used -- this should be low -- once it gets active should use net - g_e_thr ge-linear dynamics (gelin)
-                 SigMult = 0.33, # multiplier on sigmoid used for computing values for net < thr
-                 SigMultPow = 0.8, # power for computing sig_mult_eff as function of gain * nvar
-                 SigGain = 3.0, # gain multipler on (net - thr) for sigmoid used for computing values for net < thr
-                 InterpRange = 0.01, # interpolation range above zero to use interpolation
-                 GainCorRange = 10.0, # range in units of nvar over which to apply gain correction to compensate for convolution
-                 GainCor = 0.1, # gain correction multiplier -- how much to correct gains
-                 rngs: nnx.Rngs = nnx.Rngs(0)  # Random number generator streams for noise
-                 ):
-        self.Thr = Thr
-        self.Gain = Gain
-        self.NVar = NVar
-        self.VmActThr = VmActThr
-        self.SigMult = SigMult
-        self.SigMultPow = SigMultPow
-        self.SigGain = SigGain
-        self.InterpRange = InterpRange
-        self.GainCorRange = GainCorRange
-        self.GainCor = GainCor
-        self.rngs = rngs
+@jax.jit
+def noisy_xx1(x: jnp.ndarray, state: NoisyXX1State) -> jnp.ndarray:
+    """
+    Noisy XX1 activation, vectorized and stateless.
+    This is a smooth, noise-approximated version of XX1.
+    """
+    SigGainNVar = state.SigGain / state.NVar
+    SigMultEff = state.SigMult * jnp.power(state.Gain * state.NVar, state.SigMultPow)
+    SigValAt0 = 0.5 * SigMultEff
+    
+    # Create temporary state for xx1_gaincor call
+    temp_state = XX1GainCorState(
+        Gain=state.Gain,
+        NVar=state.NVar,
+        GainCor=state.GainCor,
+        GainCorRange=state.GainCorRange
+    )
+    InterpVal = xx1_gaincor(jnp.array([state.InterpRange]), temp_state)[0] - SigValAt0
 
-        self.SigGainNVar = SigGain / NVar # Sig_gain / nvar
-        self.SigMultEff = SigMult * jnp.power(Gain*NVar, SigMultPow) # overall multiplier on sigmoidal component for values below threshold = sig_mult * pow(gain * nvar, sig_mult_pow)
-        self.SigValAt0 = 0.5 * self.SigMultEff # 0.5 * sig_mult_eff -- used for interpolation portion
-        # function value at interp_range - sig_val_at_0 -- for interpolation
-        self.InterpVal = XX1GainCor_Scalar(InterpRange, Gain, NVar, GainCor,
-                                           GainCorRange) - self.SigValAt0
-        
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        out = x.copy()
-        mask1 = x < 0
-        mask2 = jnp.logical_and(x < self.InterpRange, x >= 0)
-        mask3 = x >= self.InterpRange
+    out = jnp.zeros_like(x)
+    # x < 0: sigmoidal
+    exp = -(x * SigGainNVar)
+    sig_part = SigMultEff / (1 + jnp.exp(exp))
+    out = jnp.where(x < 0, sig_part, out)
+    out = jnp.where(exp > 50, 0.0, out)  # zero for very negative values
+    # 0 <= x < InterpRange: interpolate
+    interp = 1 - ((state.InterpRange - x) / state.InterpRange)
+    interp_part = SigValAt0 + interp * InterpVal
+    out = jnp.where((x >= 0) & (x < state.InterpRange), interp_part, out)
+    # x >= InterpRange: gain-corrected XX1
+    xx1_part = xx1_gaincor(x, temp_state)
+    out = jnp.where(x >= state.InterpRange, xx1_part, out)
+    return out
 
-        # if x < 0 // sigmoidal for < 0
-        exp = -(x * self.SigGainNVar)
-        submask = exp > 50
-        out = out.at[mask1].set(self.SigMultEff / (1 + jnp.exp(exp[mask1])))
-        out = out.at[submask].set(0) # zero for small values
+# Convenience functions that create default states
+def create_sigmoid_state(A: float = 1.0, B: float = 4.0, C: float = 0.5) -> SigmoidState:
+    """Create a SigmoidState with the given parameters"""
+    return SigmoidState(A=A, B=B, C=C)
 
-        # else if x < self.InterpRange
-        interp = 1 - ((self.InterpRange - x[mask2]) / self.InterpRange)
-        out = out.at[mask2].set(self.SigValAt0 + interp*self.InterpVal)
+def create_relu_state(m: float = 1.0, b: float = 0.0) -> ReLUState:
+    """Create a ReLUState with the given parameters"""
+    return ReLUState(m=m, b=b)
 
-        # else
-        out = out.at[mask3].set(XX1GainCor(x[mask3],
-                                           Gain = self.Gain,
-                                           NVar = self.NVar,
-                                           GainCor= self.GainCor,
-                                           GainCorRange = self.GainCorRange,
-                                           ))
-        return out
+def create_xx1_state(thr: float = 0.0) -> XX1State:
+    """Create an XX1State with the given parameters"""
+    return XX1State(thr=thr)
+
+def create_xx1_gaincor_state(Gain: float = 100.0, NVar: float = 0.005, 
+                           GainCor: float = 0.1, GainCorRange: float = 10.0) -> XX1GainCorState:
+    """Create an XX1GainCorState with the given parameters"""
+    return XX1GainCorState(Gain=Gain, NVar=NVar, GainCor=GainCor, GainCorRange=GainCorRange)
+
+def create_noisy_xx1_state(Thr: float = 0.5, Gain: float = 100.0, NVar: float = 0.005,
+                          VmActThr: float = 0.01, SigMult: float = 0.33, SigMultPow: float = 0.8,
+                          SigGain: float = 3.0, InterpRange: float = 0.01, GainCorRange: float = 10.0,
+                          GainCor: float = 0.1) -> NoisyXX1State:
+    """Create a NoisyXX1State with the given parameters"""
+    return NoisyXX1State(Thr=Thr, Gain=Gain, NVar=NVar, VmActThr=VmActThr, SigMult=SigMult,
+                        SigMultPow=SigMultPow, SigGain=SigGain, InterpRange=InterpRange,
+                        GainCorRange=GainCorRange, GainCor=GainCor)
+
+# Legacy function signatures for backward compatibility (these create default states)
+@jax.jit
+def sigmoid_legacy(x: jnp.ndarray, A: float = 1.0, B: float = 4.0, C: float = 0.5) -> jnp.ndarray:
+    """Legacy sigmoid function for backward compatibility"""
+    state = SigmoidState(A=A, B=B, C=C)
+    return sigmoid(x, state)
+
+@jax.jit
+def relu_legacy(x: jnp.ndarray, m: float = 1.0, b: float = 0.0) -> jnp.ndarray:
+    """Legacy ReLU function for backward compatibility"""
+    state = ReLUState(m=m, b=b)
+    return relu(x, state)
+
+@jax.jit
+def xx1_legacy(x: jnp.ndarray, thr: float = 0.0) -> jnp.ndarray:
+    """Legacy XX1 function for backward compatibility"""
+    state = XX1State(thr=thr)
+    return xx1(x, state)
+
+@jax.jit
+def xx1_gaincor_legacy(x: jnp.ndarray, Gain: float = 100.0, NVar: float = 0.005,
+                      GainCor: float = 0.1, GainCorRange: float = 10.0) -> jnp.ndarray:
+    """Legacy XX1GainCor function for backward compatibility"""
+    state = XX1GainCorState(Gain=Gain, NVar=NVar, GainCor=GainCor, GainCorRange=GainCorRange)
+    return xx1_gaincor(x, state)
+
+@jax.jit
+def noisy_xx1_legacy(x: jnp.ndarray, Thr: float = 0.5, Gain: float = 100.0, NVar: float = 0.005,
+                    VmActThr: float = 0.01, SigMult: float = 0.33, SigMultPow: float = 0.8,
+                    SigGain: float = 3.0, InterpRange: float = 0.01, GainCorRange: float = 10.0,
+                    GainCor: float = 0.1) -> jnp.ndarray:
+    """Legacy NoisyXX1 function for backward compatibility"""
+    state = NoisyXX1State(Thr=Thr, Gain=Gain, NVar=NVar, VmActThr=VmActThr, SigMult=SigMult,
+                         SigMultPow=SigMultPow, SigGain=SigGain, InterpRange=InterpRange,
+                         GainCorRange=GainCorRange, GainCor=GainCor)
+    return noisy_xx1(x, state)
+
+# Aliases for backward compatibility
+Sigmoid = sigmoid_legacy
+ReLu = relu_legacy
+XX1 = xx1_legacy
+XX1GainCor = xx1_gaincor_legacy
+NoisyXX1 = noisy_xx1_legacy
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    act = NoisyXX1(rngs=nnx.Rngs(0))
-    x = jnp.linspace(-1,1,100)
-    y = act(x)
-    plt.plot(x, y)
-    plt.title("Noisy XX1 Activation")
+    
+    # Test the new state-based approach
+    x = jnp.linspace(-1, 1, 100)
+    
+    # Create states
+    noisy_state = create_noisy_xx1_state()
+    sigmoid_state = create_sigmoid_state()
+    
+    # Use state-based functions
+    y_noisy = noisy_xx1(x, noisy_state)
+    y_sigmoid = sigmoid(x, sigmoid_state)
+    
+    # Plot results
+    plt.figure(figsize=(12, 4))
+    
+    plt.subplot(1, 2, 1)
+    plt.plot(x, y_noisy)
+    plt.title("Noisy XX1 Activation (State-based)")
     plt.ylabel("Rate code")
     plt.xlabel("Ge-GeThr")
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(x, y_sigmoid)
+    plt.title("Sigmoid Activation (State-based)")
+    plt.ylabel("Activation")
+    plt.xlabel("Input")
+    
+    plt.tight_layout()
     plt.show()

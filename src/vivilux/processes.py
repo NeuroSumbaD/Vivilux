@@ -1,14 +1,19 @@
 # type checking
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Any, Tuple, Optional, Union
 
 if TYPE_CHECKING:
     from .meshes import Mesh
     from .layers import Layer
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from functools import partial
 
+import jax
 import jax.numpy as jnp
+from jax import jit, vmap, grad
+from jax.tree_util import register_pytree_node_class
 
 # import defaults
 # from .activations import Sigmoid
@@ -16,21 +21,22 @@ import jax.numpy as jnp
 # from .optimizers import Simple
 # from .visualize import Monitor
 
+@dataclass
+class ProcessState:
+    """Immutable state container for processes"""
+    pass
+
 class Process(ABC):
     @abstractmethod
-    def AttachLayer(self, layer: Layer):
+    def AttachLayer(self, layer: Layer) -> ProcessState:
         pass
-
-    # @abstractmethod
-    # def Reset(self):
-    #     pass
 
 class NeuralProcess(Process):
     '''A base class for various high-level processes which generate a current 
         stimulus to a neuron.
     '''
     @abstractmethod
-    def StepTime(self):
+    def StepTime(self, state: ProcessState, layer: Layer) -> Tuple[ProcessState, Any]:
         pass
 
 class PhasicProcess(Process):
@@ -38,10 +44,19 @@ class PhasicProcess(Process):
         some structural aspect such as learning, pruning, etc.
     '''
     @abstractmethod
-    def StepPhase(self):
+    def StepPhase(self, state: ProcessState, layer: Layer) -> ProcessState:
         pass
 
+@dataclass
+class FFFBState(ProcessState):
+    """State for FFFB process"""
+    pool_act: jnp.ndarray
+    fbi: Union[float, jnp.ndarray]
+    is_floating: bool = False
 
+# Register FFFBState as a pytree
+# Note: JAX automatically handles dataclasses as pytrees, so manual registration is not needed
+# register_pytree_node_class(FFFBState)
 
 class FFFB(NeuralProcess):
     '''A process which runs the FFFB inhibitory mechanism developed by Prof.
@@ -53,43 +68,92 @@ class FFFB(NeuralProcess):
         activity across a pool, and a feeback component which more dynamically
         smooths the activity over time.
     '''
+    
     def __init__(self, layer: Layer):
+        """Initialize FFFB with a layer for backward compatibility."""
+        self.layer = layer
         self.isFloating = True
-
-        self.AttachLayer(layer)
-
-    def AttachLayer(self, layer: Layer):
-        self.pool = layer
-        self.poolAct = jnp.zeros(len(layer))
-        self.FFFBparams = layer.FFFBparams
-
-        self.fbi = 0
-
-        self.isFloating = False
-
-    def StepTime(self):
-        FFFBparams = self.FFFBparams
-        poolGe = self.pool.Ge
-        avgGe = jnp.mean(poolGe)
-        maxGe = jnp.max(poolGe)
-        avgAct = jnp.mean(self.poolAct)
+    
+    @partial(jit, static_argnums=(0,))
+    def _step_time_fn(self, state: FFFBState, pool_ge: jnp.ndarray, 
+                     pool_act: jnp.ndarray, fffb_params: Dict[str, float]) -> Tuple[FFFBState, float]:
+        """JIT-compiled function for FFFB step time computation"""
+        avg_ge = jnp.mean(pool_ge)
+        max_ge = jnp.max(pool_ge)
+        avg_act = jnp.mean(pool_act)
 
         # Scalar feedforward inhibition proportional to max and avg Ge
-        ffNetin = avgGe + FFFBparams["MaxVsAvg"] * (maxGe - avgGe)
-        ffi = FFFBparams["FF"] * jnp.maximum(ffNetin - FFFBparams["FF0"], 0)
+        ff_netin = avg_ge + fffb_params["MaxVsAvg"] * (max_ge - avg_ge)
+        ffi = fffb_params["FF"] * jnp.maximum(ff_netin - fffb_params["FF0"], 0)
 
         # Scalar feedback inhibition based on average activity in the pool
-        self.fbi += FFFBparams["FBDt"] * FFFBparams["FB"] * (avgAct - self.fbi)
+        new_fbi = state.fbi + fffb_params["FBDt"] * fffb_params["FB"] * (avg_act - state.fbi)
 
         # Add inhibition to the inhibition
-        self.pool.Gi_FFFB = FFFBparams["Gi"] * (ffi + self.fbi)
+        gi_fffb = fffb_params["Gi"] * (ffi + new_fbi)
+        
+        new_state = FFFBState(
+            pool_act=pool_act,
+            fbi=new_fbi,
+            is_floating=False
+        )
+        
+        return new_state, float(gi_fffb)
 
-    def UpdateAct(self):
-        self.poolAct = self.pool.getActivity()
+    def AttachLayer(self, layer: Layer) -> FFFBState:
+        return FFFBState(
+            pool_act=jnp.zeros(len(layer), dtype=layer.dtype),
+            fbi=0.0,
+            is_floating=False
+        )
 
-    def Reset(self):
-        self.fbi = 0
-        self.poolAct[:] = 0
+    def StepTime(self, state: FFFBState, layer: Layer) -> Tuple[FFFBState, float]:
+        """Updates FFFB state and returns inhibition value"""
+        pool_ge = layer.Ge
+        pool_act = layer.getActivity()
+        fffb_params = layer.FFFBparams
+        
+        new_state, gi_fffb = self._step_time_fn(state, pool_ge, pool_act, fffb_params)
+        
+        # Update layer inhibition (this might need to be handled differently in your architecture)
+        layer.Gi_FFFB = gi_fffb
+        
+        return new_state, gi_fffb
+
+    def UpdateAct(self, state: FFFBState, layer: Layer) -> FFFBState:
+        """Update activity in state"""
+        new_pool_act = layer.getActivity()
+        return FFFBState(
+            pool_act=new_pool_act,
+            fbi=state.fbi,
+            is_floating=state.is_floating
+        )
+
+    def Reset(self, layer: Layer) -> FFFBState:
+        """Reset FFFB state"""
+        return FFFBState(
+            pool_act=jnp.zeros(len(layer), dtype=layer.dtype),
+            fbi=0.0,
+            is_floating=False
+        )
+
+@dataclass
+class ActAvgState(ProcessState):
+    """State for ActAvg process"""
+    avg_ss: jnp.ndarray
+    avg_s: jnp.ndarray
+    avg_m: jnp.ndarray
+    avg_l: jnp.ndarray
+    avg_s_lrn: jnp.ndarray
+    mod_avg_l_lrn: jnp.ndarray
+    avg_l_lrn: jnp.ndarray
+    lay_cos_diff_avg: Union[float, jnp.ndarray]
+    act_p_avg: Union[float, jnp.ndarray]
+    act_p_avg_eff: Union[float, jnp.ndarray]
+
+# Register ActAvgState as a pytree
+# Note: JAX automatically handles dataclasses as pytrees, so manual registration is not needed
+# register_pytree_node_class(ActAvgState)
 
 class ActAvg(PhasicProcess):
     '''A process for calculating average neuron activities for learning.
@@ -97,33 +161,30 @@ class ActAvg(PhasicProcess):
     '''
     def __init__(self,
                  layer: Layer,
-                 Init = 0.15,
-                 Fixed = False,
-                 SSTau = 2,
-                 STau = 2,
-                 MTau = 10,
-                #  ActAvgTau = 10,
-                 Tau = 10,
-                 AvgL_Init = 0.4,
-                 Gain = 2.5,
-                 Min = 0.2,
-                 LrnM = 0.1,
-                 ModMin = 0.01,
-                 LrnMax = 0.5,
-                 LrnMin = 0.0001,
-                 #ActPAvg plus phase averaging params
-                 UseFirst = True,
-                #  ActPAvg_Init = 0.15,
-                 ActPAvg_Tau = 100,
-                 ActPAvg_Adjust = 1,
+                 Init: float = 0.15,
+                 Fixed: bool = False,
+                 SSTau: float = 2.0,
+                 STau: float = 2.0,
+                 MTau: float = 10.0,
+                 Tau: float = 10.0,
+                 AvgL_Init: float = 0.4,
+                 Gain: float = 2.5,
+                 Min: float = 0.2,
+                 LrnM: float = 0.1,
+                 ModMin: float = 0.01,
+                 LrnMax: float = 0.5,
+                 LrnMin: float = 0.0001,
+                 UseFirst: bool = True,
+                 ActPAvg_Tau: float = 100.0,
+                 ActPAvg_Adjust: float = 1.0,
                  ):
         self.Init = Init
         self.Fixed = Fixed
-        self.SSTau = SSTau
-        self.STau = STau
-        self.MTau = MTau
-        self.Tau = Tau
-        # self.ActAvgTau = ActAvgTau
+        self.SSdt = 1/SSTau
+        self.Sdt = 1/STau
+        self.Mdt = 1/MTau
+        self.Dt = 1/Tau
+        self.ActPAvg_Dt = 1/ActPAvg_Tau
         self.AvgL_Init = AvgL_Init
         self.Gain = Gain
         self.Min = Min
@@ -132,135 +193,229 @@ class ActAvg(PhasicProcess):
         self.LrnMax = LrnMax
         self.LrnMin = LrnMin
         self.UseFirst = UseFirst
-        # self.ActPAvg_Init = ActPAvg_Init
-        self.ActPAvg_Tau = ActPAvg_Tau
         self.ActPAvg_Adjust = ActPAvg_Adjust
-
-        self.SSdt = 1/SSTau
-        self.Sdt = 1/STau
-        self.Mdt = 1/MTau
-        self.Dt = 1/Tau
-        self.ActPAvg_Dt = 1/self.ActPAvg_Tau
         self.LrnFact = (LrnMax - LrnMin) / (Gain - Min)
-
-        self.layCosDiffAvg = 0
-        self.ActPAvg = self.Init #TODO: compare with Leabra
-        self.ActPAvgEff = self.Init
-
-        self.AttachLayer(layer)
-
         self.phases = ["plus"]
 
-    def AttachLayer(self, layer: Layer):
-        self.pool = layer
-
-        # layer.neuralProcesses.append(self) # Layer calls this process directly
-        # layer.phaseProcesses.append(self) # Layer calls this directly at trial start
-
-        # Pre-allocate Numpy
-        self.AvgSS = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgS = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgM = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgL = jnp.zeros(len(self.pool), dtype=layer.dtype)
-
-        self.AvgSLrn = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.ModAvgLLrn = jnp.zeros(len(self.pool), dtype=layer.dtype)
-        self.AvgLLrn = jnp.zeros(len(self.pool), dtype=layer.dtype)
-
-        self.InitAct()
-
-    def InitAct(self):
-        self.AvgSS = self.AvgSS.at[:].set(self.Init)
-        self.AvgS = self.AvgS.at[:].set(self.Init)
-        self.AvgM = self.AvgM.at[:].set(self.Init)
-        self.AvgL = self.AvgL.at[:].set(self.AvgL_Init)
-
-    def StepTime(self):
-        '''Updates running averages at every timestep to smooth the activity
-            to serve as input for learning rules and other processes.
-        '''
-        Act = self.pool.getActivity()
-        self.AvgSS += self.SSdt * (Act - self.AvgSS)
-        self.AvgS += self.Sdt * (self.AvgSS - self.AvgS)
-        self.AvgM += self.Mdt * (self.AvgS - self.AvgM)
-        self.AvgSLrn = (1-self.LrnM) * self.AvgS + self.LrnM * self.AvgM
-
-    def StepPhase(self):
-        '''Updates longer term running averages for the sake of the learning rule
-        '''
-        ####----CosDiffFmActs (end of Plus phase)----####
-        if self.pool.isTarget:
-            self.ModAvgLLrn = 0
-            return
-
-        plus = self.pool.phaseHist["plus"]
-        plus -= jnp.mean(plus)
-        magPlus = jnp.sum(jnp.square(plus))
-
-        minus = self.pool.phaseHist["minus"]
-        minus -= jnp.mean(minus)
-        magMinus = jnp.sum(jnp.square(minus))
-
-        cosv = jnp.dot(plus, minus)
-        dist = jnp.sqrt(magPlus*magMinus)
-        cosv = cosv/dist if dist != 0 else cosv
-
-        if self.layCosDiffAvg == 0:
-            self.layCosDiffAvg = cosv
-        else:
-            self.layCosDiffAvg += self.ActPAvg_Dt * (cosv - self.layCosDiffAvg)
+    @partial(jit, static_argnums=(0,))
+    def _step_time_fn(self, state: ActAvgState, act: jnp.ndarray, 
+                     ss_dt: float, s_dt: float, m_dt: float, lrn_m: float) -> ActAvgState:
+        """JIT-compiled function for ActAvg step time computation"""
+        new_avg_ss = state.avg_ss + ss_dt * (act - state.avg_ss)
+        new_avg_s = state.avg_s + s_dt * (new_avg_ss - state.avg_s)
+        new_avg_m = state.avg_m + m_dt * (new_avg_s - state.avg_m)
+        new_avg_s_lrn = (1 - lrn_m) * new_avg_s + lrn_m * new_avg_m
         
-        self.ModAvgLLrn = jnp.maximum(1 - self.layCosDiffAvg, self.ModMin)
+        return ActAvgState(
+            avg_ss=new_avg_ss,
+            avg_s=new_avg_s,
+            avg_m=new_avg_m,
+            avg_l=state.avg_l,
+            avg_s_lrn=new_avg_s_lrn,
+            mod_avg_l_lrn=state.mod_avg_l_lrn,
+            avg_l_lrn=state.avg_l_lrn,
+            lay_cos_diff_avg=state.lay_cos_diff_avg,
+            act_p_avg=state.act_p_avg,
+            act_p_avg_eff=state.act_p_avg_eff
+        )
 
+    @partial(jit, static_argnums=(0,))
+    def _step_phase_fn(self, state: ActAvgState, plus_hist: jnp.ndarray, minus_hist: jnp.ndarray,
+                      is_target: bool, act_p_avg_dt: float, mod_min: float) -> ActAvgState:
+        """JIT-compiled function for ActAvg step phase computation"""
+        def compute_cos_diff():
+            plus = plus_hist - jnp.mean(plus_hist)
+            minus = minus_hist - jnp.mean(minus_hist)
+            
+            mag_plus = jnp.sum(jnp.square(plus))
+            mag_minus = jnp.sum(jnp.square(minus))
+            
+            cosv = jnp.dot(plus, minus)
+            dist = jnp.sqrt(mag_plus * mag_minus)
+            cosv = jnp.where(dist != 0, cosv / dist, cosv)
+            
+            new_lay_cos_diff_avg = jnp.where(
+                state.lay_cos_diff_avg == 0,
+                cosv,
+                state.lay_cos_diff_avg + act_p_avg_dt * (cosv - state.lay_cos_diff_avg)
+            )
+            
+            new_mod_avg_l_lrn = jnp.maximum(1 - new_lay_cos_diff_avg, mod_min)
+            
+            return new_lay_cos_diff_avg, new_mod_avg_l_lrn
+        
+        if is_target:
+            new_lay_cos_diff_avg = state.lay_cos_diff_avg
+            new_mod_avg_l_lrn = jnp.zeros_like(state.mod_avg_l_lrn)
+        else:
+            new_lay_cos_diff_avg, new_mod_avg_l_lrn = compute_cos_diff()
+        
+        return ActAvgState(
+            avg_ss=state.avg_ss,
+            avg_s=state.avg_s,
+            avg_m=state.avg_m,
+            avg_l=state.avg_l,
+            avg_s_lrn=state.avg_s_lrn,
+            mod_avg_l_lrn=new_mod_avg_l_lrn,
+            avg_l_lrn=state.avg_l_lrn,
+            lay_cos_diff_avg=new_lay_cos_diff_avg,
+            act_p_avg=state.act_p_avg,
+            act_p_avg_eff=state.act_p_avg_eff
+        )
 
-    def InitTrial(self):
-        ## AvgLFmAvgM
-        self.UpdateAvgL()
-        self.AvgLLrn *= self.ModAvgLLrn # modifies avgLLrn in ActAvg process
+    def AttachLayer(self, layer: Layer) -> ActAvgState:
+        layer_size = len(layer)
+        dtype = layer.dtype
+        
+        return ActAvgState(
+            avg_ss=jnp.full(layer_size, self.Init, dtype=dtype),
+            avg_s=jnp.full(layer_size, self.Init, dtype=dtype),
+            avg_m=jnp.full(layer_size, self.Init, dtype=dtype),
+            avg_l=jnp.full(layer_size, self.AvgL_Init, dtype=dtype),
+            avg_s_lrn=jnp.zeros(layer_size, dtype=dtype),
+            mod_avg_l_lrn=jnp.zeros(layer_size, dtype=dtype),
+            avg_l_lrn=jnp.zeros(layer_size, dtype=dtype),
+            lay_cos_diff_avg=0.0,
+            act_p_avg=self.Init,
+            act_p_avg_eff=self.Init
+        )
 
-        ## ActAvgFmAct
-        self.UpdateActPAvg()
+    def StepTime(self, state: ActAvgState, layer: Layer) -> Tuple[ActAvgState, None]:
+        """Updates running averages at every timestep"""
+        act = layer.getActivity()
+        new_state = self._step_time_fn(state, act, self.SSdt, self.Sdt, self.Mdt, self.LrnM)
+        return new_state, None
 
-    def UpdateAvgL(self):
-        '''Updates AvgL, and initializes AvgLLrn'''
-        self.AvgL += self.Dt * (self.Gain * self.AvgM - self.AvgL)
-        self.AvgL = jnp.maximum(self.AvgL, self.Min)
-        self.AvgLLrn = self.LrnFact * (self.AvgL - self.Min)
+    def StepPhase(self, state: ActAvgState, layer: Layer) -> ActAvgState:
+        """Updates longer term running averages for learning"""
+        if layer.isTarget:
+            plus_hist = jnp.zeros(1)  # Dummy values
+            minus_hist = jnp.zeros(1)
+        else:
+            plus_hist = layer.phaseHist["plus"]
+            minus_hist = layer.phaseHist["minus"]
+        
+        return self._step_phase_fn(state, plus_hist, minus_hist, 
+                                 layer.isTarget, self.ActPAvg_Dt, self.ModMin)
 
-    def UpdateActPAvg(self):
-        '''Update plus phase ActPAvg and ActPAvgEff'''
-        Act = jnp.mean(self.pool.getActivity())
-        if Act >= 0.0001:
-            self.ActPAvg += 0.5 * (Act-self.ActPAvg) if self.UseFirst else self.ActPAvg_Dt * (Act-self.ActPAvg)
-        self.ActPAvgEff = self.ActPAvg_Adjust * self.ActPAvg if not self.Fixed else self.Init
+    @partial(jit, static_argnums=(0,))
+    def _update_avg_l_fn(self, state: ActAvgState, dt: float, gain: float, 
+                        min_val: float, lrn_fact: float) -> ActAvgState:
+        """JIT-compiled function for updating AvgL"""
+        new_avg_l = state.avg_l + dt * (gain * state.avg_m - state.avg_l)
+        new_avg_l = jnp.maximum(new_avg_l, min_val)
+        new_avg_l_lrn = lrn_fact * (new_avg_l - min_val)
+        
+        return ActAvgState(
+            avg_ss=state.avg_ss,
+            avg_s=state.avg_s,
+            avg_m=state.avg_m,
+            avg_l=new_avg_l,
+            avg_s_lrn=state.avg_s_lrn,
+            mod_avg_l_lrn=state.mod_avg_l_lrn,
+            avg_l_lrn=new_avg_l_lrn,
+            lay_cos_diff_avg=state.lay_cos_diff_avg,
+            act_p_avg=state.act_p_avg,
+            act_p_avg_eff=state.act_p_avg_eff
+        )
 
-    def Reset(self):
-        self.InitAct()
-        self.ActPAvg = self.Init
-        self.ActPAvgEff = self.Init
-        self.AvgLLrn[:] = 0
-        self.layCosDiffAvg = 0
+    @partial(jit, static_argnums=(0,))
+    def _update_act_p_avg_fn(self, state: ActAvgState, act: float, use_first: bool,
+                            act_p_avg_dt: float, act_p_avg_adjust: float, 
+                            fixed: bool, init: float) -> ActAvgState:
+        """JIT-compiled function for updating ActPAvg"""
+        def update_act_p_avg():
+            return jnp.where(
+                use_first,
+                state.act_p_avg + 0.5 * (act - state.act_p_avg),
+                state.act_p_avg + act_p_avg_dt * (act - state.act_p_avg)
+            )
+        
+        new_act_p_avg = jnp.where(
+            act >= 0.0001,
+            update_act_p_avg(),
+            state.act_p_avg
+        )
+        
+        new_act_p_avg_eff = jnp.where(
+            fixed,
+            init,
+            act_p_avg_adjust * new_act_p_avg
+        )
+        
+        return ActAvgState(
+            avg_ss=state.avg_ss,
+            avg_s=state.avg_s,
+            avg_m=state.avg_m,
+            avg_l=state.avg_l,
+            avg_s_lrn=state.avg_s_lrn,
+            mod_avg_l_lrn=state.mod_avg_l_lrn,
+            avg_l_lrn=state.avg_l_lrn,
+            lay_cos_diff_avg=state.lay_cos_diff_avg,
+            act_p_avg=new_act_p_avg,
+            act_p_avg_eff=new_act_p_avg_eff
+        )
 
+    def InitTrial(self, state: ActAvgState, layer: Layer) -> ActAvgState:
+        """Initialize trial with updated averages"""
+        # Update AvgL
+        new_state = self._update_avg_l_fn(state, self.Dt, self.Gain, self.Min, self.LrnFact)
+        
+        # Apply modulation
+        new_avg_l_lrn = new_state.avg_l_lrn * new_state.mod_avg_l_lrn
+        new_state = ActAvgState(
+            avg_ss=new_state.avg_ss,
+            avg_s=new_state.avg_s,
+            avg_m=new_state.avg_m,
+            avg_l=new_state.avg_l,
+            avg_s_lrn=new_state.avg_s_lrn,
+            mod_avg_l_lrn=new_state.mod_avg_l_lrn,
+            avg_l_lrn=new_avg_l_lrn,
+            lay_cos_diff_avg=new_state.lay_cos_diff_avg,
+            act_p_avg=new_state.act_p_avg,
+            act_p_avg_eff=new_state.act_p_avg_eff
+        )
+        
+        # Update ActPAvg
+        act = jnp.mean(layer.getActivity())
+        new_state = self._update_act_p_avg_fn(new_state, act, self.UseFirst, 
+                                             self.ActPAvg_Dt, self.ActPAvg_Adjust, 
+                                             self.Fixed, self.Init)
+        
+        return new_state
+
+    def Reset(self, layer: Layer) -> ActAvgState:
+        """Reset ActAvg state"""
+        return self.AttachLayer(layer)
+
+@dataclass
+class XCALState(ProcessState):
+    """State for XCAL process"""
+    norm: jnp.ndarray
+    moment: jnp.ndarray
+
+# Register XCALState as a pytree
+# Note: JAX automatically handles dataclasses as pytrees, so manual registration is not needed
+# register_pytree_node_class(XCALState)
 
 class XCAL(PhasicProcess):
     def __init__(self,
-                 DRev = 0.1,
-                 DThr = 0.0001,
-                 hasNorm = True,
-                 Norm_LrComp = 0.15,
-                 normMin = 0.001,
-                 DecayTau = 1000,
-                 hasMomentum = True, #TODO allow this to be set by layer or mesh config
-                 MTau = 10, #TODO allow this to be set by layer or mesh config
-                 Momentum_LrComp = 0.1, #TODO allow this to be set by layer or mesh config
-                 LrnThr = 0.01,
-                 Lrate = 0.04,
+                 DRev: float = 0.1,
+                 DThr: float = 0.0001,
+                 hasNorm: bool = True,
+                 Norm_LrComp: float = 0.15,
+                 normMin: float = 0.001,
+                 DecayTau: float = 1000.0,
+                 hasMomentum: bool = True,
+                 MTau: float = 10.0,
+                 Momentum_LrComp: float = 0.1,
+                 LrnThr: float = 0.01,
+                 Lrate: float = 0.04,
                  ):
         self.DRev = DRev
         self.DThr = DThr
         self.DRevRatio = -((1-self.DRev)/self.DRev)
         self.hasNorm = hasNorm
-        self.Norm = 1 # TODO: Check for correct initilization
         self.Norm_LrComp = Norm_LrComp
         self.normMin = normMin
         self.DecayTau = DecayTau
@@ -272,150 +427,131 @@ class XCAL(PhasicProcess):
 
         self.MDt = 1/MTau
         self.DecayDt = 1/DecayTau
-
         self.phases = ["plus"]
         
-    def StepPhase(self):
-        pass
+    def StepPhase(self, state: XCALState, layer: Layer) -> XCALState:
+        return state
         
-    def AttachLayer(self, sndLayer: Layer, rcvLayer: Layer):
-        self.send = sndLayer
-        sndLayerLen = len(sndLayer)
-        self.recv = rcvLayer
-        rcvLayerLen = len(rcvLayer)
+    def AttachLayer(self, sndLayer: Layer, rcvLayer: Layer) -> XCALState:
+        snd_layer_len = len(sndLayer)
+        rcv_layer_len = len(rcvLayer)
+        
+        return XCALState(
+            norm=jnp.zeros((rcv_layer_len, snd_layer_len)),
+            moment=jnp.zeros((rcv_layer_len, snd_layer_len))
+        )
 
-        # Initialize variables
-        self.Init()
+    @partial(jit, static_argnums=(0,))
+    def _xcal_fn(self, x: jnp.ndarray, th: jnp.ndarray, d_thr: float, d_rev_ratio: float) -> jnp.ndarray:
+        """JIT-compiled XCAL function"""
+        def xcal_single(x_val, th_val):
+            return jnp.where(
+                x_val < d_thr,
+                0.0,
+                jnp.where(
+                    x_val > th_val * (1 - d_rev_ratio),
+                    x_val - th_val,
+                    x_val * d_rev_ratio
+                )
+            )
+        
+        result = vmap(vmap(xcal_single, in_axes=(0, None)), in_axes=(None, 0))(x, th)
+        return jnp.asarray(result)
 
-    def Init(self):
-        sndLayerLen = len(self.send)
-        rcvLayerLen = len(self.recv)
-
-        self.Norm = jnp.zeros((rcvLayerLen, sndLayerLen))
-        self.moment = jnp.zeros((rcvLayerLen, sndLayerLen))
-
-    def Reset(self):
-        self.Init()
-
-    def GetDeltas(self,
-                  dwtLog = None,
-                  ) -> jnp.ndarray:
-        if self.recv.isTarget:
-            dwt = self.ErrorDriven()
+    @partial(jit, static_argnums=(0,))
+    def _get_deltas_fn(self, state: XCALState, dwt: jnp.ndarray, has_norm: bool, 
+                      has_momentum: bool, decay_dt: float, norm_lr_comp: float, 
+                      norm_min: float, m_dt: float, momentum_lr_comp: float, 
+                      lrate: float) -> Tuple[XCALState, jnp.ndarray]:
+        """JIT-compiled function for computing weight deltas"""
+        
+        # Implement Dwt Norm
+        if has_norm:
+            new_norm = jnp.maximum(decay_dt * state.norm, jnp.abs(dwt))
+            norm = norm_lr_comp / jnp.maximum(new_norm, norm_min)
+            norm = jnp.where(new_norm == 0, 1.0, norm)
         else:
-            dwt = self.MixedLearn()
+            new_norm = state.norm
+            norm = 1.0
 
-        # Implement Dwt Norm (similar to gradient norms in DNN)
-        norm  = 1
-        if self.hasNorm:
-            # it seems like norm must be calculated first, but applied after 
-            ## momentum (if applicable).
-            self.Norm = jnp.maximum(self.DecayDt * self.Norm, jnp.abs(dwt))
-            norm = self.Norm_LrComp / jnp.maximum(self.Norm, self.normMin)
-            norm = norm.at[self.Norm==0].set(1)
-            # TODO understand what prjn.go:607-620 is doing...
-            # TODO enable custom norm procedure (L1, L2, etc.)
-
-        # Implement momentum optimiziation
-        if self.hasMomentum:
-            self.moment = self.MDt * self.moment + dwt
-            dwt = norm * self.Momentum_LrComp * self.moment
-            # TODO allow other optimizers (momentum, adam, etc.) from optimizers.py
+        # Implement momentum optimization
+        if has_momentum:
+            new_moment = m_dt * state.moment + dwt
+            dwt = norm * momentum_lr_comp * new_moment
         else:
-            dwt *= norm
+            dwt = dwt * norm
 
-        Dwt = self.Lrate * dwt # TODO implment Leabra and generalized learning rate schedules
+        dwt = lrate * dwt
+        
+        new_state = XCALState(norm=new_norm, moment=new_moment if has_momentum else state.moment)
+        
+        return new_state, dwt
 
-        # Implment contrast enhancement mechanism
-        # TODO figure out a way to use contrast enhancement without requiring the current weight...
-        ## Is there a way to use taylor's expansion to calculate an adjusted delta??
-        ### THIS CODE MOVED TO THE MESH UPDATE
+    def GetDeltas(self, state: XCALState, snd_layer: Layer, rcv_layer: Layer,
+                  dwtLog: Optional[Dict] = None) -> Tuple[XCALState, jnp.ndarray]:
+        """Get weight deltas for learning"""
+        if rcv_layer.isTarget:
+            dwt = self.ErrorDriven(snd_layer, rcv_layer)
+        else:
+            dwt = self.MixedLearn(snd_layer, rcv_layer)
+
+        new_state, dwt = self._get_deltas_fn(
+            state, dwt, self.hasNorm, self.hasMomentum, self.DecayDt,
+            self.Norm_LrComp, self.normMin, self.MDt, self.Momentum_LrComp, self.Lrate
+        )
 
         if dwtLog is not None:
-            self.Debug(norm = norm,
-                    dwt = dwt,
-                    Dwt = Dwt,
-                    dwtLog = dwtLog)
+            self.Debug(new_state, norm=1.0, dwt=dwt, Dwt=dwt, dwtLog=dwtLog)
 
-        return Dwt
+        return new_state, dwt
 
-    def Debug(self,
-              **kwargs):
-        '''Creates a member variable storing the local XCAL internal variables
-            if the simulator has debug logs available. This data is accessed in
-            the Mesh.Debug function.
-        '''
+    def Debug(self, state: XCALState, **kwargs):
+        '''Creates debug information for XCAL process'''
         if "dwtLog" in kwargs:
-            # Generate a debugFrame member variable
             if not hasattr(self, "vlDwtLog"):
                 self.vlDwtLog = {}
-            # populate
             for key in kwargs:
-                if key == "dwtLog": continue
+                if key == "dwtLog": 
+                    continue
                 self.vlDwtLog[key] = kwargs[key]
 
-    def xcal(self, x: jnp.ndarray, th) -> jnp.ndarray:
-        '''"Check mark" linearized BCM-style learning rule which calculates
-            describes the calcium concentration versus change in synaptic
-            efficacy curve. This is proportional to change in weight strength
-            versus the activity of sending and receiving neuron for a single
-            synapse.
-        '''
-        out = jnp.zeros(x.shape)
-        
-        cond1 = x < self.DThr
-        not1 = jnp.logical_not(cond1)
-        mask1 = cond1
+    def ErrorDriven(self, snd_layer: Layer, rcv_layer: Layer) -> jnp.ndarray:
+        '''Calculates error-driven learning weight update'''
+        send_act_avg = snd_layer.ActAvg
+        recv_act_avg = rcv_layer.ActAvg
+        srs = recv_act_avg.AvgSLrn[:, jnp.newaxis] @ send_act_avg.AvgSLrn[jnp.newaxis, :]
+        srm = recv_act_avg.AvgM[:, jnp.newaxis] @ send_act_avg.AvgM[jnp.newaxis, :]
+        return self._xcal_fn(srs, srm, self.DThr, self.DRevRatio)
 
-        cond2 = (x > th * self.DRev)
-        mask2 = jnp.logical_and(cond2, not1)
-        not2 = jnp.logical_not(cond2)
+    def BCM(self, snd_layer: Layer, rcv_layer: Layer) -> jnp.ndarray:
+        '''Calculates BCM learning weight update'''
+        send_act_avg = snd_layer.ActAvg
+        recv_act_avg = rcv_layer.ActAvg
+        srs = recv_act_avg.AvgSLrn[:, jnp.newaxis] @ send_act_avg.AvgSLrn[jnp.newaxis, :]
+        avg_l = jnp.repeat(recv_act_avg.AvgL[:, jnp.newaxis], len(snd_layer), axis=1)
+        return self._xcal_fn(srs, avg_l, self.DThr, self.DRevRatio)
 
-        mask3 = jnp.logical_and(not1, not2)
+    def MixedLearn(self, snd_layer: Layer, rcv_layer: Layer) -> jnp.ndarray:
+        '''Calculates mixed learning weight update'''
+        send_act_avg = snd_layer.ActAvg
+        recv_act_avg = rcv_layer.ActAvg
+        avg_l_lrn = recv_act_avg.AvgLLrn
+        srs = recv_act_avg.AvgSLrn[:, jnp.newaxis] @ send_act_avg.AvgSLrn[jnp.newaxis, :]
+        srm = recv_act_avg.AvgM[:, jnp.newaxis] @ send_act_avg.AvgM[jnp.newaxis, :]
+        avg_l = jnp.repeat(recv_act_avg.AvgL[:, jnp.newaxis], len(snd_layer), axis=1)
 
-        # (x < DThr) ? 0 : (x > th * DRev) ? (x - th) : (-x * ((1-DRev)/DRev))
-        out = out.at[mask1].set(0)
-        out = out.at[mask2].set(x[mask2] - th[mask2])
-        out = out.at[mask3].set(x[mask3] * self.DRevRatio)
+        error_driven = self._xcal_fn(srs, srm, self.DThr, self.DRevRatio)
+        hebb_like = self._xcal_fn(srs, avg_l, self.DThr, self.DRevRatio)
+        hebb_like = hebb_like * avg_l_lrn[:, jnp.newaxis]
+        dwt = error_driven + hebb_like
 
-        return out
-
-    def ErrorDriven(self) -> jnp.ndarray:
-        '''Calculates an error-driven learning weight update based on the
-            contrastive hebbian learning (CHL) rule.
-        '''
-        send = self.send.ActAvg
-        recv = self.recv.ActAvg
-        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
-        srm = recv.AvgM[:,jnp.newaxis] @ send.AvgM[jnp.newaxis,:]
-        dwt = self.xcal(srs, srm)
-
-        return dwt
-
-    def BCM(self) -> jnp.ndarray:
-        send = self.send.ActAvg
-        recv = self.recv.ActAvg
-        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
-        AvgL = jnp.repeat(recv.AvgL[:,jnp.newaxis], len(self.send), axis=1)
-        dwt = self.xcal(srs, AvgL)
-
-        return dwt
-
-    def MixedLearn(self) -> jnp.ndarray:
-        send = self.send.ActAvg
-        recv = self.recv.ActAvg
-        AvgLLrn = recv.AvgLLrn
-        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
-        srm = recv.AvgM[:,jnp.newaxis] @ send.AvgM[jnp.newaxis,:]
-        AvgL = jnp.repeat(recv.AvgL[:,jnp.newaxis], len(self.send), axis=1)
-
-        errorDriven = self.xcal(srs, srm)
-        hebbLike = self.xcal(srs, AvgL)
-        hebbLike = hebbLike * AvgLLrn[:,jnp.newaxis]
-        dwt = errorDriven + hebbLike
-
-        mask1 = send.AvgS < self.LrnThr
-        mask2 = send.AvgM < self.LrnThr
+        mask1 = send_act_avg.AvgS < self.LrnThr
+        mask2 = send_act_avg.AvgM < self.LrnThr
         cond = jnp.logical_and(mask1, mask2)
-        dwt = dwt.at[:,cond].set(0)
+        dwt = jnp.where(cond[jnp.newaxis, :], 0.0, dwt)
+        
         return dwt
+
+    def Reset(self, snd_layer: Layer, rcv_layer: Layer) -> XCALState:
+        """Reset XCAL state"""
+        return self.AttachLayer(snd_layer, rcv_layer) 
