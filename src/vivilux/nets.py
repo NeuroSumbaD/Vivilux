@@ -332,7 +332,7 @@ class Net(nnx.Module):
         # Else return number of samples in dataset
         return numSamples
 
-    @nnx.jit
+    # @nnx.jit
     def EvaluateMetrics(self, **dataset):
         '''Evaluates each metric with respect to each output layer and its
             corresponding target in the dataset. The results are stored in a
@@ -569,7 +569,11 @@ class Net(nnx.Module):
         sampleIndices = jax.random.permutation(self.rngs["Shuffle"](), numSamples) if shuffle else jnp.arange(numSamples)
         
         # Process each sample
-        for sampleIndex in sampleIndices:
+        for sampleCount, sampleIndex in enumerate(sampleIndices):
+            if verbosity > 0:
+                print(f"\rEpoch: {self.epochIndex.value}, "
+                      f"sample: ({sampleCount+1}/{numSamples}), ", end=""#"\r"
+                      )
             dataVectors = {key: value[sampleIndex] for key, value in dataset.items()}
             self.StepTrial_jit(runType, **dataVectors)
 
