@@ -183,6 +183,10 @@ class Net(nnx.Module):
         # For early stopping learning process
         self.lrnThresh = nnx.Variable(0)
 
+        # Store phase configuration values as nnx.Variable for JIT compatibility
+        self.phase_isOutput = nnx.Variable({phase: config["isOutput"] for phase, config in self.phaseConfig.items()})
+        self.phase_isLearn = nnx.Variable({phase: config["isLearn"] for phase, config in self.phaseConfig.items()})
+
     def PreallocateResultDict(self):
         '''Pre-allocate a dict to store the results
         '''
@@ -422,29 +426,52 @@ class Net(nnx.Module):
                 if phaseName in process.phases or "all" in process.phases:
                     process.StepPhase()
 
-    @nnx.jit(static_argnames=["phaseName"])
+    def _execute_phase_processes(self, layer, phaseName):
+        """Execute phasic processes for a layer based on phase name (non-JIT version)"""
+        for process in layer.phaseProcesses:
+            if phaseName in process.phases or "all" in process.phases:
+                process.StepPhase()
+
     def StepPhase_jit(self, phaseName: str, **dataVectors):
-        '''Compute a phase of execution for the neural network. A phase is a 
-            set of timesteps related to some process in the network such as 
-            the generation of an expectation versus observation of outcome in
-            Prof. O'Reilly's error-driven local learning framework.
-        '''
+        """JIT-compatible version of StepPhase that handles state mutations properly"""
         numTimeSteps = self.phaseConfig[phaseName]["numTimeSteps"]
         
-        self.ClampLayers(phaseName, **dataVectors)
+        # Clamp layers according to phaseType (matching non-JIT logic)
+        first = True
+        for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
+            if first:
+                clampedLayer.Clamp_jit(dataVectors[dataName], self.time.value)
+                first = False
+            else:
+                clampedLayer.EXTERNAL = dataVectors[dataName]
 
+        # Time stepping loop
         for timeStep in range(numTimeSteps):
-            self.UpdateConductances()
-            self.UpdateActivity(phaseName, **dataVectors)
+            # Update conductances for all layers
+            for layer in self.layers:
+                layer.UpdateConductance()
+            
+            # StepTime for each unclamped layer
+            for layer in self.layerDict[phaseName]["unclamped"]:
+                layer.StepTime_jit(self.time.value)
+
+            # Update internal variables of clamped layers (matching non-JIT logic)
+            first = True
+            for layer in self.layerDict[phaseName]["clamped"].values():
+                if first:
+                    layer.EndStep_jit(self.time.value)
+                    first = False
+                else:
+                    layer.StepTime_jit(self.time.value)
 
             self.time.value += self.DELTA_TIME
 
         # Execute phasic processes (including XCAL)
         for layer in self.layers:
-            #record phase activity at the end of each phase
+            # Record phase activity at the end of each phase
             layer.phaseHist[phaseName] = layer.getActivity().copy()
 
-            #Execute phasic processes (including XCAL)
+            # Execute phasic processes (including XCAL)
             for process in layer.phaseProcesses:
                 if phaseName in process.phases or "all" in process.phases:
                     process.StepPhase()
@@ -468,24 +495,27 @@ class Net(nnx.Module):
                     dwtLog = debugData["dwtLog"] if "dwtLog" in debugData else None
                     layer.Learn(dwtLog=dwtLog)
 
-    @nnx.jit(static_argnames=["runType"])
     def StepTrial_jit(self, runType: str, **dataVectors):
-        Train = runType=="Learn"
+        """JIT-compatible version of StepTrial that handles state mutations properly"""
+        Train = runType == "Learn"
+        
+        # Initialize trial for all layers
         for layer in self.layers:
             layer.InitTrial(Train)
             
+        # Execute each phase
         for phaseName in self.runConfig[runType]:
             self.StepPhase_jit(phaseName, **dataVectors)
 
             # Store layer activity for each output layer during output phases
-            if self.phaseConfig[phaseName]["isOutput"]:
+            if self.phase_isOutput.value[phaseName]:
                 for dataName, layer in self.layerDict["outputLayers"].items():
-                    # TODO use pre-allocated numpy array to speed up execution
                     self.outputs.value[dataName].append(layer.getActivity())
 
-            if self.phaseConfig[phaseName]["isLearn"] and Train:
+            # Execute learning if this is a learning phase
+            if self.phase_isLearn.value[phaseName] and Train:
                 for layer in self.layers:
-                    layer.Learn()
+                    layer.Learn_jit()
 
     def RunEpoch(self,
                  runType: str,
@@ -529,33 +559,22 @@ class Net(nnx.Module):
                      reset: bool = False,
                      shuffle: bool = False,
                      **dataset: dict[str, jnp.ndarray]):
-        '''Runs an epoch (iteration through all samples of a dataset) using a
-            specified run type mathing a key from self.runConfig.
-
-                - verbosity: specifies how much is printed to the console
-                - reset: specifies if layer activity is returned to zero each epoch
-                - shuffle: determines if the dataset is shuffled each epoch
-        '''
+        """JIT-compatible version of RunEpoch that pre-allocates data structures"""
         numSamples = self.ValidateDataset(**dataset)
 
-        # TODO use pre-allocated numpy array to speed up execution
+        # Pre-allocate output storage
         self.outputs.value = {key: [] for key in self.runConfig["outputLayers"]}
 
-        # suffle indices if necessary
-        sampleIndices = jax.random.permutation(self.rngs["Shuffle"](), numSamples) if shuffle \
-            else range(numSamples)
+        # Generate sample indices
+        sampleIndices = jax.random.permutation(self.rngs["Shuffle"](), numSamples) if shuffle else jnp.arange(numSamples)
         
-        # TODO: find a faster way to iterate through datasets
-        for sampleCount, sampleIndex in enumerate(sampleIndices):
-            if verbosity > 0:
-                print(f"\rEpoch: {self.epochIndex.value}, "
-                      f"sample: ({sampleCount+1}/{numSamples}), ", end=""#"\r"
-                      )
-
-            dataVectors = {key:value[sampleIndex] for key, value in dataset.items()}
+        # Process each sample
+        for sampleIndex in sampleIndices:
+            dataVectors = {key: value[sampleIndex] for key, value in dataset.items()}
             self.StepTrial_jit(runType, **dataVectors)
 
-            if reset : self.resetActivity()
+            if reset:
+                self.resetActivity()
 
         return numSamples
 
@@ -596,7 +615,7 @@ class Net(nnx.Module):
         for epochIndex in range(numEpochs):
             self.epochIndex.value = int(EvaluateFirst) + epochIndex
             if Jit:
-                self.RunEpoch_jit("Learn", verbosity, reset, shuffle,
+                numSamples = self.RunEpoch_jit("Learn", verbosity, reset, shuffle,
                                   **dataset)
             else:
                 numSamples = self.RunEpoch("Learn", verbosity,

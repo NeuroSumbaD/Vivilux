@@ -70,18 +70,17 @@ fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
                                     meshConfig=fbMeshConfig)
 
 
-result = leabraNet.Learn(input=inputs, target=targets,
-                         numEpochs=numEpochs,
+result = leabraNet.Learn(numEpochs=numEpochs,
                          reset=False,
                          shuffle=False,
                          EvaluateFirst=False,
                          Jit=True,
-                         )
-time = jnp.linspace(0,leabraNet.time, len(result['AvgSSE']))
+                         input=inputs, target=targets)
+time = jnp.linspace(0,leabraNet.time.value, len(result['AvgSSE']))
 plt.plot(time, result['AvgSSE'], label="Leabra Net")
 
 # Baseline guessing (JAX version)
-baseline = jnp.mean(jnp.array([ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), targets) for entry in jrandom.uniform(rngs["Noise"], (2000,numSamples,inputSize))]))
+baseline = jnp.mean(jnp.array([ThrMSE(entry/jnp.sqrt(jnp.sum(jnp.square(entry))), targets) for entry in jrandom.uniform(rngs["Noise"](), (2000,numSamples,inputSize))]))
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
 
 plt.title("Random Input/Output Matching")

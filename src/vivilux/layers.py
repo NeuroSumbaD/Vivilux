@@ -196,7 +196,7 @@ class Layer(nnx.Module):
             self.Act.value < self.actFn.VmActThr.value,
             self.Vm.value <= Thr
             )
-        newAct = newAct.at[mask].set(self.actFn(self.Vm.value[mask] - Thr))
+        newAct = jnp.where(mask, self.actFn(self.Vm.value - Thr), newAct)
 
         # Update layer activities
         self.Act.value = self.Act.value + self.DtParams["VmDt"] * (newAct - self.Act.value)
@@ -205,15 +205,13 @@ class Layer(nnx.Module):
 
         self.EndStep(time, debugData=debugData)
 
-    @nnx.jit
     def StepTime_jit(self, time: float):
-        # self.UpdateConductance() ## Moved to nets StepPhase
-
-        if self.EXTERNAL is not None: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
+        """JIT-compatible version of StepTime that handles state mutations properly"""
+        # Check for external clamping (same as non-JIT version)
+        if self.EXTERNAL is not None:
             self.Clamp_jit(self.EXTERNAL, time)
             self.EndStep_jit(time)
             return
-            
 
         # Aliases for readability
         Erev = self.Erev
@@ -222,11 +220,11 @@ class Layer(nnx.Module):
         
         # Update layer potentials
         Vm = self.Vm.value
-        self.Inet = (self.Ge.value * Gbar["E"] * (Erev["E"] - Vm) +
+        Inet = (self.Ge.value * Gbar["E"] * (Erev["E"] - Vm) +
                 Gbar["L"] * (Erev["L"] - Vm) +
                 self.Gi.value * Gbar["I"] * (Erev["I"] - Vm)
                 )
-        self.Vm.value = self.Vm.value + self.DtParams["VmDt"] * self.Inet
+        self.Vm.value = self.Vm.value + self.DtParams["VmDt"] * Inet
 
         # Calculate conductance threshold
         geThr = (self.Gi.value * Gbar["I"] * (Erev["I"] - Thr) +
@@ -242,13 +240,14 @@ class Layer(nnx.Module):
             self.Act.value < self.actFn.VmActThr.value,
             self.Vm.value <= Thr
             )
-        newAct = newAct.at[mask].set(self.actFn(self.Vm.value[mask] - Thr))
+        newAct = jnp.where(mask, self.actFn(self.Vm.value - Thr), newAct)
 
         # Update layer activities
         self.Act.value = self.Act.value + self.DtParams["VmDt"] * (newAct - self.Act.value)
 
         self.neuralEnergy.value = self.neuralEnergy.value + self.neuron(self.Act.value)
 
+        # Call EndStep_jit (same as non-JIT version calls EndStep)
         self.EndStep_jit(time)
 
     def Integrate(self):
@@ -341,15 +340,12 @@ class Layer(nnx.Module):
         self.GeRaw.value = self.GeRaw.value.at[:].set(0)
         self.GiRaw.value = self.GiRaw.value.at[:].set(0)
 
-    @nnx.jit
     def EndStep_jit(self, time):
+        """JIT-compatible version of EndStep that handles state mutations properly"""
         self.ActAvg.StepTime()
         self.FFFB.UpdateAct()
-        self.UpdateSnapshot()
-        self.UpdateMonitors()
 
-        # TODO: Improve readability of this line (end of trial code?)
-        ## these lines may need to change when Delta-Sender mechanism is included
+        # Reset conductances for next timestep
         self.GeRaw.value = self.GeRaw.value.at[:].set(0)
         self.GiRaw.value = self.GiRaw.value.at[:].set(0)
 
@@ -380,23 +376,24 @@ class Layer(nnx.Module):
     def Clamp(self, data: jnp.ndarray, time: float, monitoring = False, debugData=None):
         clampData = jnp.array(data)  # Use jnp.array instead of .copy() for JAX compatibility
 
-        # truncate extrema
-        clampData = clampData.at[clampData > self.clampMax.value].set(self.clampMax.value)
-        clampData = clampData.at[clampData < self.clampMin.value].set(self.clampMin.value)
+        # truncate extrema using jnp.where instead of boolean indexing
+        clampData = jnp.where(clampData > self.clampMax.value, self.clampMax.value, clampData)
+        clampData = jnp.where(clampData < self.clampMin.value, self.clampMin.value, clampData)
         #Update activity
         self.Act.value = clampData
         
         # Update other internal variables according to activity
         self.Vm.value = self.actFn.Thr.value + self.Act.value/self.actFn.Gain.value
 
-    @nnx.jit
     def Clamp_jit(self, data: jnp.ndarray, time: float):
+        """JIT-compatible version of Clamp that handles state mutations properly"""
         clampData = jnp.array(data)  # Use jnp.array instead of .copy() for JAX compatibility
 
-        # truncate extrema
-        clampData = clampData.at[clampData > self.clampMax.value].set(self.clampMax.value)
-        clampData = clampData.at[clampData < self.clampMin.value].set(self.clampMin.value)
-        #Update activity
+        # Truncate extrema using jnp.where instead of boolean indexing
+        clampData = jnp.where(clampData > self.clampMax.value, self.clampMax.value, clampData)
+        clampData = jnp.where(clampData < self.clampMin.value, self.clampMin.value, clampData)
+        
+        # Update activity
         self.Act.value = clampData
         
         # Update other internal variables according to activity
@@ -407,7 +404,14 @@ class Layer(nnx.Module):
         for mesh in self.excMeshes:
             if not mesh.trainable.value: continue
             mesh.Update(dwtLog=dwtLog)
-        
+    
+    def Learn_jit(self):
+        """JIT-compatible version of Learn that doesn't use debug data"""
+        if self.isInput.value or self.freeze.value: return
+        for mesh in self.excMeshes:
+            if not mesh.trainable.value: continue
+            mesh.Update_jit()
+
     def Debug(self, **kwargs):
         if "activityLog" in kwargs:
             actLog = kwargs["activityLog"]

@@ -35,10 +35,11 @@ def XCAL(inLayer: 'Layer', outLayer: 'Layer') -> jnp.ndarray:
     cond1 = hebb <= DThr
     cond2 = jnp.logical_and(hebb > DThr, hebb >= (DRev*antihebb))
     cond3 = jnp.logical_and(hebb > DThr, hebb < (DRev*antihebb))
-    delta = hebb.copy()
-    delta = delta.at[cond1].set(0)
-    delta = delta.at[cond2].set((hebb-antihebb)[cond2])
-    delta = delta.at[cond3].set(-hebb[cond3] * ((1-DRev)/DRev))
+    
+    # Use jnp.where instead of boolean indexing
+    delta = jnp.where(cond1, 0.0, hebb)
+    delta = jnp.where(cond2, hebb - antihebb, delta)
+    delta = jnp.where(cond3, -hebb * ((1-DRev)/DRev), delta)
     return delta
 
 def Nonsense(inLayer: 'Layer', outLayer: 'Layer', rngs: Optional[nnx.Rngs]=None) -> jnp.ndarray:

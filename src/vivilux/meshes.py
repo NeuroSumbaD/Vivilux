@@ -345,6 +345,13 @@ class Mesh(nnx.Module):
                        wt = self.matrix.value,
                        dwtLog = dwtLog)
 
+    def Update_jit(self):
+        """JIT-compatible version of Update that doesn't use debug data"""
+        delta, m, n = self.CalculateUpdate()
+        self.DeviceUpdate(delta)
+        self.ApplyUpdate(delta, m, n)
+        self.WtBalance()
+
     def Debug(self,
               **kwargs):
         '''Checks the XCAL and weights against leabra data'''
