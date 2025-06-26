@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from .layers import Layer
 
 from .devices import Device, Generic
-from .processes import XCAL
+from .processes import XCALState
 
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -91,7 +91,6 @@ class Mesh(nnx.Module):
         Mesh.count += 1
 
         self.trainable = nnx.Variable(True)
-        self.sndActAvg = inLayer.ActAvg
         self.rcvActAvg = None
 
         # external matrix scaling parameters (constant synaptic gain)
@@ -174,7 +173,7 @@ class Mesh(nnx.Module):
         self.Gscale.value = self.Gscale.value / jnp.where(totalRel > 0, totalRel, 1)
 
         # calculate average from input layer on last trial
-        self.avgActP = self.inLayer.ActAvg.ActPAvg.value
+        self.avgActP = self.inLayer.actavg_state.ActPAvg
 
         #calculate average number of active neurons in sending layer
         sendLayActN = jnp.maximum(jnp.round(jnp.array(self.avgActP*len(self.inLayer))), 1)
@@ -230,8 +229,25 @@ class Mesh(nnx.Module):
 
     def AttachLayer(self, rcvLayer: Layer):
         self.rcvLayer = rcvLayer
-        self.XCAL = XCAL() #TODO pass params from layer or mesh config
-        self.XCAL.AttachLayer(self.inLayer, rcvLayer)
+        # Initialize XCALState with appropriate parameters (example values, adjust as needed)
+        self.xcal_state = XCALState(
+            DRev=0.1,
+            DThr=0.0001,
+            hasNorm=True,
+            Norm_LrComp=1.0,
+            normMin=1e-6,
+            DecayTau=10.0,
+            hasMomentum=True,
+            MTau=10.0,
+            Momentum_LrComp=1.0,
+            LrnThr=0.01,
+            Lrate=0.001,
+            MDt=1/10.0,
+            DecayDt=1/10.0,
+            DRevRatio=0.1,
+            Norm=jnp.zeros(self.shape),
+            moment=jnp.zeros(self.shape),
+        )
 
     def WtBalance(self):
         '''Updates the weight balancing factors used by XCAL.
@@ -312,7 +328,14 @@ class Mesh(nnx.Module):
 
             Overwrite this function for other learning rules.
         '''
-        delta = self.XCAL.GetDeltas(dwtLog=dwtLog)
+        isTarget = getattr(self.rcvLayer, 'isTarget', False)
+        if hasattr(isTarget, 'value'):
+            isTarget = isTarget.value
+        self.xcal_state, delta = self.xcal_state.get_deltas(
+            isTarget,
+            self.inLayer.actavg_state,
+            getattr(self.rcvLayer, 'actavg_state', None)
+        )
         delta = self.SoftBound(delta)
         m, n = delta.shape
         return delta, m, n
@@ -364,9 +387,6 @@ class Mesh(nnx.Module):
         time = net.time.value
 
         viviluxData = {}
-        viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]
-        viviluxData["dwt"] = self.XCAL.vlDwtLog["dwt"]
-        viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]
         viviluxData["lwt"] = kwargs["lwt"]
         viviluxData["wt"] = kwargs["wt"]
 

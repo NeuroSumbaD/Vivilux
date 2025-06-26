@@ -7,13 +7,11 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from .nets import Net
     from .meshes import Mesh
-    from .processes import Process, NeuralProcess, PhasicProcess
-    from .neurons import Neuron, YunJhuModel
+    from .neurons import Neuron
 
-from .processes import ActAvg, FFFB
+from .processes import ActAvgState, FFFBState
 
 import jax.numpy as jnp
-import jax.random as jrandom
 from flax import nnx
 
 # import defaults
@@ -81,8 +79,6 @@ class Layer(nnx.Module):
         # Empty initial excitatory and inhibitory meshes as regular attributes (not nnx state)
         self.excMeshes: list[Mesh] = []
         self.inhMeshes: list[Mesh] = []
-        self.neuralProcesses: list[NeuralProcess]  = []
-        self.phaseProcesses: list[PhasicProcess] = []
         self.phaseHist = {}
         # self.ActPAvg = np.mean(self.outAct) # initialize for Gscale
 
@@ -127,13 +123,34 @@ class Layer(nnx.Module):
         self.OptThreshParams = layerConfig["OptThreshParams"]
 
         # Attach Averaging Process
-        self.ActAvg = ActAvg(self, **layerConfig["ActAvg"]) # TODO add to std layerConfig and pass params here
-        self.phaseProcesses.append(self.ActAvg)
+        self.actavg_state = ActAvgState(
+            **layerConfig["ActAvg"],
+            SSdt=1/layerConfig["ActAvg"]["SSTau"],
+            Sdt=1/layerConfig["ActAvg"]["STau"],
+            Mdt=1/layerConfig["ActAvg"]["MTau"],
+            Dt=1/layerConfig["ActAvg"]["Tau"],
+            ActPAvg_Dt=1/layerConfig["ActAvg"]["ActPAvg_Tau"],
+            LrnFact=layerConfig["ActAvg"]["LrnM"],
+            layCosDiffAvg=0.0,
+            ActPAvg=layerConfig["ActAvg"]["Init"],
+            ActPAvgEff=layerConfig["ActAvg"]["Init"],
+            AvgSS=jnp.full((len(self.Act.value),), layerConfig["ActAvg"]["Init"]),
+            AvgS=jnp.full((len(self.Act.value),), layerConfig["ActAvg"]["Init"]),
+            AvgM=jnp.full((len(self.Act.value),), layerConfig["ActAvg"]["Init"]),
+            AvgL=jnp.full((len(self.Act.value),), layerConfig["ActAvg"]["AvgL_Init"]),
+            AvgSLrn=jnp.full((len(self.Act.value),), layerConfig["ActAvg"]["Init"]),
+            ModAvgLLrn=jnp.full((len(self.Act.value),), 0.0),
+            AvgLLrn=jnp.full((len(self.Act.value),), 0.0),
+        )
 
         # Attach FFFB process
         ##NOTE: special process, executed after Ge update, before Gi update
         if layerConfig["hasInhib"]:
-            self.FFFB = FFFB(self)
+            self.fffb_state = FFFBState(
+                poolAct=jnp.zeros_like(self.Act.value),
+                fbi=0.0,
+                FFFBparams=self.FFFBparams,
+            )
             self.Gi_FFFB = nnx.Variable(0.0)
 
         # Attach optimizer
@@ -143,41 +160,20 @@ class Layer(nnx.Module):
 
     def UpdateConductance(self):
         self.Integrate()
-        self.RunProcesses()
-
-        # Update conductances from raw inputs
-        self.Ge.value = self.Ge.value + (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GeRaw.value - self.Ge.value)
-                       )
-        
-        # Call FFFB to update GiRaw
-        self.FFFB.StepTime()
-
-        self.GiSyn.value = self.GiSyn.value + (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GiRaw.value - self.GiSyn.value)
-                       )
-        self.Gi.value = self.GiSyn.value + self.Gi_FFFB.value # Add synaptic Gi to FFFB contribution
+        self.Ge.value = self.Ge.value + (self.DtParams["Integ"] * self.DtParams["GDt"] * (self.GeRaw.value - self.Ge.value))
+        # FFFB update
+        self.fffb_state, new_gi_fffb = self.fffb_state.step_time(self.Ge.value, self.Gi_FFFB.value, self.Act.value)
+        self.Gi_FFFB.value = new_gi_fffb
+        self.GiSyn.value = self.GiSyn.value + (self.DtParams["Integ"] * self.DtParams["GDt"] * (self.GiRaw.value - self.GiSyn.value))
+        self.Gi.value = self.GiSyn.value + self.Gi_FFFB.value
 
     def UpdateConductance_jit(self):
         self.Integrate()
-        self.RunProcesses()
-
-        # Update conductances from raw inputs
-        self.Ge.value = self.Ge.value + (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GeRaw.value - self.Ge.value)
-                       )
-        
-        # Call FFFB to update GiRaw
-        self.FFFB.StepTime()
-
-        self.GiSyn.value = self.GiSyn.value + (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GiRaw.value - self.GiSyn.value)
-                       )
-        self.Gi.value = self.GiSyn.value + self.Gi_FFFB.value # Add synaptic Gi to FFFB contribution
+        self.Ge.value = self.Ge.value + (self.DtParams["Integ"] * self.DtParams["GDt"] * (self.GeRaw.value - self.Ge.value))
+        self.fffb_state, new_gi_fffb = self.fffb_state.step_time(self.Ge.value, self.Gi_FFFB.value, self.Act.value)
+        self.Gi_FFFB.value = new_gi_fffb
+        self.GiSyn.value = self.GiSyn.value + (self.DtParams["Integ"] * self.DtParams["GDt"] * (self.GiRaw.value - self.GiSyn.value))
+        self.Gi.value = self.GiSyn.value + self.Gi_FFFB.value
     
     def StepTime(self, time: float, debugData = None):
         # self.UpdateConductance() ## Moved to nets StepPhase
@@ -282,8 +278,7 @@ class Layer(nnx.Module):
 
     def InitTrial(self, Train: bool):
         if Train:
-            # Update AvgL, AvgLLrn, ActPAvg, ActPAvgEff
-            self.ActAvg.InitTrial()
+            self.actavg_state = self.actavg_state.init_trial()
             
             # self.ActAvg.StepPhase() ##TODO: Move to end of plus phase
 
@@ -297,16 +292,6 @@ class Layer(nnx.Module):
 
         self.EXTERNAL = None
     
-    def RunProcesses(self):
-        '''A set of additional high-level processes which result in current
-            stimulus to the neurons in the layer.
-        '''
-        for process in self.neuralProcesses:
-            process.StepTime()
-
-    def AddProcess(self, process: Process):
-        process.AttachLayer(self)
-
     def AddMonitor(self, monitor: Monitor):
         self.monitors[monitor.name] = monitor
 
@@ -331,8 +316,8 @@ class Layer(nnx.Module):
         }
 
     def EndStep(self, time, debugData = None):
-        self.ActAvg.StepTime()
-        self.FFFB.UpdateAct()
+        self.actavg_state = self.actavg_state.step_time(self.Act.value)
+        self.fffb_state = self.fffb_state.update_act(self.Act.value)
         self.UpdateSnapshot()
         self.UpdateMonitors()
 
@@ -341,12 +326,12 @@ class Layer(nnx.Module):
         if bool(debugData): #check if debugData is empty
             self.Debug(time=time,
                        Act = self.Act.value,
-                       AvgS = self.ActAvg.AvgS.value,
-                       AvgSS = self.ActAvg.AvgSS.value,
-                       AvgM = self.ActAvg.AvgM.value,
-                       AvgL = self.ActAvg.AvgL.value,
-                    #    AvgLLrn = self.ActAvg.AvgLLrn,
-                       AvgSLrn = self.ActAvg.AvgSLrn.value,
+                       AvgS = self.actavg_state.AvgS,
+                       AvgSS = self.actavg_state.AvgSS,
+                       AvgM = self.actavg_state.AvgM,
+                       AvgL = self.actavg_state.AvgL,
+                    #    AvgLLrn = self.actavg_state.AvgLLrn,
+                       AvgSLrn = self.actavg_state.AvgSLrn,
                        Ge=self.Ge.value,
                        GeRaw=self.GeRaw.value,
                        Gi=self.Gi.value,
@@ -361,8 +346,8 @@ class Layer(nnx.Module):
 
     def EndStep_jit(self, time):
         """JIT-compatible version of EndStep that handles state mutations properly"""
-        self.ActAvg.StepTime()
-        self.FFFB.UpdateAct()
+        self.actavg_state = self.actavg_state.step_time(self.Act.value)
+        self.fffb_state = self.fffb_state.update_act(self.Act.value)
 
         # Reset conductances for next timestep
         self.GeRaw.value = self.GeRaw.value.at[:].set(0)
@@ -385,12 +370,12 @@ class Layer(nnx.Module):
         self.GiSyn.value = self.GiSyn.value.at[:].set(0)
         self.Gi.value = self.Gi.value.at[:].set(0)
 
-        self.FFFB.Reset()
-        self.ActAvg.Reset()
-        
-        for mesh in self.excMeshes:
-            mesh.XCAL.Reset()
+        self.fffb_state = self.fffb_state.reset()
+        self.actavg_state = self.actavg_state.reset()
 
+        # TODO: check if xcal is being handled correctly
+        # for mesh in self.excMeshes:
+            # mesh.xcal_state = mesh.xcal_state.reset()
 
     def Clamp(self, data: jnp.ndarray, time: float, monitoring = False, debugData=None):
         clampData = jnp.array(data)  # Use jnp.array instead of .copy() for JAX compatibility

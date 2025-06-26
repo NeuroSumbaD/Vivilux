@@ -133,10 +133,8 @@ class XCALState:
     # State
     Norm: jnp.ndarray
     moment: jnp.ndarray
-    # For debugging
-    vlDwtLog: dict = struct.field(pytree_node=False, default_factory=dict)
 
-    def get_deltas(self, isTarget, send_ActAvg, recv_ActAvg, dwtLog=None):
+    def get_deltas(self, isTarget, send_ActAvg, recv_ActAvg):
         if isTarget:
             dwt = self.error_driven(send_ActAvg, recv_ActAvg)
         else:
@@ -154,15 +152,7 @@ class XCALState:
             moment = self.moment
             dwt *= norm
         Dwt = self.Lrate * dwt
-        if dwtLog is not None:
-            self.debug(norm=norm, dwt=dwt, Dwt=Dwt, dwtLog=dwtLog)
         return dataclasses.replace(self, Norm=Norm, moment=moment), Dwt
-
-    def debug(self, **kwargs):
-        if "dwtLog" in kwargs:
-            for key in kwargs:
-                if key == "dwtLog": continue
-                self.vlDwtLog[key] = kwargs[key]
 
     def xcal(self, x: jnp.ndarray, th) -> jnp.ndarray:
         out = jnp.zeros(x.shape)

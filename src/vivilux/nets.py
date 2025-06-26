@@ -439,15 +439,10 @@ class Net(nnx.Module):
 
             self.time.value += self.DELTA_TIME
 
-        # Execute phasic processes (including XCAL)
+        # Record phase activity at the end of each phase
         for layer in self.layers:
-            #record phase activity at the end of each phase
             layer.phaseHist[phaseName] = layer.getActivity().copy()
 
-            #Execute phasic processes (including XCAL)
-            for process in layer.phaseProcesses:
-                if phaseName in process.phases or "all" in process.phases:
-                    process.StepPhase()
 
     def StepPhase_jit(self, phaseName: str, **dataVectors):
         """JIT-compatible version of StepPhase that handles state mutations properly"""
@@ -462,15 +457,10 @@ class Net(nnx.Module):
 
             self.time.value += self.DELTA_TIME
 
-        # Execute phasic processes (including XCAL)
+        # Record phase activity at the end of each phase
         for layer in self.layers:
-            # Record phase activity at the end of each phase
             layer.phaseHist[phaseName] = layer.getActivity().copy()
 
-            # Execute phasic processes (including XCAL)
-            for process in layer.phaseProcesses:
-                if phaseName in process.phases or "all" in process.phases:
-                    process.StepPhase()
 
     def StepTrial(self, runType: str, debugData = {}, **dataVectors):
         Train = runType=="Learn"
