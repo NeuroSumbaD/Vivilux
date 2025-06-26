@@ -105,16 +105,19 @@ phaseConfig_std = {
         "numTimeSteps": 75,
         "isOutput": True,
         "isLearn": False,
-        "clampLayers": {"input": 0,
-                    },
+        "inputClamped": {"input": 0,
+                        },
+        "outputClamped": {
+                         },
     },
     "plus": {
         "numTimeSteps": 25,
         "isOutput": False,
         "isLearn": True,
-        "clampLayers": {"input": 0,
-                    "target": -1,
-                    },
+        "inputClamped": {"input": 0,
+                        },
+        "outputClamped": {"target": -1,
+                         },
     },
 }
 
@@ -201,12 +204,20 @@ class Net(nnx.Module):
         for phaseName in self.phaseConfig.keys():
             layers = list(self.layers) # copy full layer list
             self.layerDict[phaseName] = {}
-            self.layerDict[phaseName]["clamped"] = {}
+            self.layerDict[phaseName]["inputClamped"] = {}
+            self.layerDict[phaseName]["outputClamped"] = {}
 
-            for dataName, layerIndex in self.phaseConfig[phaseName]["clampLayers"].items():
+            # TODO: Change to use layer.name instead of layerIndex
+
+            for dataName, layerIndex in self.phaseConfig[phaseName]["inputClamped"].items():
                 if len(layers) == 0:
                     return
-                self.layerDict[phaseName]["clamped"][dataName] = layers.pop(layerIndex)
+                self.layerDict[phaseName]["inputClamped"][dataName] = layers.pop(layerIndex)
+
+            for dataName, layerIndex in self.phaseConfig[phaseName]["outputClamped"].items():
+                if len(layers) == 0:
+                    return
+                self.layerDict[phaseName]["outputClamped"][dataName] = layers.pop(layerIndex)
 
             self.layerDict[phaseName]["unclamped"] = layers
 
@@ -370,16 +381,27 @@ class Net(nnx.Module):
         for layer in self.layers:
             layer.UpdateConductance()
 
+    def UpdateConductances_jit(self):
+        for layer in self.layers:
+            layer.UpdateConductance_jit()
+
     def ClampLayers(self, phaseName: str, debugData = None, **dataVectors):
         # Clamp layers according to phaseType
         ## TODO: Change clamp to execute outside time loop, unclamp after, & update important internal variables
-        first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-        for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
-                if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                    clampedLayer.Clamp(dataVectors[dataName], self.time.value, debugData=debugData)
-                    first = False
-                else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                    clampedLayer.EXTERNAL = dataVectors[dataName]
+        for dataName, clampedLayer in self.layerDict[phaseName]["inputClamped"].items():
+            clampedLayer.Clamp(dataVectors[dataName], self.time.value, debugData=debugData)
+
+        for dataName, clampedLayer in self.layerDict[phaseName]["outputClamped"].items():
+            clampedLayer.EXTERNAL = dataVectors[dataName]
+
+    def ClampLayers_jit(self, phaseName: str,**dataVectors):
+        # Clamp layers according to phaseType
+        ## TODO: Change clamp to execute outside time loop, unclamp after, & update important internal variables
+        for dataName, clampedLayer in self.layerDict[phaseName]["inputClamped"].items():
+            clampedLayer.Clamp_jit(dataVectors[dataName], self.time.value)
+
+        for dataName, clampedLayer in self.layerDict[phaseName]["outputClamped"].items():
+            clampedLayer.EXTERNAL = dataVectors[dataName]
     
     
     def UpdateActivity(self, phaseName: str, debugData={}, **dataVectors):
@@ -390,15 +412,16 @@ class Net(nnx.Module):
             layer.StepTime(self.time.value, debugData=debugData)
 
         # Update internal variables of clamped layers
-        first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-        for layer in self.layerDict[phaseName]["clamped"].values():
+        self.ClampLayers(phaseName, **dataVectors)
+
+    def UpdateActivity_jit(self, phaseName: str, **dataVectors):
+        ## TODO: Parallelize execution for all layers
+        # StepTime for each unclamped layer
+        for layer in self.layerDict[phaseName]["unclamped"]:
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
-            # layer.UpdateConductance()
-            if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                layer.EndStep(self.time.value, debugData=debugData)
-                first = False
-            else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                layer.StepTime(self.time.value, debugData=debugData)
+            layer.StepTime_jit(self.time.value)
+
+        self.ClampLayers_jit(phaseName, **dataVectors)
     
     def StepPhase(self, phaseName: str, debugData = {}, **dataVectors):
         '''Compute a phase of execution for the neural network. A phase is a 
@@ -426,43 +449,16 @@ class Net(nnx.Module):
                 if phaseName in process.phases or "all" in process.phases:
                     process.StepPhase()
 
-    def _execute_phase_processes(self, layer, phaseName):
-        """Execute phasic processes for a layer based on phase name (non-JIT version)"""
-        for process in layer.phaseProcesses:
-            if phaseName in process.phases or "all" in process.phases:
-                process.StepPhase()
-
     def StepPhase_jit(self, phaseName: str, **dataVectors):
         """JIT-compatible version of StepPhase that handles state mutations properly"""
         numTimeSteps = self.phaseConfig[phaseName]["numTimeSteps"]
         
-        # Clamp layers according to phaseType (matching non-JIT logic)
-        first = True
-        for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
-            if first:
-                clampedLayer.Clamp_jit(dataVectors[dataName], self.time.value)
-                first = False
-            else:
-                clampedLayer.EXTERNAL = dataVectors[dataName]
+        self.ClampLayers_jit(phaseName, **dataVectors)
 
         # Time stepping loop
         for timeStep in range(numTimeSteps):
-            # Update conductances for all layers
-            for layer in self.layers:
-                layer.UpdateConductance()
-            
-            # StepTime for each unclamped layer
-            for layer in self.layerDict[phaseName]["unclamped"]:
-                layer.StepTime_jit(self.time.value)
-
-            # Update internal variables of clamped layers (matching non-JIT logic)
-            first = True
-            for layer in self.layerDict[phaseName]["clamped"].values():
-                if first:
-                    layer.EndStep_jit(self.time.value)
-                    first = False
-                else:
-                    layer.StepTime_jit(self.time.value)
+            self.UpdateConductances_jit()
+            self.UpdateActivity_jit(phaseName, **dataVectors)
 
             self.time.value += self.DELTA_TIME
 

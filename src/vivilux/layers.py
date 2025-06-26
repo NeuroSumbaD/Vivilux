@@ -159,6 +159,25 @@ class Layer(nnx.Module):
                        (self.GiRaw.value - self.GiSyn.value)
                        )
         self.Gi.value = self.GiSyn.value + self.Gi_FFFB.value # Add synaptic Gi to FFFB contribution
+
+    def UpdateConductance_jit(self):
+        self.Integrate()
+        self.RunProcesses()
+
+        # Update conductances from raw inputs
+        self.Ge.value = self.Ge.value + (self.DtParams["Integ"] *
+                       self.DtParams["GDt"] * 
+                       (self.GeRaw.value - self.Ge.value)
+                       )
+        
+        # Call FFFB to update GiRaw
+        self.FFFB.StepTime()
+
+        self.GiSyn.value = self.GiSyn.value + (self.DtParams["Integ"] *
+                       self.DtParams["GDt"] * 
+                       (self.GiRaw.value - self.GiSyn.value)
+                       )
+        self.Gi.value = self.GiSyn.value + self.Gi_FFFB.value # Add synaptic Gi to FFFB contribution
     
     def StepTime(self, time: float, debugData = None):
         # self.UpdateConductance() ## Moved to nets StepPhase
