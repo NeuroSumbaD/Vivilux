@@ -335,20 +335,21 @@ class Net:
                 # Check the first metric for if it passes the end condition
                 if first: #TODO: optimize for execution time
                     first = False
-                    if self.runConfig["End"]["isLower"]:
-                        if result <= self.runConfig["End"]["threshold"]:
-                            self.lrnThresh += 1
-                            if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
-                                isFinished = True
+                    if "End" in self.runConfig:
+                        if self.runConfig["End"]["isLower"]:
+                            if result <= self.runConfig["End"]["threshold"]:
+                                self.lrnThresh += 1
+                                if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
+                                    isFinished = True
+                            else:
+                                self.lrnThresh = 0
                         else:
-                            self.lrnThresh = 0
-                    else:
-                        if result >= self.runConfig["End"]["threshold"]:
-                            self.lrnThresh += 1
-                            if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
-                                isFinished = True
-                        else:
-                            self.lrnThresh = 0
+                            if result >= self.runConfig["End"]["threshold"]:
+                                self.lrnThresh += 1
+                                if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
+                                    isFinished = True
+                            else:
+                                self.lrnThresh = 0
 
         return isFinished
 
