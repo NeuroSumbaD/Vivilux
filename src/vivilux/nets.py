@@ -4,7 +4,7 @@
 
 # type checking
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from .layers import Layer
     from .meshes import Mesh
@@ -12,12 +12,13 @@ if TYPE_CHECKING:
 from collections.abc import Iterator
 import math
 
-import numpy as np
+import jax
+from jax import numpy as jnp
+from flax import nnx
 
 # import defaults
 from .meshes import Mesh, TransposeMesh
 from .metrics import RMSE
-from .optimizers import Simple
 from .visualize import Monitor
 from .photonics.devices import Device
 
@@ -82,8 +83,6 @@ layerConfig_std = {
         "Send": 0.1,
         "Delta": 0.005,
     },
-    "optimizer": Simple,
-    "optArgs": {},
     "ffMeshConfig": ffMeshConfig_std,
     "fbMeshConfig": fbMeshConfig_std,
     "defMonitor": Monitor,
@@ -102,16 +101,19 @@ phaseConfig_std = {
         "numTimeSteps": 75,
         "isOutput": True,
         "isLearn": False,
-        "clampLayers": {"input": 0,
-                    },
+        "inputClamped": {"input": 0,
+                         },
+        "targetClamped": {
+                          },
     },
     "plus": {
         "numTimeSteps": 25,
         "isOutput": False,
         "isLearn": True,
-        "clampLayers": {"input": 0,
-                    "target": -1,
-                    },
+        "inputClamped": {"input": 0,
+                         },
+        "targetClamped": {"target": -1,
+                          },
     },
 }
 
@@ -136,7 +138,7 @@ runConfig_std = {
 
 
 ###<------ NET CLASSES ------>###
-class Net:
+class Net(nnx.Module):
     '''Base class for neural networks with Hebbian-like learning
     '''
     count = 0
@@ -146,27 +148,30 @@ class Net:
                  runConfig = runConfig_std,
                  phaseConfig = phaseConfig_std,
                  layerConfig = layerConfig_std,
-                 dtype = np.float64,
+                 dtype = jnp.float32, # TODO: figure out float64 support
+                 rngs: nnx.Rngs = nnx.Rngs(0),
                  **kwargs):
         '''Instanstiates an ordered list of layers that will be
             applied sequentially during inference.
         '''
 
         self.runConfig = runConfig # Simulation-level configurations
-        self.phaseConfig = phaseConfig # Dictionary of phase definitions
-        self.layerConfig = layerConfig # Stereotyped layer definition
+        self.phaseConfig: dict[str, dict] = phaseConfig # Dictionary of phase definitions
+        self.layerConfig: dict = layerConfig # Stereotyped layer definition
         self.monitoring = monitoring
         self.dtype = dtype
+        self.rngs = rngs
 
         # For time keeping
         self.DELTA_TIME = runConfig["DELTA_TIME"]
         self.time = 0
 
         self.layers: list[Layer] = [] # list of layer objects
-        self.layerDict: dict[str, Layer] = {} # dict of named layers
+        self.layerNames: dict[str, Layer] = {} # dict of named layers
+        self.layerTags: dict[str, dict[str, Layer]] = {} # collections of layers for phase and output tagging
 
-        self.results = {metric: [] for metric in self.runConfig["metrics"]}
-        self.outputs = {key: [] for key in self.runConfig["outputLayers"]}
+        self.results: dict[str, list[jnp.ndarray]] = {metric: [] for metric in self.runConfig["metrics"]}
+        self.outputs: dict[str, list[jnp.ndarray]] = {key: [] for key in self.runConfig["outputLayers"]}
 
         self.name =  f"NET_{Net.count}" if name == None else name
         self.epochIndex = 0
@@ -183,24 +188,32 @@ class Net:
         '''Pre-generate clamped and unclamped layer lists to speed up StepPhase
             execution.
         '''
-        # TODO Figure out where to call this function (after layers have been added)
-        # if len(self.layers) < len(self.phaseConfig[phaseName]["clampLayers"]):
-        #     return
+        self.layerNames = {layer.name: layer for layer in self.layers}
+        layerTags: dict[str, dict[str, Layer]] = {} # collections of layers for phase and output tagging
+
         for phaseName in self.phaseConfig.keys():
             layers = list(self.layers) # copy full layer list
-            self.layerDict[phaseName] = {}
-            self.layerDict[phaseName]["clamped"] = {}
+            layerTags[phaseName] = {}
+            layerTags[phaseName]["inputClamped"] = {}
+            layerTags[phaseName]["targetClamped"] = {}
 
-            for dataName, layerIndex in self.phaseConfig[phaseName]["clampLayers"].items():
+            for dataName, layerIndex in self.phaseConfig[phaseName]["inputClamped"].items():
                 if len(layers) == 0:
                     return
-                self.layerDict[phaseName]["clamped"][dataName] = layers.pop(layerIndex)
+                layerTags[phaseName]["inputClamped"][dataName] = layers.pop(layerIndex)
 
-            self.layerDict[phaseName]["unclamped"] = layers
+            for dataName, layerIndex in self.phaseConfig[phaseName]["targetClamped"].items():
+                if len(layers) == 0:
+                    return
+                layerTags[phaseName]["targetClamped"][dataName] = layers.pop(layerIndex)
 
-        self.layerDict["outputLayers"] = {}
+            layerTags[phaseName]["unclamped"] = layers
+
+        layerTags["outputLayers"] = {}
         for dataName, index in self.runConfig["outputLayers"].items():
-            self.layerDict["outputLayers"][dataName] = self.layers[index]
+            layerTags["outputLayers"][dataName] = self.layers[index]
+        
+        self.layerTags = layerTags
                 
     def AddLayer(self, layer: Layer, layerConfig: dict = None):
         # index = len(self.layers)
@@ -210,16 +223,17 @@ class Net:
             layer.SetDtype(self.dtype)
 
         self.layers.append(layer)
-        self.layerDict[layer.name] = layer
+        self.layerTags[layer.name] = layer
 
         # Use default layerConfig if None is provided
         layerConfig = self.layerConfig if layerConfig is None else layerConfig
 
-        layer.AttachNet(self, layerConfig) # give layer a reference to the net
+        layer.AttachNet(self, layerConfig, self.rngs) # give layer a reference to the net
         # Initialize phase histories
-        for phase in self.phaseConfig.keys():
-            layer.phaseHist[phase] = layer.getActivity()
-
+        # for phase in self.phaseConfig.keys():
+        #     layer.phaseHist[phase] = layer.getActivity()
+        layer.phaseHist = nnx.Variable(jnp.zeros((len(self.phaseConfig.keys()), len(layer))))
+        layer.ActAvgPhaseIndex.value = list(self.phaseConfig.keys()).index("plus") # default phase for ActAvg
         self.UpdateLayerLists()
 
     def AddLayers(self, layers: list[Layer], layerConfig = None):
@@ -241,7 +255,11 @@ class Net:
         meshConfig = self.layerConfig["ffMeshConfig"] if meshConfig is None else meshConfig
         size = len(receiving)
         meshArgs = meshConfig["meshArgs"]
-        mesh = meshConfig["meshType"](size, sending, dtype=self.dtype, **meshArgs)
+        mesh: Mesh = meshConfig["meshType"](size,
+                                            sending,
+                                            self.rngs,
+                                            dtype=self.dtype,
+                                            **meshArgs)
         receiving.addMesh(mesh)
 
         if device is not None:
@@ -280,13 +298,19 @@ class Net:
         # feedforward connection
         size = len(sending)
         meshArgs = ffMeshConfig["meshArgs"]
-        ffMesh = ffMeshConfig["meshType"](size, sending, **meshArgs)
+        ffMesh = ffMeshConfig["meshType"](size,
+                                          sending,
+                                          self.rngs,
+                                          **meshArgs)
         receiving.addMesh(ffMesh)
 
         # feedback connection
         size = len(receiving)
         meshArgs = fbMeshConfig["meshArgs"]
-        fbMesh = fbMeshConfig["meshType"](ffMesh, receiving, **meshArgs)
+        fbMesh = fbMeshConfig["meshType"](ffMesh,
+                                          receiving,
+                                          self.rngs,
+                                          **meshArgs)
         sending.addMesh(fbMesh)
 
         return ffMesh, fbMesh
@@ -305,7 +329,7 @@ class Net:
             meshes.append(mesh)
         return meshes
 
-    def ValidateDataset(self, **dataset: dict[str, np.ndarray]):
+    def ValidateDataset(self, **dataset: dict[str, jnp.ndarray]):
         '''Ensures that the entered dataset is properly constructed.
         '''
         numSamples = 0
@@ -328,7 +352,7 @@ class Net:
         isFinished = False
         first = True
         for metricName, metric in self.runConfig["metrics"].items():
-            for dataName in self.layerDict["outputLayers"]:
+            for dataName in self.layerTags["outputLayers"]:
                 result = metric(self.outputs[dataName], dataset[dataName])
                 self.results[metricName].append(result)
 
@@ -360,25 +384,25 @@ class Net:
     def ClampLayers(self, phaseName: str, debugData = None, **dataVectors):
         # Clamp layers according to phaseType
         ## TODO: Change clamp to execute outside time loop, unclamp after, & update important internal variables
-        first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-        for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
-                if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                    clampedLayer.Clamp(dataVectors[dataName], self.time, debugData=debugData)
-                    first = False
-                else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                    clampedLayer.EXTERNAL = dataVectors[dataName]
+        inputClamped: dict[str, Layer] = self.layerTags[phaseName]["inputClamped"]
+        for dataName, clampedLayer in inputClamped.items():
+            clampedLayer.Clamp(dataVectors[dataName], self.time, debugData=debugData)
+
+        targetClamped: dict[str, Layer] = self.layerTags[phaseName]["targetClamped"]
+        for dataName, clampedLayer in targetClamped.items():
+            clampedLayer.EXTERNAL = dataVectors[dataName]
     
     
     def UpdateActivity(self, phaseName: str, debugData={}, **dataVectors):
         ## TODO: Parallelize execution for all layers
         # StepTime for each unclamped layer
-        for layer in self.layerDict[phaseName]["unclamped"]:
+        for layer in self.layerTags[phaseName]["unclamped"]:
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
             layer.StepTime(self.time, debugData=debugData)
 
         # Update internal variables of clamped layers
         first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-        for layer in self.layerDict[phaseName]["clamped"].values():
+        for layer in self.layerTags[phaseName]["clamped"].values():
             # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
             # layer.UpdateConductance()
             if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
@@ -423,7 +447,7 @@ class Net:
 
             # Store layer activity for each output layer during output phases
             if self.phaseConfig[phaseName]["isOutput"]:
-                for dataName, layer in self.layerDict["outputLayers"].items():
+                for dataName, layer in self.layerTags["outputLayers"].items():
                     # TODO use pre-allocated numpy array to speed up execution
                     self.outputs[dataName].append(layer.getActivity())
 
@@ -432,13 +456,132 @@ class Net:
                     dwtLog = debugData["dwtLog"] if "dwtLog" in debugData else None
                     layer.Learn(dwtLog=dwtLog)
 
+    def UpdateConductances_jit(self):
+        for layer in self.layers:
+            layer.UpdateConductance()
+
+    # @nnx.jit(static_argnames=["inputClamped", "targetClamped"])
+    def ClampLayers_jit(self,
+                        inputClamped: list[str],
+                        targetClamped: list[str],
+                        **dataVectors):
+        # Clamp layers according to phaseType
+        for dataName in inputClamped:
+            clampedLayer = self.layerNames[dataName]
+            clampedLayer.Clamp(dataVectors[dataName])
+
+        for dataName in targetClamped:
+            clampedLayer = self.layerNames[dataName]
+            # TODO: this syntax may not work with jit, may need to be changed
+            clampedLayer.hasExternal.value = True
+            clampedLayer.EXTERNAL.value = dataVectors[dataName]
+    
+    # @nnx.jit(static_argnames=["unclamped", "input_clamped", "target_clamped"])
+    def UpdateActivity_jit(self,
+                           unclamped: list[str],
+                           input_clamped: list[str],
+                           target_clamped: list[str],
+                           **dataVectors):
+        ## TODO: Parallelize execution for all layers
+        # StepTime for each unclamped layer
+        for layer_name in unclamped:
+            layer: Layer = self.layerNames[layer_name]
+            layer.StepTime_jit()
+
+        # Update internal variables of clamped layers
+        for layer_name in input_clamped:
+            layer: Layer = self.layerNames[layer_name]
+            layer.EndStep_jit()
+
+        # NOTE: it is important target clamped layers are updated last,
+        # but I am not sure exactly why.
+        for layer_name in target_clamped:
+            layer: Layer = self.layerNames[layer_name]
+            layer.StepTime_jit()
+
+
+    # @nnx.jit(static_argnames=["numPhases",
+    #                           "phase_list",
+    #                           "unclamped",
+    #                           "inputClamped",
+    #                           "targetClamped",
+    #                           "output_names",
+    #                           "train"])
+    def StepTrial_jit(self,
+                      num_phases: int,
+                      phase_list: tuple[str],
+                      unclamped: tuple[tuple[str]],
+                      inputClamped: tuple[tuple[str]],
+                      targetClamped: tuple[tuple[str]],
+                      output_names: tuple[str],
+                      train: bool,
+                      **dataVectors: jnp.ndarray):
+        for layer in self.layers:
+            layer.InitTrial(train)
+
+        # Pre-allocate output storage
+        trial_outputs = {}
+
+        for phaseIndex, phaseName in enumerate(phase_list):
+            self.StepPhase_jit(phaseIndex,
+                               phaseName,
+                               unclamped[phaseIndex],
+                               inputClamped[phaseIndex],
+                               targetClamped[phaseIndex],
+                               **dataVectors)
+
+            # Store layer activity for each output layer during output phases
+            if self.phaseConfig[phaseName]["isOutput"]:
+                for name in output_names:
+                    trial_outputs[name] = self.layerNames[name].getActivity()
+
+            if self.phaseConfig[phaseName]["isLearn"] and train:
+                for layer in self.layers:
+                    layer.Learn_jit()
+
+        return trial_outputs
+
+    # @nnx.jit(static_argnames=["phaseName", "unclamped", "inputClamped", "targetClamped"])
+    def StepPhase_jit(self,
+                      phaseIndex: int,
+                      phaseName: str,
+                      unclamped: tuple[str],
+                      inputClamped: tuple[str],
+                      targetClamped: tuple[str],
+                      **dataVectors):
+        '''Compute a phase of execution for the neural network. A phase is a 
+            set of timesteps related to some process in the network such as 
+            the generation of an expectation versus observation of outcome in
+            Prof. O'Reilly's error-driven local learning framework.
+        '''
+        numTimeSteps = self.phaseConfig[phaseName]["numTimeSteps"]
+
+        self.ClampLayers_jit(inputClamped,
+                             targetClamped,
+                             **dataVectors)
+
+        for timeStep in range(numTimeSteps):
+            self.UpdateConductances_jit()
+            self.UpdateActivity_jit(unclamped,
+                                    inputClamped,
+                                    targetClamped,
+                                    **dataVectors)
+
+            self.time += self.DELTA_TIME
+
+        # TODO: Update refactor XCAL to update state for each layer
+        for layer in self.layers:
+            layer.UpdatePhaseHist(phaseIndex)
+            layer.UpdateActAvg(phaseIndex)
+            # layer.UpdateXCAL_jit(phaseIndex)
+
     def RunEpoch(self,
                  runType: str,
                  verbosity = 1,
                  reset: bool = False,
                  shuffle: bool = False,
                  debugData = {},
-                 **dataset: dict[str, np.ndarray]):
+                 **dataset: dict[str, jnp.ndarray]):
         '''Runs an epoch (iteration through all samples of a dataset) using a
             specified run type mathing a key from self.runConfig.
 
@@ -452,7 +595,7 @@ class Net:
         self.outputs = {key: [] for key in self.runConfig["outputLayers"]}
 
         # suffle indices if necessary
-        sampleIndices = np.random.permutation(numSamples) if shuffle else range(numSamples)
+        sampleIndices = jax.random.permutation(self.rngs["Params"](), numSamples) if shuffle else range(numSamples)
         
         # TODO: find a faster way to iterate through datasets
         for sampleCount, sampleIndex in enumerate(sampleIndices):
@@ -462,7 +605,41 @@ class Net:
                       )
 
             dataVectors = {key:value[sampleIndex] for key, value in dataset.items()}
-            self.StepTrial(runType, debugData=debugData, **dataVectors)
+
+            if len(debugData) == 0:
+                # The jitted path needs to compile a different StepTrial based
+                # on the runType. Also compiles a different StepPhase_jit
+                # based on the phase list, inputClamped, and targetClamped.
+                train = runType == "Learn"
+                phase_list = tuple(self.runConfig[runType])
+                numPhases = int(len(phase_list))
+                unclamped: tuple[tuple[str]] = tuple(
+                    tuple(layer.name for layer in self.layerTags[phase]["unclamped"])
+                    for phase in self.runConfig[runType]
+                )
+                inputClamped: tuple[tuple[str]] = tuple(
+                    tuple(layerName for layerName in self.layerTags[phase]["inputClamped"].keys())
+                    for phase in self.runConfig[runType]
+                )
+                targetClamped: tuple[tuple[str]] = tuple(
+                    tuple(layerName for layerName in self.layerTags[phase]["targetClamped"].keys())
+                    for phase in self.runConfig[runType]
+                )
+                output_names = tuple(self.layerTags["outputLayers"].keys())
+                trial_outputs = self.StepTrial_jit(numPhases,
+                                                   phase_list,
+                                                   unclamped,
+                                                   inputClamped,
+                                                   targetClamped,
+                                                   output_names,
+                                                   train, 
+                                                   **dataVectors)
+
+                # dynamically add outputs to the output dict outside of jit context
+                for name in trial_outputs:
+                    self.outputs[name].append(trial_outputs[name])
+            else: # debugging mode cannot use jit
+                self.StepTrial(runType, debugData=debugData, **dataVectors)
 
             if reset : self.resetActivity()
 
@@ -478,7 +655,7 @@ class Net:
               repeat=1, # TODO: Implement repeated sample training (train muliple times for a single input sample before moving on to the next one)
               EvaluateFirst = True,
               debugData = {},
-              **dataset: dict[str, np.ndarray]) -> dict[str: list]:
+              **dataset: dict[str, jnp.ndarray]) -> dict[str: list]:
         '''Training loop that runs a specified number of epochs.
 
                 - verbosity: specifies how much is printed to the console
@@ -523,7 +700,7 @@ class Net:
               verbosity = 1,
               reset: bool = True,
               shuffle: bool = True,
-              **dataset: dict[str, np.ndarray]):
+              **dataset: dict[str, jnp.ndarray]):
 
         if verbosity > 0: print(f"Evaluating [{self.name}] without training...")
         self.RunEpoch("Infer", verbosity, reset, shuffle, **dataset)
@@ -539,7 +716,7 @@ class Net:
     def Infer(self,
               verbosity = 1,
               reset: bool = False,
-              **dataset: dict[str, np.ndarray]):
+              **dataset: dict[str, jnp.ndarray]):
         '''Applies the network to a given dataset and returns each output
         '''
         if verbosity > 0: print(f"Inferring [{self.name}]...")

@@ -11,35 +11,40 @@ if TYPE_CHECKING:
 from .devices import Device, Generic
 from .processes import XCAL
 
-import numpy as np
+import jax
+from jax import numpy as jnp
+from flax import nnx
 
 
-class Mesh:
+class Mesh(nnx.Module):
     '''Base class for meshes of synaptic elements.
     '''
     count = 0
     def __init__(self, 
                  size: int,
                  inLayer: Layer,
+                 rngs: nnx.Rngs,
                  AbsScale: float = 1,
                  RelScale: float = 1,
                  InitMean: float = 0.5,
                  InitVar: float = 0.25,
                  Off: float = 1,
                  Gain: float = 6,
-                 dtype = np.float64,
-                 wbOn = True,
-                 wbAvgThr = 0.25,
-                 wbHiThr = 0.4,
-                 wbHiGain = 4,
-                 wbLoThr = 0.4,
-                 wbLoGain = 6,
-                 wbInc = 1,
-                 wbDec = 1,
-                 WtBalInterval = 10,
-                 softBound = True,
-                 device = Generic(),
+                 dtype = jnp.float32, # TODO: support float64
+                 wbOn: float = True,
+                 wbAvgThr: float = 0.25,
+                 wbHiThr: float = 0.4,
+                 wbHiGain: float = 4,
+                 wbLoThr: float = 0.4,
+                 wbLoGain: float = 6,
+                 wbInc: float = 1,
+                 wbDec: float = 1,
+                 hasWtBal: bool = True,
+                 WtBalInterval: int = 10,
+                 softBound: bool = True,
+                 device: Device = Generic(),
                  **kwargs):
+        self.rngs = rngs
         self.shape = (size, len(inLayer))
         self.size = size if size > len(inLayer) else len(inLayer)
         self.Off = Off
@@ -53,42 +58,48 @@ class Mesh:
         self.wbHiGain = wbHiGain
         self.wbLoThr = wbLoThr
         self.wbLoGain = wbLoGain
-        self.wbInc = wbInc
-        self.wbDec = wbDec
+        self.wbInc = nnx.Variable(wbInc)
+        self.wbDec = nnx.Variable(wbDec)
         self.WtBalInterval = 0
         self.softBound = softBound
 
         # Weight Balance variables
-        self.WtBalCtr = 0
-        self.wbFact = 0
+        self.hasWtBal = hasWtBal
+        self.WtBalCtr = nnx.Variable(0)
+        self.wbFact = nnx.Variable(0)
 
         # Generate from uniform distribution
         low = InitMean - InitVar
         high = InitMean + InitVar
-        self.matrix = np.random.uniform(low, high, size=(size, len(inLayer)))
-        self.linMatrix = np.copy(self.matrix) # initialize linear weight
+        self.matrix = nnx.Variable(jax.random.uniform(self.rngs["Params"](),
+                                         minval=low,
+                                         maxval=high,
+                                         shape=(size, len(inLayer)),
+                                         ))
+        self.linMatrix = nnx.Variable(jnp.copy(self.matrix)) # initialize linear weight
         self.InvSigMatrix() # correct linear weight
 
         # Other initializations
-        self.Gscale = 1#/len(inLayer)
+        self.Gscale = nnx.Variable(1)#/len(inLayer))
         self.inLayer = inLayer
+        self.pad_size = self.size - len(inLayer)
         self.OptThreshParams = inLayer.OptThreshParams
-        self.lastAct = np.zeros(self.size, dtype=self.dtype)
-        self.inAct = np.zeros(self.size, dtype=self.dtype)
+        self.lastAct = nnx.Variable(jnp.zeros(self.size, dtype=self.dtype))
+        self.inAct = nnx.Variable(jnp.zeros(self.size, dtype=self.dtype))
 
         # flag to track when matrix updates (for nontrivial meshes like MZI)
-        self.modified = False
+        self.modified = nnx.Variable(False)
 
         self.name = f"MESH_{Mesh.count}"
         Mesh.count += 1
 
-        self.trainable = True
+        self.trainable = nnx.Variable(True)
         self.sndActAvg = inLayer.ActAvg
         self.rcvActAvg = None
 
         # external matrix scaling parameters (constant synaptic gain)
-        self.AbsScale = AbsScale
-        self.RelScale = RelScale
+        self.AbsScale = nnx.Variable(AbsScale)
+        self.RelScale = nnx.Variable(RelScale)
 
         self.AttachDevice(device)
 
@@ -116,14 +127,14 @@ class Mesh:
             parameter structures.
         '''
         self.device = device
-        self.holdEnergy = 0
-        self.updateEnergy = 0
+        self.holdEnergy = nnx.Variable(0)
+        self.updateEnergy = nnx.Variable(0)
 
         # integration variables for calculating energy of other devices
-        self.holdIntegration = 0
-        self.holdTime = 0
-        self.setIntegration = 0
-        self.resetIntegration = 0
+        self.holdIntegration = nnx.Variable(0)
+        self.holdTime = nnx.Variable(0)
+        self.setIntegration = nnx.Variable(0)
+        self.resetIntegration = nnx.Variable(0)
 
     def DeviceHold(self):
         '''Calls the hold function for each device in the mesh according
@@ -135,7 +146,7 @@ class Mesh:
         DT = self.inLayer.net.DELTA_TIME
         self.holdEnergy += self.device.Hold(self.matrix, DT)
 
-        self.holdIntegration += np.sum(self.matrix)
+        self.holdIntegration += jnp.sum(self.matrix)
         self.holdTime += DT
 
 
@@ -151,37 +162,42 @@ class Mesh:
         self.updateEnergy += self.device.Reset(currMat)
         self.updateEnergy += self.device.Set(newMat)
 
-        self.setIntegration += np.sum(currMat)
-        self.resetIntegration += np.sum(newMat)
-    
-    def set(self, matrix):
-        self.modified = True
-        self.matrix = matrix
+        self.setIntegration += jnp.sum(currMat)
+        self.resetIntegration += jnp.sum(newMat)
+
+    def set(self, matrix: jnp.ndarray):
+        self.modified.value = True
+        self.matrix.value = matrix
         self.InvSigMatrix()
 
     def setGscale(self):
         # TODO: handle case for inhibitory mesh
-        totalRel = np.sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes], dtype=self.dtype)
-        self.Gscale = self.AbsScale * self.RelScale 
-        self.Gscale /= totalRel if totalRel > 0 else 1
+        rel_scales = jnp.array([mesh.RelScale for mesh in self.rcvLayer.excMeshes])
+        totalRel = jnp.sum(rel_scales)
+        self.Gscale.value = self.AbsScale.value * self.RelScale.value
+        self.Gscale.value = jnp.where(totalRel > 0, 
+                                      self.Gscale.value / totalRel, 
+                                      self.Gscale.value)
 
         # calculate average from input layer on last trial
-        self.avgActP = self.inLayer.ActAvg.ActPAvg
+        avgActP = self.inLayer.ActAvg.ActPAvg.value
 
         #calculate average number of active neurons in sending layer
-        sendLayActN = np.maximum(np.round(self.avgActP*len(self.inLayer)), 1, dtype=self.dtype)
+        sendLayActN = jnp.maximum(jnp.round(avgActP*self.inLayer.length),
+                                  1)
         sc = 1/sendLayActN # TODO: implement relative importance
         self.Gscale *= sc
 
-    def get(self):
+    def get(self) -> jnp.ndarray:
         return self.Gscale * self.matrix
     
-    def getInput(self):
+    def getInput(self) -> jnp.ndarray:
         act = self.inLayer.getActivity()
-        pad = self.size - act.size
-        return np.pad(act, pad_width=(0,pad))
+        # pad = self.size - act.shape[0]
+        # pad = jnp.maximum(pad, 0)  # Ensure padding is non-negative
+        return jnp.pad(act, (0,self.pad_size))
 
-    def apply(self):
+    def apply(self) -> jnp.ndarray:
         self.DeviceHold()
         data = self.getInput()
 
@@ -190,25 +206,34 @@ class Mesh:
         delta = data - self.lastAct
 
         cond1 = data <= self.OptThreshParams["Send"]
-        cond2 = np.abs(delta) <= self.OptThreshParams["Delta"]
-        mask1 = np.logical_or(cond1, cond2)
-        notMask1 = np.logical_not(mask1)
-        delta[mask1] = 0 # only signal delta above both thresholds
-        self.lastAct[notMask1] = data[notMask1]
+        cond2 = jnp.abs(delta) <= self.OptThreshParams["Delta"]
+        mask1 = jnp.logical_or(cond1, cond2)
+        notMask1 = jnp.logical_not(mask1)
+        delta = jnp.where(mask1,
+                          0,
+                          delta) # only signal delta above both thresholds
+        self.lastAct.value = jnp.where(notMask1,
+                                       data,
+                                       self.lastAct.value) # update lastAct only if not masked
+        
 
-        cond3 = self.lastAct > self.OptThreshParams["Send"]
-        mask2 = np.logical_and(cond3, cond1)
-        delta[mask2] = -self.lastAct[mask2]
-        self.lastAct[mask2] = 0
+        cond3 = self.lastAct.value > self.OptThreshParams["Send"]
+        mask2 = jnp.logical_and(cond3, cond1)
+        delta = jnp.where(mask2,
+                          -self.lastAct,
+                          delta)
+        self.lastAct.value = jnp.where(mask2,
+                                       0,
+                                       self.lastAct.value)
 
-        self.inAct[:] += delta
+        self.inAct += delta
 
         return self.applyTo(self.inAct[:self.shape[1]])
             
-    def applyTo(self, data):
+    def applyTo(self, data: jnp.ndarray) -> jnp.ndarray:
         try:
             synapticWeights = self.get()[:self.shape[0], :self.shape[1]]
-            return np.array(synapticWeights @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
+            return jnp.array(synapticWeights @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
         except ValueError as ve:
             raise ValueError(f"Attempted to apply {data} (shape: {data.shape})"
                              f" to mesh of dimension: {self.shape}")
@@ -216,56 +241,91 @@ class Mesh:
 
     def AttachLayer(self, rcvLayer: Layer):
         self.rcvLayer = rcvLayer
-        self.XCAL = XCAL() #TODO pass params from layer or mesh config
-        self.XCAL.AttachLayer(self.inLayer, rcvLayer)
+        self.XCAL = XCAL(sndLayerLen=self.inLayer.length,
+                         rcvLayerLen=rcvLayer.length,
+                         ) #TODO pass params from layer or mesh config
+        # self.XCAL.AttachLayer(self.inLayer, rcvLayer)
 
     def WtBalance(self):
         '''Updates the weight balancing factors used by XCAL.
         '''
         self.WtBalCtr += 1
-        if self.WtBalCtr >= self.WtBalInterval:
-            self.WtBalCtr = 0
+        if self.WtBalCtr.value >= self.WtBalInterval.value:
+            self.WtBalCtr.value = 0
 
             ####----WtBalFmWt----####
-            if not self.WtBalance: return
-            wbAvg = np.mean(self.matrix)
+            if not self.hasWtBal.value: return
+            wbAvg = jnp.mean(self.matrix)
 
-            if wbAvg < self.wbLoThr:
-                if wbAvg < self.wbAvgThr:
-                    wbAvg = self.wbAvgThr
-                self.wbFact = self.wbLoGain * (self.wbLoThr - wbAvg)
-                self.wbDec = 1/ (1 + self.wbFact)
-                self.wbInc = 2 - self.wbDec
-            elif wbAvg > self.wbHiThr:
-                self.wbFact = self.wbHiGain * (wbAvg - self.wbHiThr)
-                self.wbInc = 1/ (1 + self.wbFact)
-                self.wbDec = 2 - self.wbInc
+            if wbAvg < self.wbLoThr.value:
+                if wbAvg < self.wbAvgThr.value:
+                    wbAvg = self.wbAvgThr.value
+                self.wbFact.value = self.wbLoGain * (self.wbLoThr - wbAvg)
+                self.wbDec.value = 1/ (1 + self.wbFact)
+                self.wbInc.value = 2 - self.wbDec
+            elif wbAvg > self.wbHiThr.value:
+                self.wbFact.value = self.wbHiGain * (wbAvg - self.wbHiThr)
+                self.wbInc.value = 1/ (1 + self.wbFact)
+                self.wbDec.value = 2 - self.wbInc
 
-    def SoftBound(self, delta):
-        if self.softBound:
+    def SoftBound(self, delta: jnp.ndarray) -> jnp.ndarray:
+        if self.softBound.value:
             mask1 = delta > 0
             m, n = delta.shape
-            delta[mask1] *= self.wbInc * (1 - self.linMatrix[:m,:n][mask1])
+            delta = jnp.where(mask1,
+                              delta * self.wbInc * (1 - self.linMatrix[:m,:n]),
+                              delta)
+            # delta[mask1] *= self.wbInc * (1 - self.linMatrix[:m,:n][mask1])
 
-            mask2 = np.logical_not(mask1)
-            delta[mask2] *= self.wbDec * self.linMatrix[:m,:n][mask2]
+            mask2 = jnp.logical_not(mask1)
+            delta = jnp.where(mask2,
+                              delta * self.wbDec * self.linMatrix[:m,:n],
+                              delta)
+            # delta[mask2] *= self.wbDec * self.linMatrix[:m,:n][mask2]
         else:
             mask1 = delta > 0
             m, n = delta.shape
-            delta[mask1] *= self.wbInc
+            delta = jnp.where(mask1,
+                              delta * self.wbInc,
+                              delta)
+            # delta[mask1] *= self.wbInc
 
-            mask2 = np.logical_not(mask1)
-            delta[mask2] *= self.wbDec
-                    
+            mask2 = jnp.logical_not(mask1)
+            delta = jnp.where(mask2,
+                              delta * self.wbDec,
+                              delta)
+            # delta[mask2] *= self.wbDec
         return delta
     
     def ClipLinMatrix(self):
         '''Bounds linear weights on range [0-1]'''
-        mask1 = self.linMatrix < 0
-        self.linMatrix[mask1] = 0
+        # mask1 = self.linMatrix.value < 0
+        # self.linMatrix[mask1] = 0
         
-        mask2 = self.linMatrix > 1
-        self.linMatrix[mask2] = 1
+        # mask2 = self.linMatrix > 1
+        # self.linMatrix[mask2] = 1
+        self.linMatrix.value = jnp.clip(self.linMatrix.value, 0, 1)
+
+    def CalculateUpdate_jit(self,
+                            ) -> tuple[jnp.ndarray, int, int]:
+        '''Calculates the delta vector according to XCAL rule. Returns the
+            delta vector and its shape (m,n).
+
+            Overwrite this function for other learning rules.
+        '''
+        isTarget = self.rcvLayer.isTarget.value
+        delta = self.XCAL.GetDeltas(isTarget=isTarget,
+                                    recv_AvgSLrn = self.rcvLayer.ActAvg.AvgSLrn.value,
+                                    recv_AvgM = self.rcvLayer.ActAvg.AvgM.value,
+                                    recv_AvgL = self.rcvLayer.ActAvg.AvgL.value,
+                                    recv_AvgLLrn = self.rcvLayer.ActAvg.AvgLLrn.value,
+                                    send_AvgS = self.inLayer.ActAvg.AvgS.value,
+                                    send_AvgSLrn = self.inLayer.ActAvg.AvgSLrn.value,
+                                    send_AvgM = self.inLayer.ActAvg.AvgM.value,
+                                    )
+        delta = self.SoftBound(delta)
+        m, n = delta.shape
+        return delta, m, n
 
     def CalculateUpdate(self,
                         dwtLog = None,
@@ -280,13 +340,17 @@ class Mesh:
         m, n = delta.shape
         return delta, m, n
     
-    def ApplyUpdate(self, delta, m, n):
+    def ApplyUpdate(self,
+                    delta: jnp.ndarray,
+                    m: int,
+                    n: int,
+                    ):
         '''Applies the delta vector to the linear weights and calculates the 
             corresponding contrast enhances matrix.
 
             Overwrite this function for other learning rule or mesh types.
         '''
-        self.linMatrix[:m, :n] += delta
+        self.linMatrix = self.linMatrix.value.at[:m, :n].add(delta)
         self.ClipLinMatrix()
         self.SigMatrix()
 
@@ -308,6 +372,19 @@ class Mesh:
                        wt = self.matrix,
                        dwtLog = dwtLog)
 
+    def Update_jit(self,
+                   dwtLog = None,
+                   ):
+        '''Calculates and applies the weight update according to the
+            learning rule and updates other related internal variables.
+
+            This function should apply to all meshes.
+        '''
+        delta, m, n = self.CalculateUpdate_jit()
+        self.DeviceUpdate(delta)
+        self.ApplyUpdate(delta, m, n)
+        self.WtBalance()
+
     def Debug(self,
               **kwargs):
         '''Checks the XCAL and weights against leabra data'''
@@ -327,18 +404,18 @@ class Mesh:
         # isolate frame of important data from log
         dwtLog = kwargs["dwtLog"]
         frame = dwtLog[dwtLog["sName"] == self.inLayer.name][dwtLog["rName"] == self.rcvLayer.name]
-        frame = frame[frame["time"].round(3) == np.round(time, 3)]
+        frame = frame[frame["time"].round(3) == jnp.round(time, 3)]
         frame = frame.drop(["time", "rName", "sName"], axis=1)
         if len(frame) == 0: return
         
         leabraData = {}
         sendLen = frame["sendIndex"].max() + 1
         recvLen = frame["recvIndex"].max() + 1
-        leabraData["norm"] = np.zeros((recvLen, sendLen))
-        leabraData["dwt"] = np.zeros((recvLen, sendLen))
-        leabraData["Dwt"] = np.zeros((recvLen, sendLen))
-        leabraData["lwt"] = np.zeros((recvLen, sendLen))
-        leabraData["wt"] = np.zeros((recvLen, sendLen))
+        leabraData["norm"] = jnp.zeros((recvLen, sendLen))
+        leabraData["dwt"] = jnp.zeros((recvLen, sendLen))
+        leabraData["Dwt"] = jnp.zeros((recvLen, sendLen))
+        leabraData["lwt"] = jnp.zeros((recvLen, sendLen))
+        leabraData["wt"] = jnp.zeros((recvLen, sendLen))
         for row in frame.index:
             ri = frame["recvIndex"][row]
             si = frame["sendIndex"][row]
@@ -358,9 +435,9 @@ class Mesh:
             lbDatum = leabraData[key]
             percentError = 100 * (vlDatum - lbDatum) / lbDatum
             mask = lbDatum == 0
-            mask = np.logical_and(mask, vlDatum==0)
+            mask = jnp.logical_and(mask, vlDatum==0)
             percentError[mask] = 0
-            isEqual = np.all(np.abs(percentError) < 2)
+            isEqual = jnp.all(jnp.abs(percentError) < 2)
             
             allEqual[key] = isEqual
 
@@ -374,37 +451,47 @@ class Mesh:
             purely linearly since the maximum and minimum possible weight is
             bounded by physical constraints.
         '''
-        mask1 = self.linMatrix <= 0
-        self.matrix[mask1] = 0
+        mask1 = self.linMatrix.value <= 0
+        self.matrix.value = jnp.where(mask1,
+                                      0,
+                                      self.matrix.value)
 
-        mask2 = self.linMatrix >= 1
-        self.matrix[mask2] = 1
+        mask2 = self.linMatrix.value >= 1
+        self.matrix.value = jnp.where(mask2,
+                                      1,
+                                      self.matrix.value)
 
-        mask3 = np.logical_not(np.logical_or(mask1, mask2))
-        self.matrix[mask3] = self.sigmoid(self.linMatrix[mask3])
+        mask3 = jnp.logical_not(jnp.logical_or(mask1, mask2))
+        self.matrix.value = jnp.where(mask3,
+                                      self.sigmoid(self.linMatrix.value),
+                                      self.matrix.value)
 
-        return self.matrix
+        return self.matrix.value
 
-    def sigmoid(self, data):
-        return 1 / (1 + np.power(self.Off*(1-data)/data, self.Gain))
+    def sigmoid(self, data: jnp.ndarray) -> jnp.ndarray:
+        return 1 / (1 + jnp.power(self.Off*(1-data)/data, self.Gain.value))
     
-    def InvSigMatrix(self):
+    def InvSigMatrix(self) -> jnp.ndarray:
         '''This function is only called when the weights are set manually to
             ensure that the linear weights (linMatrix) are accurately tracked.
         '''
-        mask1 = self.matrix <= 0
-        self.matrix[mask1] = 0
+        mask1 = self.matrix.value <= 0
+        # self.matrix[mask1] = 0
 
-        mask2 = self.matrix >= 1
-        self.matrix[mask2] = 1
+        mask2 = self.matrix.value >= 1
+        # self.matrix[mask2] = 1
+        self.matrix.value = jnp.clip(self.matrix.value, 0, 1)
 
-        mask3 = np.logical_not(np.logical_or(mask1, mask2))
-        self.linMatrix[mask3] = self.invSigmoid(self.matrix[mask3])
+        mask3 = jnp.logical_not(jnp.logical_or(mask1, mask2))
+        self.linMatrix.value = jnp.where(mask3,
+                                   self.invSigmoid(self.matrix.value),
+                                   self.linMatrix.value)
+        # [mask3] = self.invSigmoid(self.matrix[mask3])
 
-        return self.linMatrix
+        return self.linMatrix.value
     
-    def invSigmoid(self, data):
-        return 1 / (1 + np.power((1/self.Off)*(1-data)/data, (1/self.Gain)))
+    def invSigmoid(self, data: jnp.ndarray) -> jnp.ndarray:
+        return 1 / (1 + jnp.power((1/self.Off)*(1-data)/data, (1/self.Gain)))
 
     def __len__(self):
         return self.size
@@ -421,11 +508,11 @@ class TransposeMesh(Mesh):
                  RelScale: float = 0.2,
                  **kwargs) -> None:
         super().__init__(mesh.size, inLayer, AbsScale, RelScale, **kwargs)
-        self.shape = (self.shape[1], self.shape[0])
+        self.shape.value = (self.shape[1], self.shape[0])
         self.name = "TRANSPOSE_" + mesh.name
         self.mesh = mesh
 
-        self.trainable = False
+        self.trainable.value = False
 
     def set(self):
         raise Exception("Feedback mesh has no 'set' method.")
@@ -433,10 +520,10 @@ class TransposeMesh(Mesh):
     def get(self):
         return self.Gscale * self.mesh.get().T 
     
-    def getInput(self):
+    def getInput(self) -> jnp.ndarray:
         act = self.mesh.inLayer.getActivity()
         pad = self.shape[1] - act.size
-        return np.pad(act, pad_width=(0,pad))
+        return jnp.pad(act, pad_width=(0,pad))
 
     def Update(self,
                debugDwt = None,

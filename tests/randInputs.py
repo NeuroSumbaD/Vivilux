@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 np.random.seed(seed=0)
 # np.seterr(all='raise')
 
+from flax import nnx
+
 from copy import deepcopy
 
 
@@ -43,13 +45,14 @@ leabraRunConfig = {
 }
 
 leabraNet = Net(name = "LEABRA_NET",
-                runConfig=leabraRunConfig) # Default Leabra net
+                runConfig=leabraRunConfig,
+                rngs=nnx.Rngs(0)) # Default Leabra net
 
 # Add layers
-layerList = [Layer(inputSize, isInput=True, name="Input"),
+layerList = [Layer(inputSize, isInput=True, name="input"), # name needs to match input clamp name
              Layer(hiddenSize, name="Hidden1"),
              Layer(hiddenSize, name="Hidden2"),
-             Layer(outputSize, isTarget=True, name="Output")]
+             Layer(outputSize, isTarget=True, name="target")] # name needs to match target clamp name
 leabraNet.AddLayers(layerList[:-1])
 outputConfig = deepcopy(layerConfig_std)
 outputConfig["FFFBparams"]["Gi"] = 1.4

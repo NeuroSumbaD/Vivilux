@@ -85,10 +85,10 @@ def ra25_init(error_threshold=0, numEpochs=1):
 
     # Add bidirectional connections from leabra example
     for layer in weights["Layers"]:
-        netLayer = leabraNet.layerDict[layer["Layer"]]
+        netLayer = leabraNet.layerTags[layer["Layer"]]
         if layer["Prjns"] is None: continue
         for prjn in layer["Prjns"]:
-            sndLayer = leabraNet.layerDict[prjn["From"]]
+            sndLayer = leabraNet.layerTags[prjn["From"]]
             gscale = int(prjn["MetaData"]["GScale"])
             sndIndex = leabraNet.layers.index(sndLayer)
             rcvIndex = leabraNet.layers.index(netLayer)
