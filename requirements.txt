@@ -11,3 +11,6 @@ pillow==11.2.1
 imageio==2.37.0
 scipy==1.15.3
 jax==0.6.1
+scikit-image==0.25.2
+scikit-learn==1.7.0
+tensorflow==2.19.0
