@@ -8,6 +8,7 @@ import numpy as np
 import nidaqmx
 import pyvisa as visa
 
+from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.utils import magnitude
 import vivilux.hardware.daq as daq
 from vivilux.logger import log
@@ -23,7 +24,7 @@ class LaserArray:
     def __init__(self,
                  size: int, # Number of channels in the laser array
                  control_nets: list[str],  # List of control net names to write to
-                 detector_nets: list[str],  # List of detector net names to read from
+                 detectors: DetectorArray,  # List of detector net names to read from
                  limits: tuple[float, float], # (min, max) control signal limits
                  netlist: daq.Netlist,
                  transimpedance: float = 220e3, # transimpedance of the detectors in ohms (default: 220k ohms)
@@ -35,7 +36,7 @@ class LaserArray:
 
         self.size = size
         self.control_nets = control_nets
-        self.detector_nets = detector_nets
+        self.detectors = detectors
         self.limits = limits
         self.netlist = netlist
 
@@ -100,22 +101,23 @@ class LaserArray:
     def readPhotocurrent(self) -> np.ndarray:
         '''Reads from the detector nets and returns the photocurrent as a numpy array.
         '''
-        values = np.zeros(self.size)
-        for i, net in enumerate(self.detector_nets):
-            values[i] = self.netlist[net].vin()
+        # values = np.zeros(self.size)
+        # for i, net in enumerate(self.detector_nets):
+        #     values[i] = self.netlist[net].vin()
 
-        # TODO: refactor to get rid of the if statement (separate offset initialization)
-        if not self.initialized_offsets:
-            # Initialize offsets if not already done
-            self.offsets = values
-            self.initialized_offsets = True
-            log.debug(f"Initialized offsets: {self.offsets}")
+        # # TODO: refactor to get rid of the if statement (separate offset initialization)
+        # if not self.initialized_offsets:
+        #     # Initialize offsets if not already done
+        #     self.offsets = values
+        #     self.initialized_offsets = True
+        #     log.debug(f"Initialized offsets: {self.offsets}")
 
-        reading = self.offsets - values  # Subtract offsets to get actual readings
-        reading /= self.transimpedance  # Convert to photocurrent (proportional to power)
-        # NOTE: most c-band detectors have around 0.9 A/W so photocurrent is
-        # pretty close to power in Watts
-        return reading
+        # reading = self.offsets - values  # Subtract offsets to get actual readings
+        # reading /= self.transimpedance  # Convert to photocurrent (proportional to power)
+        # # NOTE: most c-band detectors have around 0.9 A/W so photocurrent is
+        # # pretty close to power in Watts
+        # return reading
+        return self.detectors.read()  # Use the DetectorArray's read method to get photocurrent
     
     def setControl(self, control_vector: np.ndarray) -> None:
         '''Sets the laser powers according to the input vector in terms

@@ -347,7 +347,7 @@ class HardMZI_v2(MZImesh):
     def __init__(self,
                  size: int,
                 #  inLayer: Layer,
-                 inputDetectors: DetectorArray, # input pin names
+                #  inputDetectors: DetectorArray, # input pin names
                  outputDetectors: DetectorArray, # output pin names
                  inputLaser: LaserArray, # laser array for input
                  psPins: list[str], # phase shifter pin names
@@ -361,7 +361,7 @@ class HardMZI_v2(MZImesh):
         # Mesh.__init__(self, size, inLayer, **kwargs)
 
         self.size = size
-        self.inputDetectors = inputDetectors
+        # self.inputDetectors = inputDetectors
         self.outputDetectors = outputDetectors
         self.inputLaser = inputLaser
         self.psPins = psPins # TODO: standardize pin names for any size MZI
