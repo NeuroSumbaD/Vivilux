@@ -33,3 +33,4 @@ def setup_logger():
 
 # initialize logger
 log = setup_logger()
+log.info("NEW RUN STARTED.")

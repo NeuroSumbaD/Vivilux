@@ -9,8 +9,8 @@ import nidaqmx
 import pyvisa as visa
 
 from vivilux.hardware.utils import magnitude
-from vivilux.logger import log
 import vivilux.hardware.daq as daq
+from vivilux.logger import log
 
 SLEEP = 0.5 # seconds
 LONG_SLEEP = 0.5 # seconds
