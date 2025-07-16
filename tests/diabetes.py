@@ -13,6 +13,7 @@ from vivilux.metrics import RMSE
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn import datasets
+# import tensorflow as tf
 np.random.seed(seed=0)
 
 from copy import deepcopy
