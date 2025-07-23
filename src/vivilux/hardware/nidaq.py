@@ -137,7 +137,7 @@ class AIPIN(daq.PIN):
                                                  max_val=2.0,
                                                  terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
             data = np.array(task.read(number_of_samples_per_channel=100))
-            data = np.mean(data[10:],axis=1) # skips first few samples to avoid noise from initialization
+            data = np.mean(data[10:]) # skips first few samples to avoid noise from initialization
             # TODO: make these values configurable for different sampling and averaging
         
         log.debug(f"Read 100 samples from {self.board.board_num}/ai{self.chnl}"

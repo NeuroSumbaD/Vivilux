@@ -27,7 +27,9 @@ class DetectorArray:
         self.read() # Initialize the offsets by reading the detectors without input
     
     def read(self) -> np.ndarray:
-        '''Reads from the detector nets and returns the photocurrent as a numpy array.
+        '''Reads from the detector nets and returns the photocurrent (A) as a
+            numpy array. Minimum reading is 0 A (no negative photocurrent
+            reported).
 
             TODO: add support for reading multiple pins at once
         '''
@@ -47,4 +49,4 @@ class DetectorArray:
         reading /= self.transimpedance  # Convert to photocurrent (proportional to power)
         # NOTE: most c-band detectors have around 0.9 A/W so photocurrent is
         # pretty close to power in Watts
-        return reading
+        return np.maximum(reading, 0)
