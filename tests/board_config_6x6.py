@@ -71,13 +71,13 @@ mcc_boards = [
         mcc.AOPIN("5_3_i", 11),
         mcc.AOPIN("5_5_i", 13),
     ),
-    mcc.USB_3114("lasers", "000000",
-        mcc.AOPIN("laser_1", 1),
+    mcc.USB_3114("lasers", "1FD2F3C",
+        mcc.AOPIN("laser_1", 0),
         mcc.AOPIN("laser_2", 2),
-        mcc.AOPIN("laser_3", 3),
-        # mcc.AOPIN("laser_4", 3),
-        # mcc.AOPIN("laser_5", 4),
-        # mcc.AOPIN("laser_6", 5),
+        mcc.AOPIN("laser_3", 4),
+        # mcc.AOPIN("laser_4", 6),
+        # mcc.AOPIN("laser_5", 1),
+        # mcc.AOPIN("laser_6", 3),
     ),
 ]
 
@@ -93,40 +93,57 @@ if __name__ == "__main__":
     from vivilux.hardware.visualization import HeatmapVisualizer
     from vivilux.hardware.lasers import LaserArray
     from vivilux.hardware.detectors import DetectorArray
+    
+    import numpy as np
+    np.set_printoptions(suppress=True,)
 
     detector_nets = ["PD_1_0", "PD_2_0", "PD_3_0",] # may need to rewire for "PD_4_0", "PD_5_0", "PD_6_0",] in one board
-    detectors_state = HeatmapVisualizer(shape=(3, 1), vmin=0, vmax=2,
+    detectors_state = HeatmapVisualizer(shape=(3, 1), vmin=0, vmax=1,
                                         xlabel="Detector Column",
                                         ylabel="Detector Row",
-                                        clabel="Voltage")
-    
-    # Initialize the laser array
-    laser_array = LaserArray(3, # 6
-                             netlist = netlist,
-                             control_nets = ["laser_1", "laser_2", "laser_3",], # "laser_4", "laser_5", "laser_6",]
-                             detector_nets = DetectorArray(3, # 6
-                                                           nets=detector_nets,
-                                                           netlist=netlist,
-                                                           transimpedance=220e3,  # 220k ohms
-                                                           ),
-                             limits=(0, 10),
-                             )
+                                        clabel="Photocurrent (uA)")
     
     delay_read = 100e-3 # 100 ms delay before reading the detectors
     
     # Test streaming data from the NI board
     with netlist:
-        while True:
-            # Set the laser power to 1.0 for all lasers
-            laser_array.setNormalized([1.0, 1.0, 1.0])  # Adjust as needed for more lasers
-            sleep(delay_read) # wait for the lasers to stabilize
+        # Initialize the detector array
+        detector_array = DetectorArray(3, # 6
+                                       nets=detector_nets,
+                                       netlist=netlist,
+                                       transimpedance=220e3,  # 220k ohms
+                                       )
+        # Initialize the laser array
+        laser_array = LaserArray(3, # 6
+                                 netlist = netlist,
+                                 control_nets = ["laser_1", "laser_2", "laser_3",], # "laser_4", "laser_5", "laser_6",]
+                                 detectors = detector_array,
+                                 limits=(0, 10),
+                                 )
+        try:
+            print("Starting laser calibration. Press Ctrl+C to stop.")
+            
+            # Loop to continuously read the detector values
+            # and update the heatmap visualizer
+            # This will run until interrupted by the user
+            while True:
+                # Set the laser power to 1.0 for all lasers
+                # laser_array.setNormalized([1.0, 1.0, 1.0])  # Adjust as needed for more lasers
+                laser_array.setNormalized([0.75, 0.75, 0.75])  # Adjust as needed for more lasers
+                sleep(delay_read) # wait for the lasers to stabilize
 
-            # Read the detector values
-            data = netlist.group_vin(detector_nets)
-            print(data)
-            detectors_state.update(data.reshape((3, 1)))
+                # Read the detector values
+                # data = netlist.group_vin(detector_nets)
+                data = detector_array.read()
+                print(data*1e6)
+                detectors_state.update(data.reshape((3, 1))*1e6)
 
-            # Turn off the lasers
+                # Turn off the lasers
+                laser_array.setNormalized([0.0, 0.0, 0.0])
+
+                sleep(10*delay_read) # 10% duty cycle for the lasers
+        except KeyboardInterrupt:
+            print("Calibration interrupted by user.")
+            # Turn off the lasers when done
             laser_array.setNormalized([0.0, 0.0, 0.0])
-
-            sleep(10*delay_read) # 10% duty cycle for the lasers
+            print("Lasers turned off.")
