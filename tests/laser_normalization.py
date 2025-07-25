@@ -1,10 +1,6 @@
-'''This module is intended for sweeping the control  range of the laser and
-    plotting the measured photocurrent to view the linearity of the control
-    parameter. For convenience, I plot laser input current versus the output
-    photocurrent in microamperes (uA) for each channel. The pigtail lasers
-    should have ~0.1 W/A and the photodetectors should have ~0.9 A/W
-    responsivity. From this, the user can estimate the losses seen by the
-    coupling into the chip.
+'''In this module, I am running a laser calibration procedure when the laser is
+    initialized, and then testing a sweep of the normalized range to verify that
+    the normalization is working correctly.
 '''
 
 import vivilux.hardware.daq as daq
@@ -33,10 +29,6 @@ ni_boards =[
 ]
 
 mcc_boards = [
-    # mcc.USB_1208FS_PLUS("Laser controller", "21E8194",
-    #     mcc.AOPIN("Laser_0", 0),
-    #     mcc.AOPIN("Laser_1", 1),
-    # ),
     mcc.USB_3114("lasers", "1FD2F3C",
         mcc.AOPIN("laser_1", 0),
         mcc.AOPIN("laser_2", 2),
@@ -83,14 +75,16 @@ if __name__ == "__main__":
                                        transimpedance=220e3,  # 220k ohms
                                        )
         
-        # Initialize the laser array
+        # Initialize and calibrate the laser array
         laser_array = LaserArray(3, # 6
                                 netlist = netlist,
                                 control_nets = ["laser_3", "laser_1", "laser_2",], # "laser_4", "laser_5", "laser_6",]
                                 detectors = detector_array,
-                                limits = (0, 10),
-                                calibrate = False, # skip calibration for linearity test
+                                limits = (0, 10), #control is between 0 and 10 V
+                                transconductance = 480,
+                                calibrate=True,  # Run calibration to equalize normalized input ranges
                                 )
+        
         for channel in range(3):
             for index, power in tqdm.tqdm(enumerate(laser_sweep), desc=f"Channel {channel+1} Sweep", total=num_points):
                 normal_power = np.zeros(3)
@@ -106,12 +100,12 @@ if __name__ == "__main__":
 
             # Plot the results
             for det_chan in range(3):
-                axs[channel].plot(laser_sweep*10*(1/480)*1e3, # Convert to mA (transconducance of 480 ohms)
+                axs[channel].plot(laser_sweep, 
                                   current_readings[channel, :, det_chan]*100, # Account for 1% tap
                                   label=f"Ch{det_chan+1}",
                                   )
-            axs[channel].set_xlabel("Laser Current (mA)")
-            axs[channel].set_ylabel("Estimated Photocurrent (uW)")
+            axs[channel].set_xlabel("Normalized Laser Control")
+            axs[channel].set_ylabel("Estimated Photocurrent from 1% tap (uW)")
             axs[channel].legend()
     plt.tight_layout()
     plt.show()
