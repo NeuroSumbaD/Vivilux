@@ -8,6 +8,7 @@ import numpy as np
 from scipy.optimize import curve_fit, fsolve
 import nidaqmx
 import pyvisa as visa
+import tqdm
 
 from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.utils import magnitude
@@ -43,6 +44,12 @@ class LaserArray:
             initial readings such that all lasers give the same power in the
             normalized range.
             If False, the normalized scale will be based on the control limits.
+        calibration_points : int
+            Number of points to use for calibration (default: 100).
+        pause : float
+            Pause between control signal changes and read operations (default: 10e-3 seconds).
+        duty_cycle : float
+            Duty cycle for the calibration routine (default: 0.1).
     '''
     def __init__(self,
                  size: int, # Number of channels in the laser array
@@ -53,6 +60,8 @@ class LaserArray:
                  transconductance: float = 480, # transconductance of the laser driver in ohms (default: 480 ohms)
                  calibrate: bool = True, # whether to run the calibration routine to equalize normalized input ranges
                  calibration_points: int = 100, # number of points to use for calibration
+                 pause: float = 10e-3, # pause between control signal changes and read operations
+                 duty_cycle: float = 0.1,  # duty cycle for the calibration routine
                 ):
         if not netlist.in_context:
             log.error("Attempted to initialize LaserArray outside a daq.Netlist context.")
@@ -77,10 +86,16 @@ class LaserArray:
         self.readPhotocurrent()  # Initialize offsets by reading the detectors
 
         if calibrate:
-            self.calibrate_power(calibration_points)
+            self.calibrate_power(calibration_points,
+                                 pause,
+                                 duty_cycle)
         else:
-            self._normalize = lambda x: (x - limits[0]) / (limits[1] - limits[0])
-            self._denormalize = lambda x: x * (limits[1] - limits[0]) + limits[0]
+            def norm(x: np.ndarray) -> np.ndarray:
+                return (x - limits[0]) / (limits[1] - limits[0])
+            self._normalize = norm
+            def denorm(x: np.ndarray) -> np.ndarray:
+                return x * (limits[1] - limits[0]) + limits[0]
+            self._denormalize = denorm
 
     def reset(self):
         for net in self.control_nets:
@@ -110,7 +125,10 @@ class LaserArray:
         # return vector * (self.limits[1] - self.limits[0]) + self.limits[0]
         return self._denormalize(vector)
 
-    def calibrate_power(self, calibration_points: int) -> None:
+    def calibrate_power(self,
+                        calibration_points: int,
+                        pause=10e-3,
+                        duty_cycle=0.1) -> None:
         '''Iterates the control nets over the full range in limits and then
             calculates an equalized normal range for all lasers in the array.
             
@@ -129,12 +147,14 @@ class LaserArray:
         # Step 1: iterate over the control limits and read the photocurrent
         photocurrents = []
         controls = np.linspace(self.limits[0], self.limits[1], calibration_points)
-        for voltage in controls:
+        for voltage in tqdm.tqdm(controls,
+                                 desc="Calibrating Laser Array",
+                                 total=calibration_points,):
             self.setControl(np.full(self.size, voltage))
-            sleep(10e-3)
+            sleep(pause)
             photocurrents.append(self.readPhotocurrent())
             self.setControl(np.zeros(self.size))  # Reset control nets to 0 V
-            sleep(100e-3)  # Allow time for the lasers to settle
+            sleep(pause/duty_cycle)  # Allow time for the lasers to settle
         photocurrents = np.array(photocurrents)
         
         # Step 2: Fit a linear function to the data
@@ -166,9 +186,16 @@ class LaserArray:
         
         norm_slopes = (intercept_max - intercept_10)/(0.9)  # Calculate the slopes for normalization
         norm_intercept = intercept_max - norm_slopes
+        
+        def norm(x: np.ndarray) -> np.ndarray:
+            return np.maximum((x - intercepts) / (target_max - intercepts), 0)  # Normalization function
+        def denorm(x: np.ndarray) -> np.ndarray:
+            vector = norm_slopes * x + norm_intercept
+            vector = np.clip(vector, self.limits[0], intercept_max)  # Ensure within limits
+            return vector
 
-        self._denormalize = lambda x: norm_slopes * x + norm_intercept  # Denormalization function
-        self._normalize = lambda x: np.maximum((x - intercepts) / (target_max - intercepts), 0)  # Normalization function
+        self._denormalize = denorm
+        self._normalize = norm
 
         log.info(f"Calibration complete, took {time() - start:.2f} seconds."
                  f" Normalization slopes: {norm_slopes}")

@@ -374,7 +374,6 @@ class HardMZI_v2(MZImesh):
         self.numDirections = numDirections
 
         # bound initial voltages between zero and middle of range
-        ## only use 6 phase shifters (for now)
         self.voltages = np.random.rand(self.numUnits,1) * \
             (self.psLimits[1]-self.psLimits[0])/2 + self.psLimits[0]
 
@@ -451,7 +450,7 @@ class HardMZI_v2(MZImesh):
             log.debug(f"Column readout for channel {chan}: {columnReadout}")
 
             # TODO: handle the case where some readouts are negative
-            column = np.minimum(columnReadout, 0) # assume negative values are noise
+            column = np.maximum(columnReadout, 0) # assume negative values are noise
 
             # normalize the read to account for loss (TODO: check if this is necessary)
             column /= L1norm(column)
@@ -481,6 +480,7 @@ class HardMZI_v2(MZImesh):
         if (self.modified == True): # only recalculate matrix when modified
             self.setFromParams()
             powerMatrix = self.measureMatrix(powerMatrix)
+            self.matrix = powerMatrix # store the matrix for future use
             self.modified = False
         else:
             powerMatrix = self.matrix
@@ -515,6 +515,7 @@ class HardMZI_v2(MZImesh):
         # params[0] = np.maximum(params[0],0)
         paramsToReset =  params[0] > HardMZI.upperThreshold
         paramsToReset = np.logical_or(params[0] < 0, paramsToReset)
+        paramsToReset = paramsToReset.flatten()
         # print(f"paramsToReset: {paramsToReset}")
         if np.sum(paramsToReset) > 0: #check if any values need resetting
             matrix = self.get()
