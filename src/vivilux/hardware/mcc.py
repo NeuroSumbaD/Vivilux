@@ -12,7 +12,7 @@ import vivilux.hardware.daq as daq
 class Board(daq.Board):
     '''Base class for MCC DAQ boards. Inherits from daq.Board.'''
     
-    def __init__(self, name: str, unique_id: str, *pins: list[daq.PIN]):
+    def __init__(self, name: str, unique_id: str, *pins: list[daq.PIN], **kwargs):
         super().__init__(name, *pins)
         self.unique_id = unique_id
         self.board_num = None  # Will be set when the board is initialized
@@ -20,9 +20,9 @@ class Board(daq.Board):
         
         self.daq_dev_info = None
         self.ao_info = None
-        self.ao_range = None
+        self.ao_range = None if "ao_info" not in kwargs else kwargs["ao_info"]
         self.ai_info = None
-        self.ai_range = None
+        self.ai_range = None if "ai_info" not in kwargs else kwargs["ai_info"]
 
     def initialize_ports(self):
         '''Initialize the ports for the board. To be implemented in subclasses.'''
@@ -31,9 +31,11 @@ class Board(daq.Board):
     def getBoardInfo(self):
         self.daq_dev_info = DaqDeviceInfo(self.board_num)
         self.ao_info = self.daq_dev_info.get_ao_info()
-        self.ao_range = self.ao_info.supported_ranges[0] if self.ao_range is None else self.ao_range
+        if len(self.ao_info.supported_ranges) > 0:
+            self.ao_range = self.ao_info.supported_ranges[0] if self.ao_range is None else self.ao_range
         self.ai_info = self.daq_dev_info.get_ai_info()
-        self.ai_range = self.ai_info.supported_ranges[0] if self.ao_range is None else self.ao_range
+        if len(self.ai_info.supported_ranges) > 0:
+            self.ai_range = self.ai_info.supported_ranges[0] if self.ai_range is None else self.ai_range
 
     def reset(self):
         '''Reset the board by clearing all outputs and setting analog outputs to 0V.'''
@@ -143,7 +145,7 @@ class USB_1208FS_PLUS(Board):
                  port_A_direction: enums.DigitalIODirection = enums.DigitalIODirection.OUT,
                  port_B_direction: enums.DigitalIODirection = enums.DigitalIODirection.OUT,
                  analog_input_mode: enums.AnalogInputMode = enums.AnalogInputMode.SINGLE_ENDED,
-                 ai_range: enums.ULRange = enums.ULRange.UNI5VOLTS):
+                 ai_range: enums.ULRange = enums.ULRange.BIP10VOLTS): # NOTE: BIP10VOLTS is the only allowed range for single-ended mode
         # Initialize the board with the specified name and pins
         super().__init__(name, unique_id, *pins)
 
