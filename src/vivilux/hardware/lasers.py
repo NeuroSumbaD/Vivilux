@@ -74,7 +74,7 @@ class LaserArray:
         self.limits = limits
         self.netlist = netlist
         self.transconductance = transconductance
-
+        self.pause = pause
 
         # guarantee control nets are set to 0V
         for net in self.control_nets:
@@ -226,11 +226,15 @@ class LaserArray:
 
     def setNormalized(self, vector: np.ndarray) -> None:
         '''Sets the laser powers from a normalized input vector.
+        
+            NOTE: This method is used after the calibration routine
+            and uses a settling delay to allow the lasers to stabilize.
         '''
         if not isinstance(vector, np.ndarray):
             vector = np.array(vector)
         # Calculate the denormalized vector and set the power
         self.setControl(self.denormalize(vector))
+        sleep(self.pause)  # Allow time for the lasers to settle
 
     def display_power_vs_control(self, num_points=100) -> None:
         '''Displays a plot of the power vs control signal for each channel.

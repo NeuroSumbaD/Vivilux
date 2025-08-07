@@ -354,8 +354,9 @@ class HardMZI_v2(MZImesh):
                  netlist: daq.Netlist, # netlist for daq
                  updateMagnitude=0.01,
                  numDirections=12,
-                 psReset: float = 5.5, # reset phase shifter past this voltage (TODO: calibrate this)
-                 psLimits: tuple[float, float] =(0.0, 6.0), # min and max voltage for phase shifters
+                 psReset: float = 4.5, # reset phase shifter past this voltage (TODO: calibrate this)
+                 psLimits: tuple[float, float] =(0.0, 5.0), # min and max voltage for phase shifters
+                 ps_delay: float = 5e-3, # delay in seconds for phase shifter voltage to settle
                  **kwargs):
         # TODO: add support for attachment to Leabra Net
         # Mesh.__init__(self, size, inLayer, **kwargs)
@@ -368,6 +369,7 @@ class HardMZI_v2(MZImesh):
         self.netlist = netlist # TODO: standard netlist names to avoid many net name lists above
         self.psReset = psReset
         self.psLimits = psLimits
+        self.ps_delay = ps_delay # delay for phase shifter voltage to settle
         self.numUnits = len(psPins)
         
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
@@ -406,6 +408,7 @@ class HardMZI_v2(MZImesh):
         log.debug(f"Setting phase shifters to voltages: {self.voltages}")
         for index, volt in enumerate(self.voltages):
             self.netlist[self.psPins[index]].vout(volt)
+        sleep(self.ps_delay)  # Allow time for the voltages to settle
 
     def testParams(self, params: list[np.ndarray]):
         '''Temporarily set the params'''
@@ -416,6 +419,7 @@ class HardMZI_v2(MZImesh):
         log.debug(f"Testing phase shifters with voltages: {voltages}")
         for index, volt in enumerate(voltages):
             self.netlist[self.psPins[index]].vout(volt)
+        sleep(self.ps_delay)  # Allow time for the voltages to settle
 
         powerMatrix = np.zeros((self.size, self.size)) # for pass by reference
         powerMatrix = self.measureMatrix(powerMatrix)
@@ -428,6 +432,7 @@ class HardMZI_v2(MZImesh):
         '''
         for index, volt in enumerate(self.voltages):
             self.netlist[self.psPins[index]].vout(volt)
+        sleep(self.ps_delay)  # Allow time for the voltages to settle
     
     def getParams(self) -> list[np.ndarray]:
         '''Returns the list of tunable parameters, in this case the phase
@@ -524,7 +529,7 @@ class HardMZI_v2(MZImesh):
                 (self.psLimits[1]-self.psLimits[0])/2 + self.psLimits[0]
             params[0][paramsToReset] = randomReInit
             self.resetDelta = self.get(params) - matrix
-            print("Reset delta:", self.resetDelta, ", magnitude: ", magnitude(self.resetDelta))
+            print("Reset delta:\n", self.resetDelta, ", magnitude: ", magnitude(self.resetDelta))
 
         return params
     
@@ -653,6 +658,12 @@ class HardMZI_v2(MZImesh):
                 print(f"Break after {step} steps, magnitude of delta: {magnitude(deltaFlat)}")
                 break
         return self.record, params, matrices
+    
+    def getParamsDict(self) -> dict:
+        '''Returns a dictionary of the current parameters, in this case the
+            phase shifter voltages.
+        '''
+        return {pin_name: volt for pin_name, volt in zip(self.psPins, self.voltages.flatten())}
 
     # def Update(self, delta: np.ndarray):
     #     self.records.append(self.stepGradient(delta))
