@@ -12,12 +12,8 @@ ni_boards =[
         ni.AIPIN("PD_1_0", 0), # DON'T CHANGE
         ni.AIPIN("PD_1_5", 5), # DON'T CHANGE
         ni.AIPIN("PD_2_0", 6), # DON'T CHANGE
-        # ni.AIPIN("PD_2_4", 10), # MOVED
         ni.AIPIN("PD_2_5", 11), # DON'T CHANGE
         ni.AIPIN("PD_3_0", 12), # DON'T CHANGE
-        # ni.AIPIN("PD_3_1", 13), # MOVED
-        # ni.AIPIN("PD_3_2", 14), # MOVED
-        # ni.AIPIN("PD_3_3", 15), # MOVED
         
         ni.AIPIN("PD_4_0", 1),
         ni.AIPIN("PD_5_0", 2),
@@ -28,10 +24,11 @@ ni_boards =[
         ni.AIPIN("PD_5_5", 8),
         ni.AIPIN("PD_6_5", 9),
         
-        ni.AIPIN("PD_1_1", 10), # FROM BOTTOM mcc.AIPIN("PD_1_1", 2)
-        ni.AIPIN("PD_6_1", 13), # FROM MIDDLE mcc.AIPIN("PD_6_1", 7)
-        ni.AIPIN("PD_1_3", 14), # FROM MIDDLE mcc.AIPIN("PD_1_3", 6)
-        ni.AIPIN("PD_6_3", 15), # FROM TOP mcc.AIPIN("PD_6_3", 1)
+        # ni.AIPIN("PD_1_1", 10), # MOVED
+        ni.AIPIN("PD_1_2", 10), # FROM MIDDLE mcc.AIPIN("PD_1_2", 0)
+        ni.AIPIN("PD_6_1", 13),
+        ni.AIPIN("PD_1_3", 14),
+        ni.AIPIN("PD_6_3", 15),
     ),
 ]
 
@@ -39,8 +36,7 @@ mcc_boards = [
     mcc.USB_1208FS_PLUS("ADC 1", "21E81FE", #BOTTOM
         mcc.AIPIN("PD_3_4", 0), # Pin 1
         mcc.AIPIN("PD_1_4", 1),
-        # mcc.AIPIN("PD_1_1", 2), # MOVED
-        mcc.AIPIN("PD_2_4", 2), # NEW LOCATION
+        mcc.AIPIN("PD_2_4", 2),
         mcc.AIPIN("PD_4_1", 3), # Pin 5
         mcc.AIPIN("PD_4_2", 4), # Pin 7
         mcc.AIPIN("PD_4_3", 5), # Pin 8
@@ -48,21 +44,19 @@ mcc_boards = [
         mcc.AIPIN("PD_2_1", 7),
     ),
     mcc.USB_1208FS_PLUS("ADC 2", "21E81BD", # MIDDLE
-        mcc.AIPIN("PD_1_2", 0),
+        # mcc.AIPIN("PD_1_2", 0), # MOVED
+        mcc.AIPIN("PD_1_1", 0), # NEW LOCATION
         mcc.AIPIN("PD_5_1", 1), # Pin 2
         mcc.AIPIN("PD_5_2", 2), # Pin 4
         mcc.AIPIN("PD_5_3", 3), # Pin 5
         mcc.AIPIN("PD_5_4", 4), # Pin 7
         mcc.AIPIN("PD_2_2", 5),
-        # mcc.AIPIN("PD_1_3", 6), # MOVED
-        mcc.AIPIN("PD_3_2", 6), # NEW LOCATION
-        # mcc.AIPIN("PD_6_1", 7), # MOVED
-        mcc.AIPIN("PD_3_1", 7), # NEW LOCATION
+        mcc.AIPIN("PD_3_2", 6),
+        mcc.AIPIN("PD_3_1", 7),
     ),
     mcc.USB_1208FS_PLUS("ADC 3", "21E8232", # TOP
         mcc.AIPIN("PD_6_2", 0), # Pin 1
-        # mcc.AIPIN("PD_6_3", 1), # Pin 2
-        mcc.AIPIN("PD_3_3", 1), # NEW LOCATION
+        mcc.AIPIN("PD_3_3", 1),
         mcc.AIPIN("PD_6_4", 2), # Pin 4
         mcc.AIPIN("PD_2_3", 3),
     ),
