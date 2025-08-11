@@ -378,6 +378,7 @@ class HardMZI_v2(MZImesh):
         # bound initial voltages between zero and middle of range
         self.voltages = np.random.rand(self.numUnits,1) * \
             (self.psLimits[1]-self.psLimits[0])/2 + self.psLimits[0]
+        self.powers = np.square(self.voltages) # power is proportional to square of voltage
 
         
         self.resetDelta = np.zeros((self.size, self.size))
@@ -385,7 +386,7 @@ class HardMZI_v2(MZImesh):
         self.modified = True
         initMatrix = self.get()
         print('Initialized matrix with voltages: \n', self.voltages)
-        print('Matrix: \n', initMatrix)
+        print('Initial Matrix: \n', initMatrix)
 
         self.records = [] # for recording the convergence of deltas
 
@@ -396,9 +397,11 @@ class HardMZI_v2(MZImesh):
     def setParams(self, params: list[np.ndarray]):
         '''Sets the current matrix from the phase shifter params.
         '''
-        ps = params[0]
+        powers = params[0]
+        ps = np.sqrt(powers)  # Convert powers to voltages
         assert(ps.size == self.numUnits), f"Error: {ps.size} != {self.numUnits}"
         self.voltages = self.BoundParams(params)[0]
+        self.powers = np.square(self.voltages)  # Update powers based on bounded voltages
             
         self.modified = True
 
@@ -412,7 +415,8 @@ class HardMZI_v2(MZImesh):
 
     def testParams(self, params: list[np.ndarray]):
         '''Temporarily set the params'''
-        voltages = params[0].flatten()
+        powers = params[0].flatten()  # Flatten the array to 1D
+        voltages = np.sqrt(powers)  # Convert powers to voltages
         assert(voltages.size ==self.numUnits), f"Error: {voltages.size} != {self.numUnits}, params[0]"
         assert voltages.max() <= self.psLimits[1] and voltages.min() >= self.psLimits[0], \
             f"Error: One or more params out of bounds: {voltages}"
@@ -544,6 +548,7 @@ class HardMZI_v2(MZImesh):
             Returns derivativeMatrix, stepVector
         '''
         updateMagnitude = self.updateMagnitude
+        # TODO: Test normal distribution for better sampled step vectors
         stepVector = (np.random.rand(*voltages.shape)-0.5) if stepVector is None else stepVector
         # stepVector = np.sign(np.random.rand(*voltages.shape)-0.5) if stepVector is None else stepVector
         randMagnitude = np.sqrt(np.sum(np.square(stepVector)))
@@ -571,7 +576,7 @@ class HardMZI_v2(MZImesh):
         minusMatrix = self.testParams([minusVectors])
 
         differenceMatrix = plusMatrix-minusMatrix
-        derivativeMatrix = differenceMatrix/updateMagnitude
+        derivativeMatrix = differenceMatrix/(2*updateMagnitude)
         
 
         return derivativeMatrix, stepVector/updateMagnitude
@@ -595,6 +600,7 @@ class HardMZI_v2(MZImesh):
         for i in range(numDirections):
             if verbose:
                 print(f"\tGetting derivative {i}")
+            # TODO: Find some constraints for the correlation between the stepVectors
             tempx, tempv = self.matrixGradient(voltages)
             tempv = np.concatenate([param.flatten() for param in tempv])
             X[:,i], V[:,i] = tempx[:n, :m].flatten(), tempv.flatten()

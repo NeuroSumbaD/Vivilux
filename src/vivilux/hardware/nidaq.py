@@ -144,7 +144,7 @@ class AIPIN(daq.PIN):
                   " (skipped first 10 samples and returned mean)")
         return data
     
-    def scan_vin(self, num_samples = 100):
+    def scan_vin(self, num_samples = 100, rate=250e3):
         super().scan_vin(num_samples)
 
         self.board: Board
@@ -154,6 +154,7 @@ class AIPIN(daq.PIN):
                                                  min_val=-0.0,
                                                  max_val=2.0,
                                                  terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
+            task.timing.cfg_samp_clk_timing(rate=rate,)
             data = np.array(task.read(number_of_samples_per_channel=num_samples))
         
         log.debug(f"Read {num_samples} samples from {self.board.board_num}/ai{self.chnl}")
