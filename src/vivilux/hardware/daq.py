@@ -69,7 +69,7 @@ class PIN:
         if self.type != PIN_TYPE.ANALOG:
             raise ValueError(f"Pin {self.net_name} is not an analog pin")
     
-        log.debug(f"(ABSTRACT PIN) Setting pin {self.net_name} to {voltage}V on board {self.board.board_name}")
+        # log.debug(f"(ABSTRACT PIN) Setting pin {self.net_name} to {voltage}V on board {self.board.board_name}")
         return
     
     def vin(self) -> float:
@@ -92,7 +92,7 @@ class PIN:
             log.error(f"Pin {self.net_name} is not an analog pin")
             raise ValueError(f"Pin {self.net_name} is not an analog pin")
 
-        log.debug(f"(ABSTRACT PIN) Reading pin {self.net_name} on board {self.board.board_name}")        
+        # log.debug(f"(ABSTRACT PIN) Reading pin {self.net_name} on board {self.board.board_name}")        
         return nan  # Placeholder for actual implementation
     
     def scan_vin(self, num_samples: int = 100) -> list[float]:
@@ -120,7 +120,7 @@ class PIN:
             log.error(f"Pin {self.net_name} is not an analog pin")
             raise ValueError(f"Pin {self.net_name} is not an analog pin")
         
-        log.debug(f"(ABSTRACT PIN) Scanning {num_samples} samples from pin {self.net_name} on board {self.board.board_name}")
+        # log.debug(f"(ABSTRACT PIN) Scanning {num_samples} samples from pin {self.net_name} on board {self.board.board_name}")
         return [nan] * num_samples # Placeholder for actual implementation
     
     def dout(self, value: bool):
@@ -143,7 +143,7 @@ class PIN:
             log.error(f"Pin {self.net_name} is not a digital pin")
             raise ValueError(f"Pin {self.net_name} is not a digital pin")
         
-        log.debug(f"(ABSTRACT PIN) Setting pin {self.net_name} to {value} on board {self.board.board_name}")
+        # log.debug(f"(ABSTRACT PIN) Setting pin {self.net_name} to {value} on board {self.board.board_name}")
         return
 
 
@@ -222,7 +222,7 @@ class Board:
 
         # log.debug(f"Set pin {pinName} to {voltage}V")
         # ul.v_out(self.board_num, pin.chnl, ao_range, voltage)
-        log.debug(f"(ABSTRACT PIN) Setting pin {pin_name} to {voltage}V on board {self.board_name}")
+        # log.debug(f"(ABSTRACT PIN) Setting pin {pin_name} to {voltage}V on board {self.board_name}")
         self.pins[pin_name].vout(voltage)
     
         return
@@ -249,7 +249,7 @@ class Board:
             raise ValueError(f"Pin {pin_name} not found in board {self.board_name}")
         pin = self.pins[pin_name]
 
-        log.debug(f"(ABSTRACT PIN) Reading pin {pin_name} on board {self.board_name}")
+        # log.debug(f"(ABSTRACT PIN) Reading pin {pin_name} on board {self.board_name}")
         return pin.vin()
 
     def scan_vin(self, pin_name: str, num_samples: int = 100) -> list[float]:
@@ -276,8 +276,8 @@ class Board:
             raise ValueError(f"Pin {pin_name} not found in board {self.board_name}")
         pin = self.pins[pin_name]
 
-        log.debug(f"(ABSTRACT PIN) Scanning {num_samples} samples from pin"
-                  f" {pin_name} on board {self.board_name}")
+        # log.debug(f"(ABSTRACT PIN) Scanning {num_samples} samples from pin"
+        #           f" {pin_name} on board {self.board_name}")
         return pin.scan_vin(num_samples)
 
     def group_vin(self, pin_names: list[str]) -> np.ndarray:
@@ -302,7 +302,7 @@ class Board:
             if pin_name not in self.pins:
                 raise ValueError(f"Pin {pin_name} not found in board {self.board_name}")
             
-        log.debug(f"(ABSTRACT PIN) Group scanning pins {pin_names} on board {self.board_name}")
+        # log.debug(f"(ABSTRACT PIN) Group scanning pins {pin_names} on board {self.board_name}")
         return np.array([nan] * len(pin_names))  # Placeholder for actual implementation
     
     def group_scan_vin(self, pin_names: list[str], num_samples: int = 100) -> np.ndarray:
@@ -329,8 +329,8 @@ class Board:
             if pin_name not in self.pins:
                 raise ValueError(f"Pin {pin_name} not found in board {self.board_name}")
         
-        log.debug(f"(ABSTRACT PIN) Group scanning {num_samples} samples from "
-                  f"pins {pin_names} on board {self.board_name}")
+        # log.debug(f"(ABSTRACT PIN) Group scanning {num_samples} samples from "
+        #           f"pins {pin_names} on board {self.board_name}")
         return np.array([[nan] * len(pin_names)] * num_samples)
         
     
@@ -366,7 +366,7 @@ class Board:
             log.error(f"Tried to reset board {self.board_name} when board number is not set")
             raise RuntimeError(f"Board number is not set for {self.board_name}."\
                                " Please assign a board number before using this method.")
-        
+        log.info(f"Resetting board {self.board_name} (board number {self.board_num})")
         for pin_name, pin in self.pins.items():
             if pin.direction == PIN_DIRECTION.OUTPUT:
                 pin.reset()
@@ -442,7 +442,7 @@ class Netlist:
         '''
         # TODO: implement setup code (if any)
         self.in_context = True
-        log.debug(f"(NETLIST) Entering context manager for netlist with boards:"
+        log.info(f"(NETLIST) Entering context manager for netlist with boards:"
                   f" {list(self.board_dict.keys())}")
         return self
 
@@ -452,7 +452,7 @@ class Netlist:
         for board in self.board_dict.values():
             board.reset_board()
         self.in_context = False
-        log.debug(f"(NETLIST) Exiting context manager for netlist with boards:"
+        log.info(f"(NETLIST) Exiting context manager for netlist with boards:"
                   f" {list(self.board_dict.keys())}")
         # Returning False propagates exceptions, True suppresses them
         return False
@@ -496,7 +496,7 @@ class Netlist:
                     raise ValueError(f"Net names {net_names} belong to different boards and cannot be read as group: "
                                      f"{self.pins_dict[net_name].board.board_name} and {board_name}")
         
-        log.debug(f"(NETLIST) Group scanning pins {net_names}")
+        # log.debug(f"(NETLIST) Group scanning pins {net_names}")
         return self.board_dict[board_name].group_vin(net_names)
     
     def group_scan_vin(self, net_names: list[str], num_samples: int = 100) -> np.ndarray:
@@ -539,5 +539,5 @@ class Netlist:
                     raise ValueError(f"Net names {net_names} belong to different boards and cannot be read as group: "
                                      f"{self.pins_dict[net_name].board.board_name} and {board_name}")
         
-        log.debug(f"(NETLIST) Group scanning {num_samples} samples from pins {net_names}")
+        # log.debug(f"(NETLIST) Group scanning {num_samples} samples from pins {net_names}")
         return self.board_dict[board_name].group_scan_vin(net_names, num_samples)

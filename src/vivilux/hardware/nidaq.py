@@ -140,8 +140,8 @@ class AIPIN(daq.PIN):
             data = np.mean(data[10:]) # skips first few samples to avoid noise from initialization
             # TODO: make these values configurable for different sampling and averaging
         
-        log.debug(f"Read 100 samples from {self.board.board_num}/ai{self.chnl}"
-                  " (skipped first 10 samples and returned mean)")
+        # log.debug(f"Read 100 samples from {self.board.board_num}/ai{self.chnl}"
+        #           " (skipped first 10 samples and returned mean)")
         return data
     
     def scan_vin(self, num_samples = 100, rate=250e3):
@@ -157,7 +157,7 @@ class AIPIN(daq.PIN):
             task.timing.cfg_samp_clk_timing(rate=rate,)
             data = np.array(task.read(number_of_samples_per_channel=num_samples))
         
-        log.debug(f"Read {num_samples} samples from {self.board.board_num}/ai{self.chnl}")
+        # log.debug(f"Read {num_samples} samples from {self.board.board_num}/ai{self.chnl}")
         return data
 
     def reset(self):
