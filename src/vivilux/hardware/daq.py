@@ -394,6 +394,8 @@ class Netlist:
         self.pins_dict: dict[str, PIN] = {} # net name to pin mapping
         self.nets: list[str] = []
 
+        self.exit_queue: list[callable] = [] #List of callables to be executed on exit
+
         self.in_context = False  # Flag to indicate if the netlist is being used in a context manager
 
         for board in boardlist:
@@ -454,6 +456,13 @@ class Netlist:
         self.in_context = False
         log.info(f"(NETLIST) Exiting context manager for netlist with boards:"
                   f" {list(self.board_dict.keys())}")
+
+        for exit_func in self.exit_queue:
+            if callable(exit_func):
+                exit_func()
+            else:
+                log.warning(f"Exit function {exit_func} is not callable")
+
         # Returning False propagates exceptions, True suppresses them
         return False
 

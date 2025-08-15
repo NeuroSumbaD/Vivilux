@@ -10,6 +10,7 @@ import nidaqmx
 import pyvisa as visa
 import tqdm
 
+from vivilux.hardware.daq import Netlist
 from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.utils import magnitude
 import vivilux.hardware.daq as daq
@@ -282,6 +283,10 @@ class Agilent8164():
         log.info(f"Agilent8164 ID: {self.id}")
         self.channels = channels
         
+    def _to_bool(self, resp: str) -> bool:
+        s = resp.strip().upper()
+        return s.startswith('1') or s.startswith('ON') or s.startswith('TRUE')
+        
     def readpow(self,slot=2,channel=1):
         outpt = self.main.query('fetch'+str(slot) +':chan'+str(channel)+':pow?')
         return float(outpt)*1e9 #nW
@@ -290,8 +295,18 @@ class Agilent8164():
         '''Checks if the laser on the specified channel is turned on.
         '''
         response = self.query(f"sour{channel}:pow:stat?")
-        log.debug(f"Response while checking channel {channel}: {response.strip()}")
-        return response.strip() == "1"
+        # log.debug(f"Response while checking channel {channel} (pow:stat?)): {response.strip()}")
+        response = self._to_bool(response)
+        response2 = self.query(f"outp{channel}:stat?")
+        # log.debug(f"Response while checking channel {channel} (outp:stat?): {response2.strip()}")
+        response2 = self._to_bool(response2)
+        response = response or response2
+        return response
+
+    def allOn(self) -> bool:
+        '''Checks if all lasers are turned on.
+        '''
+        return all(self.isOn(chan) for chan in self.channels)
 
     def write(self,str):
         self.main.write(str)
@@ -304,25 +319,26 @@ class Agilent8164():
         '''Sets the power of each laser in mW
         '''
         for i, chan in enumerate(self.channels):
-            log.debug(f"Writing the following command to channel {chan}: sour{chan}:pow {mW[i]}mW")
+            # log.debug(f"Writing the following command to channel {chan}: sour{chan}:pow {mW[i]}mW")
             self.main.write(f'sour{chan}:pow {mW[i]}mW')
 
     def lasers_on(self, value: list[bool]):
         for i, chan in enumerate(self.channels):
             self.main.write(f'sour{chan}:pow:stat {value[i]}')
             
-    def __del__(self):
-        '''Destructor to turn off the lasers when the object is deleted.
-        '''
-        self.lasers_on([0]*len(self.channels))  # Turn off all lasers
-        log.info("Agilent laser off signal sent.")
-        sleep(LONG_SLEEP)  # Allow time for the lasers to turn off
+    # def __del__(self):
+    #     '''Destructor to turn off the lasers when the object is deleted.
+    #     '''
+    #     self.lasers_on([0]*len(self.channels))  # Turn off all lasers
+    #     log.info("Agilent laser off signal sent.")
+    #     sleep(LONG_SLEEP)  # Allow time for the lasers to turn off
         
 
 class AgilentLaserArray(LaserArray):
     def __init__(self,
                  size: int,
                  detectors: DetectorArray, #[12,8,9,10],
+                 netlist: Netlist,
                  upperLimits: np.ndarray = dBm_to_mW(np.array([-5, -3, -5, -9])),
                  lowerLimits: np.ndarray = dBm_to_mW(np.array([-10, -10, -10, -10])),
                  port: str ='GPIB0::20::INSTR',
@@ -345,6 +361,12 @@ class AgilentLaserArray(LaserArray):
         self.wait = wait
         self.max_retries = max_retries
         
+        self.netlist = netlist
+        def lasers_off():
+            self.setMinimum()
+            self.agilent.lasers_on([0]*len(self.channels))
+        self.netlist.exit_queue.append(lasers_off)
+
         # Set the lasers to their minimum power and turn them on
         self.setControl(self.powers)
         self.lasers_on()  # Turn on all lasers
@@ -408,26 +430,35 @@ class AgilentLaserArray(LaserArray):
         self.setControl(mW)
         sleep(self.pause)  # Allow time for the lasers to settle
         
-    def lasers_on(self, recursion_level = 0):
+    def lasers_on(self,):
         '''Checks if the lasers are turned off and turns them on if necessary.
             Uses recursion to try again, and will error out after max_retries.
         '''
-        for channel in self.channels:
-            if not self.agilent.isOn(channel):
-                if recursion_level == 0:
-                    self.agilent.lasers_on([1]*self.size)  # Turn on all lasers
-                    log.info(f"One or more lasers were not turned on (checked channel: {self.channels})"
+        channel_states = [False] * self.size
+        for i in range(self.max_retries):
+            for index, channel in enumerate(self.channels):
+                if not self.agilent.isOn(channel):
+                    channel_states[index] = False
+                    if i == 0:
+                        self.agilent.lasers_on([1]*self.size)  # Turn on all lasers
+                        log.info(f"One or more lasers were not turned on (checked channel: {self.channels})"
                              f" waiting {self.wait} seconds and trying again...")
-                    sleep(self.wait)
-                    self.lasers_on(recursion_level + 1)  # Retry turning on the lasers
-                if recursion_level < self.max_retries:
-                    log.warning(f"Laser on channel {channel} did not turn on correctly.")
-                    self.agilent.lasers_on([1]*self.size)
-                    sleep(self.wait)
-                    self.lasers_on(recursion_level + 1)
-                log.error(f"Laser on channel {channel} did not turn on correctly after {self.max_retries} attempts.")
-                log.info(f"Laser powers are set to {self.powers} mW (lowering the power may improve stability)")
-                raise RuntimeError(f"Laser on channel {channel} did not turn on correctly after {self.max_retries} attempts.")
+                        sleep(self.wait)
+                        continue
+                    if i == self.max_retries - 1:
+                        log.error(f"Laser on channel {channel} did not turn on correctly after {self.max_retries} attempts.")
+                        log.info(f"Laser powers are set to {self.powers} mW (lowering the power may improve stability)")
+                        raise RuntimeError(f"Laser on channel {channel} did not turn on correctly after {self.max_retries} attempts.")
+                    else:
+                        self.agilent.lasers_on([1]*self.size)
+                        log.warning(f"Laser on channel {channel} did not turn on correctly."
+                                    f" Retrying {i+1}/{self.max_retries} and waiting {self.wait} seconds...")
+                        sleep(self.wait)
+                        continue
+                else:
+                    channel_states[index] = True
+            if all(channel_states):
+                break
 
 class AgilentDetectorArray(DetectorArray):
     '''A subclass of DetectorArray for working with the Agilent lasers, since they
@@ -453,12 +484,14 @@ class AgilentDetectorArray(DetectorArray):
         self.lasers.lasers_on()
 
         on_reading = self.detectorArray.read()  # Call the base class read method
+        log.info(f"Detector reading with lasers on: {on_reading}")
         
         # turn the lasers to their minimum power
         self.lasers.setMinimum()
         
         off_reading = self.detectorArray.read()  # Read the detectors with lasers off
-        
+        log.info(f"Detector reading with lasers off: {off_reading}")
+
         self.lasers.setLast()
 
         return on_reading - off_reading
