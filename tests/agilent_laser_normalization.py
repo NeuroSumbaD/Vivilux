@@ -1,5 +1,7 @@
 '''In this module, I am sweeping the laser controls for the Agilent lasers to
-    test their interface.
+    test their interface after normalization. The maximum power for each laser
+    is applied, and the response is measured to create a scale factor to give
+    each laser the same maximum power output.
 '''
 
 from board_config_6x6 import netlist
@@ -60,6 +62,7 @@ if __name__ == "__main__":
                                         pause = 0.1,
                                         wait = 50,
                                         max_retries = 10,
+                                        calibrate=True,  # Enable calibration for this sweep
                                         )
 
         detector_array = AgilentDetectorArray(detectors=base_detector_array,

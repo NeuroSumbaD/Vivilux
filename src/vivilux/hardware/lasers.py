@@ -346,6 +346,7 @@ class AgilentLaserArray(LaserArray):
                  pause = 100e-3, # Delay before reading the detectors
                  wait = 5, # Wait time after turning on the lasers
                  max_retries = 5, # Number of retries for turning on lasers
+                 calibrate = False, # Whether to do normalization calibration
                  ) -> None:
         self.size = size
         self.agilent = Agilent8164(port, channels=channels)
@@ -370,6 +371,35 @@ class AgilentLaserArray(LaserArray):
         # Set the lasers to their minimum power and turn them on
         self.setControl(self.powers)
         self.lasers_on()  # Turn on all lasers
+        
+        def fromNormal(vector: np.ndarray) -> np.ndarray:
+            '''Converts a normalized vector to mW using the upper limits.
+            '''
+            return self.lowerLimits + vector * self.maxMagnitude
+        
+        if calibrate:
+            log.warning("Calibration mode enabled, this reduces the maximum "
+                        "power of each channel to the lowest channel maximum")
+            mw = fromNormal(np.ones(self.size))  # Set to maximum power
+            
+            self.setControl(mw)  # Set the lasers to maximum power
+            max_readings = self.detectors.read()
+            
+            self.setControl(self.lowerLimits)
+            min_readings = self.detectors.read()
+            
+            readings = max_readings - min_readings  # Calculate the readings range
+            
+            scale_factors = np.min(readings) / readings
+            
+            def scaledNormal(vector: np.ndarray) -> np.ndarray:
+                '''Scales the normalized vector to the maximum power.
+                '''
+                return self.lowerLimits + vector * self.maxMagnitude * scale_factors
+            
+            self._fromNormal = scaledNormal
+        else:
+            self._fromNormal = fromNormal
     
     def readPhotocurrent(self):
         '''Reads the photocurrent from the DetectorArray.
@@ -426,7 +456,7 @@ class AgilentLaserArray(LaserArray):
             log.warning(f"Attempted to input an un-normalized vector: {vector}")
         vector = np.clip(vector, 0, 1)
         
-        mW  = self.maxMagnitude * vector + self.lowerLimits
+        mW  = self._fromNormal(vector)
         self.setControl(mW)
         sleep(self.pause)  # Allow time for the lasers to settle
         
