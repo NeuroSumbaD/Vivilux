@@ -350,12 +350,14 @@ class HardMZI_v2(MZImesh):
                  psPins: list[str], # phase shifter pin names
                  netlist: daq.Netlist, # netlist for daq
                  updateMagnitude=0.01,
+                 updateMagDecay=0.9945, # Decay rate of the update magnitude
                  numDirections=12,
                  psReset: float = 4.5, # reset phase shifter past this voltage (TODO: calibrate this)
                  psLimits: tuple[float, float] =(0.0, 5.0), # min and max voltage for phase shifters
                  ps_delay: float = 5e-3, # delay in seconds for phase shifter voltage to settle
                  num_samples: int = 10, # number of samples to take for averaging detector readings
                  check_stop: int = 5, # exits calibration loop after this many iterations with no improvement
+                 initialize: bool = True, # whether to calculate the initial MZI matrix
                  **kwargs):
         # TODO: add support for attachment to Leabra Net
         # Mesh.__init__(self, size, inLayer, **kwargs)
@@ -376,6 +378,7 @@ class HardMZI_v2(MZImesh):
         self.numUnits = len(psPins)
         
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
+        self.updateMagDecay = updateMagDecay # Decay rate of the update magnitude
         self.numDirections = numDirections
 
         # bound initial voltages between zero and middle of range
@@ -386,10 +389,12 @@ class HardMZI_v2(MZImesh):
         
         self.resetDelta = np.zeros((self.size, self.size))
 
+        print('Initialized matrix with voltages: \n', self.voltages.flatten())
+        print('Initialized matrix with powers: \n', self.powers.flatten())
         self.modified = True
-        initMatrix = self.get()
-        print('Initialized matrix with voltages: \n', self.voltages)
-        print('Initial Matrix: \n', initMatrix)
+        if initialize:
+            initMatrix = self.get()
+            print('Initial Matrix: \n', initMatrix)
 
         self.records = [] # for recording the convergence of deltas
 
@@ -470,7 +475,7 @@ class HardMZI_v2(MZImesh):
             oneHot = oneHots[chan] # get the one-hot vector for this channel
             self.inputLaser.setNormalized(oneHot) # apply the one-hot vector
             columnReadout = self.readOut(self.num_samples) # read the output detectors
-            log.debug(f"Column readout for channel {chan}: {columnReadout}")
+            log.debug(f"Column readout for channel {chan} (mA): {columnReadout*1e6}")
 
             # TODO: handle the case where some readouts are negative
             column = np.maximum(columnReadout, 0) # assume negative values are noise
@@ -576,6 +581,7 @@ class HardMZI_v2(MZImesh):
         randMagnitude = np.sqrt(np.sum(np.square(stepVector)))
         stepVector = stepVector/randMagnitude
         stepVector = stepVector*updateMagnitude # update magnitude refers to the magnitude of the powers
+        log.debug(f"Using stepVector: {stepVector.flatten()}")
         # NOTE: Switching to magnitude of power vector to make it consistent over the full
         # range of voltages, otherwise the magnitude needs to be zero close to zero volts.
         
@@ -597,8 +603,10 @@ class HardMZI_v2(MZImesh):
     
         # Forward step
         plusVectors = self.powers + stepVector
+        log.debug(f"Plus vector step: {plusVectors.flatten()}")
         # Backward step
         minusVectors = self.powers - stepVector
+        log.debug(f"Minus vector step: {minusVectors.flatten()}")
         
         # Calculate the plus and minus matrices
         plusMatrix = self.testParams([plusVectors])
@@ -651,24 +659,27 @@ class HardMZI_v2(MZImesh):
         self.record = [magnitude(deltaFlat)]
         self.params_hist=[self.voltages.copy()]
         self.matrix_hist = [self.get().copy()]  # store the initial matrix
+        initial_update_mag = self.updateMagnitude
+        
 
         for step in range(numSteps):
-            newPs = self.voltages.copy()
+            newPs = self.powers.copy()
             # currMat = self.get()/self.Gscale
             currMat = self.get()
             print(f"Step: {step}, magnitude delta = {magnitude(deltaFlat)}")  
             X, V = self.getGradients(delta, newPs, numDirections, verbose)
             # minimize least squares difference to deltas
             for iteration in range(numDirections):
-                    xtx = X.T @ X
-                    rank = np.linalg.matrix_rank(xtx)
-                    if rank == len(xtx): # matrix will have an inverse
-                        a = np.linalg.inv(xtx) @ X.T @ deltaFlat
-                        break
-                    else: # direction vectors cary redundant information use one less
-                        X = X[:,:-1]
-                        V = V[:,:-1]
-                        continue
+                xtx = X.T @ X
+                rank = np.linalg.matrix_rank(xtx)
+                if rank == len(xtx): # matrix will have an inverse
+                    a = np.linalg.inv(xtx) @ X.T @ deltaFlat
+                    break
+                else: # direction vectors cary redundant information use one less
+                    X = X[:,:-1]
+                    V = V[:,:-1]
+                    continue
+            self.updateMagnitude *= self.updateMagDecay  # Decay the update magnitude
 
             log.debug(f"Norm of a: {np.linalg.norm(a)}")
             update = (V @ a).reshape(-1,1)
@@ -704,6 +715,9 @@ class HardMZI_v2(MZImesh):
                     log.info(f"Breaking at step {step}.")
                     break
             
+        # reset update magnitud
+        self.updateMagnitude = initial_update_mag
+        
         return self.record, self.params_hist, self.matrix_hist
     
     def getParamsDict(self) -> dict:

@@ -42,6 +42,13 @@ target_matrix = np.array(
     [0.1364881,  0.10954831, 0.37968551, 0.37427807]]
     )
 
+# Load the previous best parameters
+current_dir = os.path.dirname(__main__.__file__)
+optimal_params = json.load(open(os.path.join(current_dir, "4x4_final_params.json"), "r"))
+optimal_params = dict(optimal_params)
+min_delta = optimal_params.get("minimum_delta", np.inf)
+best_params = np.array(list(optimal_params["best_params"].values()))
+
 # Define experiment within netlist context
 with netlist:
     # Define the detector arrays before and after the MZI
@@ -78,7 +85,6 @@ with netlist:
     )
     
     # Load bar state MZI configuration and set initial voltages
-    current_dir = os.path.dirname(__main__.__file__)
     json_path = os.path.join(current_dir, "4x4_bar_state_voltages.json")
     json_dict = json.load(open(json_path, "r"))
     for net, voltage in json_dict.items():
@@ -98,8 +104,14 @@ with netlist:
         updateMagnitude = 0.35,
         ps_delay=10e-3,  # delay for phase shifter voltage to settle
         num_samples=10,
+        check_stop=50,
     )
     
+    # Set the initial parameters to the best known parameters
+    mzi.setParams([best_params])
+    mzi.setFromParams()
+    sleep(60) # wait for average temperature to stabilize
+
     # Get the initial matrix from the MZI and calculate the delta matrix
     initial_matrix = mzi.get()
     log.info(f"Initial matrix: {initial_matrix}")
@@ -111,7 +123,7 @@ with netlist:
 
     # Calibrate the kernel onto the MZI
     record, params, matrices = mzi.ApplyDelta(delta_matrix,
-                                              numSteps=30,
+                                              numSteps=100,
                                               numDirections=3,
                                               eta=1,
                                               verbose=True,
@@ -125,10 +137,27 @@ print(f"Target matrix: \n{target_matrix}")
 print(f"True Delta matrix: \n{mzi.get()-initial_matrix}")
 print(f"Target delta matrix: \n{target_delta_matrix}")
 
+# Calculate minimum delta and corresponding parameters
+min_run_delta = np.min(record)
+min_index = np.argmin(record)
+min_run_params = params[min_index]
+print(f"Minimum run delta (index={min_index}): {min_run_delta}")
+
+if min_run_delta < min_delta:
+    log.info(f"New minimum delta found: {min_run_delta} < {min_delta}")
+    print(f"Run delta is smaller than the previous minimum delta.")
+    min_delta = min_run_delta
+    best_params = min_run_params
+
 # Save the final parameters to a JSON file
-final_params = mzi.getParamsDict()
-params_json = os.path.join(current_dir, "4x4_final_params.json")
-json.dump(final_params, open(params_json, "w"), indent=4)
+final_params = {net: value for net, value in zip(mzi.psPins, best_params)}
+new_dict = {
+    "seed": seed,
+    "minimum_delta": min_delta,
+    "best_params": final_params,
+}
+params_json_file = os.path.join(current_dir, "4x4_final_params.json")
+json.dump(new_dict, open(params_json_file, "w"), indent=4)
 
 plt.figure()
 plt.plot(record)

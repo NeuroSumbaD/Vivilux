@@ -484,13 +484,13 @@ class AgilentDetectorArray(DetectorArray):
         self.lasers.lasers_on()
 
         on_reading = self.detectorArray.read()  # Call the base class read method
-        log.info(f"Detector reading with lasers on: {on_reading}")
+        log.info(f"Detector reading with lasers on (mA): {on_reading*1e6}")
         
         # turn the lasers to their minimum power
         self.lasers.setMinimum()
         
         off_reading = self.detectorArray.read()  # Read the detectors with lasers off
-        log.info(f"Detector reading with lasers off: {off_reading}")
+        log.info(f"Detector reading with lasers off (mA): {off_reading*1e6}")
 
         self.lasers.setLast()
 
