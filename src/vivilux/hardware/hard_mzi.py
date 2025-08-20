@@ -520,15 +520,35 @@ class HardMZI_v2(MZImesh):
     def applyTo(self, data: np.ndarray) -> np.ndarray:
         '''Applies a normalized input vector to the MZI to compute some matrix
             multiplication.
+            
+            NOTE: For now I send each input through one at atime
+            TODO: Switch to normalize the lasers properly
         '''
         log.debug(f"Applying data to MZI: {data}")
-        self.inputLaser.setNormalized(data) # set the input laser to the data
-        outData = self.readOut() # read the output detectors
-        log.debug(f"Photocurrent readout: {outData}")
-        outData /= L1norm(data) # normalize the output power to match the input power (assumed lossless)
-        log.debug(f"Normalized output: {outData}")
-        return outData
-    
+        # self.inputLaser.setNormalized(data) # set the input laser to the data
+        # outData = self.readOut() # read the output detectors
+        # log.debug(f"Photocurrent readout: {outData}")
+        # outData /= L1norm(data) # normalize the output power to match the input power (assumed lossless)
+        # log.debug(f"Normalized output: {outData}")
+        # return outData
+        outputs = []
+        if np.all(data == 0):
+            return np.zeros(self.size)  # return zero vector if input is zero (skips zero multiplication)
+        for index, datum in enumerate(data):
+            vector = np.zeros(len(data))
+            vector[index] = 1.0
+            self.inputLaser.setNormalized(vector)
+            outData = self.readOut()
+            log.debug(f"Photocurrent (channel {index}) readout: {outData}")
+            norm_factor = L1norm(outData) 
+            outData /= norm_factor if norm_factor != 0 else 1.0  # avoid division by zero 
+            outData *= datum
+            log.debug(f"Normalized (channel {index}) output: {outData}")
+            outputs.append(outData)
+            
+        output = np.sum(outputs, axis=0)
+        return output
+
     def readOut(self, num_samples: int = 10) -> np.ndarray:
         '''Reads the output detectors and returns the readout in units of amperes.
         '''
