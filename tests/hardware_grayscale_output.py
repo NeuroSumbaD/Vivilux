@@ -18,6 +18,7 @@ from vivilux.hardware.lasers import AgilentLaserArray, AgilentDetectorArray, dBm
 from vivilux.hardware.hard_mzi import HardMZI_v2
 
 import numpy as np
+np.set_printoptions(suppress=True, precision=5)  # Set print options for numpy arrays
 np.random.seed(seed=100)
 
 # Load the previous best parameters
@@ -78,9 +79,9 @@ with netlist:
         lowerLimits = dBm_to_mW(np.array([-10, -10, -10, -10])),
         port = 'GPIB0::20::INSTR',
         channels = [1, 2, 3, 4],
-        pause = 0.1,
-        wait = 5,
-        max_retries = 20,
+        pause = 50e-3,
+        wait = 0.5,
+        max_retries = 100,
     )
     
     outputDetectors = AgilentDetectorArray(
@@ -95,7 +96,7 @@ with netlist:
         netlist[net].vout(voltage)
     
     inputLaser.setNormalized([0, 0, 0, 0])  # Set initial laser powers to 0
-    sleep(10)  # Allow time for the voltages to settle
+    # sleep(1)  # Allow time for the lasers to settle
 
     # initialize the MZI with the defined components
     mzi = HardMZI_v2(
@@ -107,27 +108,28 @@ with netlist:
         netlist=netlist,
         updateMagnitude = 0.35,
         ps_delay=10e-3,  # delay for phase shifter voltage to settle
-        num_samples=10,
+        num_samples=3,
         check_stop=50,
+        initialize=False, # skip initialization since parameters are overwritten
     )
     
     # Set the initial parameters to the best known parameters
     mzi.setParams([best_params])
     mzi.setFromParams()
     print(f"Calibrated matrix: \n{mzi.get()}")
-    print("Waiting 3 min for temperature to stabilize...")
+    print("Waiting 30 seconds for temperature to stabilize...")
     mzi.modified = True
+    sleep(30) # wait for average temperature to stabilize
     print(f"Calibrated matrix after heating: \n{mzi.get()}")
-    sleep(3*60) # wait for average temperature to stabilize
 
     # Process each image through the MZI
     # gray_images = []
     try:
         for index, img in enumerate(mnist_images[start_index:]):
-            print(f"Processing image {index + 1 + start_index}/{len(mnist_images)}...")
+            print(f"Processing image {index + 1 + start_index}/{len(mnist_images)}...\t\t")
             gray_image = []
             for pixel_index, pixels in enumerate(img.reshape(-1, 3)):
-                print(f"Processing pixel {pixel_index + 1}/{img.size // 3}", end="\r")
+                print(f"\tProcessing pixel {pixel_index + 1}/{img.size // 3}", end="\r")
                 if not np.all(pixels == 0):
                     gray_image.append(mzi.applyTo(np.pad(pixels, (0,1))))  # Apply the MZI to each pixel
                 else:
@@ -144,7 +146,7 @@ print("\nProcessing complete. Saving grayscale images...")
 # Save the processed grayscale images
 try:
     np.savez(output_file, images=np.stack(gray_images), labels=mnist_labels[:len(gray_images)])
-    print(f"Processed grayscale images saved to: {output_file}")
+    print(f"Processed grayscale images ({len(gray_images)}) saved to: {output_file}")
 except Exception as e:
     print(f"Error saving grayscale images: {e}")
     sys.exit(1)
