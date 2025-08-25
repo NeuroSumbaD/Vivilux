@@ -538,7 +538,7 @@ class HardMZI_v2(MZImesh):
             vector = np.zeros(len(data))
             vector[index] = 1.0
             self.inputLaser.setNormalized(vector)
-            outData = self.readOut()
+            outData = self.readOut(self.num_samples)
             log.debug(f"Photocurrent (channel {index}) readout: {outData}")
             norm_factor = L1norm(outData) 
             outData /= norm_factor if norm_factor != 0 else 1.0  # avoid division by zero 

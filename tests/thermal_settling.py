@@ -18,7 +18,8 @@ import matplotlib.pyplot as plt
 
 # Define the number of samples to take for each detector reading
 num_samples = 1000
-rate = 20e3
+num_iterations = 3  # Number of iterations to run the experiment
+rate = 1e2
 detector_net ="PD_3_5"
 # Preallocate arrays to store the detector readings
 # detector_readings = np.zeros((num_samples,))  # 4 detectors
@@ -63,10 +64,11 @@ with netlist:
         detectors=inputDetectors,  # Use the input detectors for calibration
         limits=(0, 10),  # Control signal limits in-10 volts
         netlist=netlist,
+        calibrate=False,
     )
     
-    inputLaser.setNormalized([0.0, 1.0, 0.0, 0.0])  # Set initial laser power to 0.5 for some lasers
-    sleep(1)  # Allow time for the lasers to stabilize
+    # inputLaser.setNormalized([0.0, 1.0, 0.0, 0.0])  # Set initial laser power to 0.5 for some lasers
+    # plt.pause(1)  # Allow time for the lasers to stabilize
 
     # Load bar state MZI configuration and set initial voltages
     current_dir = os.path.dirname(__main__.__file__)
@@ -74,14 +76,16 @@ with netlist:
     json_dict = json.load(open(json_path, "r"))
     optimal_params = json.load(open(os.path.join(current_dir, "4x4_final_params.json"), "r"))
         
-    for iteration in range(10):            
-        print(f"Iteration {iteration+1} of 10")
+    for iteration in range(num_iterations):            
+        print(f"Iteration {iteration+1} of {num_iterations}")
         for net, voltage in json_dict.items():
             netlist[net].vout(voltage)
         
         # Apply the optimal parameters from the previous calibration
         for net, voltage in optimal_params.items():
             netlist[net].vout(voltage)
+            
+        plt.pause(10)
             
         # Scan detector
         detector_readings = netlist[detector_net].scan_vin(num_samples=num_samples, rate=rate)
@@ -93,19 +97,23 @@ with netlist:
             netlist[net].vout(0)
 
         time = (np.arange(num_samples)+1)/rate * 1000  # Convert to milliseconds
-        photocurrent = (initial_reading - detector_readings)/220e3  # Convert to photocurrent in Amps
+        # photocurrent = (initial_reading - detector_readings)/220e3  # Convert to photocurrent in Amps
         plt.figure()
-        plt.plot(time, photocurrent*1e6, label='direct')
+        # plt.plot(time, photocurrent*1e6, label='direct')
+        plt.plot(time, detector_readings, label='direct')
 
         # Apply an exponential moving average to smooth the data
-        smoothed_readings = numpy_ewma_vectorized_v2(photocurrent, window=20)
-        plt.plot(time, smoothed_readings*1e6, label='smoothed')
+        smoothed_readings = numpy_ewma_vectorized_v2(detector_readings, window=20)
+        plt.plot(time, smoothed_readings, label='smoothed')
 
-        plt.xlabel("Time (~ms)")
-        plt.ylabel("Detector Reading (uA)")
+        plt.xlabel("Time (ms)")
+        plt.ylabel("Detector Reading (V)")
         plt.title("Thermal Settling Time of 6x6 MZI")
         plt.legend()
-        plt.savefig(f"thermal_settling_{detector_net}__rate--{rate}__{iteration}.png", dpi=300)
+        plt.show(block=False)  # Show the plot without blocking the script
+        plt.draw()
+        plt.pause(100e-3)
+        # plt.savefig(f"thermal_settling_{detector_net}__rate--{rate}__{iteration}.png", dpi=300)
         
         # Sleep for 2 min to allow chip to cool down
         sleep(120)
