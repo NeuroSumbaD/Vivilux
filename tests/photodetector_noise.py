@@ -7,10 +7,9 @@
 import __main__
 import os
 import json
-from time import sleep
 
 from vivilux.logger import log
-from board_config_6x6 import netlist
+from board_config_6x6_v2 import netlist
 from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.lasers import LaserArray, AgilentDetectorArray, AgilentLaserArray, dBm_to_mW
 
@@ -21,10 +20,12 @@ import matplotlib.pyplot as plt
 num_samples = 1000
 num_iterations = 5  # Number of iterations to run the experiment
 
-rate = 1e2 #20e3 # Sampling rate in Hz
+rate = 250e3 #20e3 # Sampling rate in Hz
 detector_nets = ["PD_2_0", "PD_3_0",  "PD_4_0", "PD_5_0",
                  "PD_2_5", "PD_3_5",  "PD_4_5", "PD_5_5",] # Detector nets to read
 # detector_nets = ["PD_3_0"] # Detector nets to read
+
+print(f"Low Frequency cutoff of measurement: {rate/num_samples/2} Hz")
 
 # Preallocate arrays to store the detector readings
 detector_readings = np.zeros((len(detector_nets), num_iterations, num_samples))
@@ -49,41 +50,6 @@ def numpy_ewma(data: np.ndarray, window: int):
     cumsums = mult.cumsum()
     out = offset + cumsums*scale_arr[::-1]
     return out
-
-def plot_window(data: np.ndarray, iteration_index, detector_index):
-    '''Plot the detector readings for a given iteration and detector index.
-    '''
-    time = (np.arange(num_samples)+1)/rate * 1000  # Convert to milliseconds
-    fig, axs = plt.subplots(1, 2, figsize=(15, 5))
-    
-    # Plot the raw detector readings
-    axs[0].plot(time, data[detector_index, iteration_index], label='direct')
-    # Apply an exponential moving average to smooth the data
-    axs[0].plot(time, smoothed_readings[detector_index, iteration_index], label='smoothed')
-
-    # Plot the 3-sigma threshold
-    mean = np.mean(smoothed_readings[detector_index, iteration_index])
-    std_dev = np.std(smoothed_readings[detector_index, iteration_index])
-    axs[0].hlines(mean + 3 * std_dev, time[0], time[-1], linestyles='dashed', color='red')
-    axs[0].hlines(mean - 3 * std_dev, time[0], time[-1], linestyles='dashed', color='red')
-
-    axs[0].set_xlabel("Time (ms)")
-    axs[0].set_ylabel("Detector Reading (V)")
-    axs[0].set_title("Noise Readings")
-    axs[0].legend()
-    
-    # Plot the z-score for each data point
-    z_scores = (data[detector_index, iteration_index] - np.mean(data[detector_index, iteration_index])) / np.std(data[detector_index, iteration_index])
-    axs[1].plot(time, z_scores)
-    axs[1].set_xlabel("Time (ms)")
-    axs[1].set_ylabel("Z-Score")
-    axs[1].set_title("Z-Score of Detector Reading")
-    
-    fig.suptitle(f"Detector {detector_nets[detector_index]} - Iteration {iteration_index+1}")
-    
-    plt.show(block=False)  # Show the plot without blocking the script
-    plt.draw()
-    plt.pause(100e-3)  # Pause to allow the plot to update
     
 # Load bar state MZI configuration and set initial voltages
 current_dir = os.path.dirname(__main__.__file__)
@@ -136,7 +102,7 @@ with netlist:
         lasers=inputLaser,  # Use the input laser for calibration
     )
     
-    inputLaser.setNormalized([0.0, 1.0, 0.0, 0.0])  # Turn on one of the lasers
+    inputLaser.setNormalized([1.0, 1.0, 1.0, 1.0])  # Turn on one of the lasers
     
     plt.pause(1)  # Allow time for the lasers to stabilize
     
@@ -206,6 +172,70 @@ for detector_index, detector_net in enumerate(detector_nets):
             print(f"Detector {detector_net}, Iteration {iteration+1}: No data after filtering outliers.")
 print(f"Largest percent error from global mean for each detector: \n{np.max(percent_errors, axis=1)}")
 
-plot_window(detector_readings, 0, 0)
+
+def plot_window(data: np.ndarray, iteration_index, detector_index):
+    '''Plot the detector readings for a given iteration and detector index.
+    '''
+    time = (np.arange(num_samples)+1)/rate * 1000  # Convert to milliseconds
+    fig, axs = plt.subplots(1, 2, figsize=(15, 5))
+    
+    # Plot the raw detector readings
+    axs[0].plot(time, data[detector_index, iteration_index], label='direct')
+    # Apply an exponential moving average to smooth the data
+    axs[0].plot(time, smoothed_readings[detector_index, iteration_index], label='smoothed')
+
+    # Plot the 3-sigma threshold
+    mean = np.mean(smoothed_readings[detector_index, iteration_index])
+    std_dev = np.std(smoothed_readings[detector_index, iteration_index])
+    axs[0].hlines(mean + 3 * std_dev, time[0], time[-1], linestyles='dashed', color='red')
+    axs[0].hlines(mean - 3 * std_dev, time[0], time[-1], linestyles='dashed', color='red')
+
+    axs[0].set_xlabel("Time (ms)")
+    axs[0].set_ylabel("Detector Reading (V)")
+    axs[0].set_title("Noise Readings")
+    axs[0].legend()
+    
+    # Plot the z-score for each data point
+    z_scores = (data[detector_index, iteration_index] - np.mean(data[detector_index, iteration_index])) / np.std(data[detector_index, iteration_index])
+    axs[1].plot(time, z_scores)
+    axs[1].set_xlabel("Time (ms)")
+    axs[1].set_ylabel("Z-Score")
+    axs[1].set_title("Z-Score of Detector Reading")
+    
+    fig.suptitle(f"Detector {detector_nets[detector_index]} - Iteration {iteration_index+1}")
+    
+    plt.show(block=False)  # Show the plot without blocking the script
+    plt.draw()
+    plt.pause(100e-3)  # Pause to allow the plot to update
+
+plot_window(detector_readings, 0, 4)
 # plot_window(detector_readings, 0, 1)
 # plot_window(detector_readings, 0, 5)
+
+# Calculate average spectrum for each photodetector to see if there are any peaks
+avg_spectrum = np.zeros((len(detector_nets), num_samples // 2 + 1))
+freqs = np.fft.rfftfreq(num_samples, d=1/rate)
+for detector_index, detector_net in enumerate(detector_nets):
+    spectrum = np.zeros((num_iterations, num_samples // 2 + 1))
+    for iteration in range(num_iterations):
+        signal = detector_readings[detector_index, iteration].copy()
+        signal -=np.mean(detector_readings[detector_index, iteration])
+        signal *= np.blackman(num_samples)
+        fft_values = np.fft.rfft(signal)
+        fft_magnitudes = np.abs(fft_values)
+        spectrum[iteration] = fft_magnitudes/num_samples
+    # Compute the FFT for each iteration and average
+    avg_spectrum[detector_index] = np.mean(spectrum, axis=0)
+    
+def plot_spectrum(detector_index):
+    plt.figure(figsize=(10, 5))
+    plt.plot(freqs, avg_spectrum[detector_index])
+    plt.title(f"Average Spectrum for Detector {detector_nets[detector_index]}")
+    plt.xlabel("Frequency (Hz)")
+    plt.ylabel("Magnitude")
+    plt.grid()
+    plt.show(block=False)
+    plt.draw()
+    plt.pause(100e-3)  # Pause to allow the plot to update
+    
+plot_spectrum(4)
