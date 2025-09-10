@@ -279,8 +279,8 @@ class Agilent8164():
         log.info(f"Found visa resources: {self.rm.list_resources()}")
         self.main: visa.Resource = self.rm.open_resource(port)
         #self.main.baud_rate = 115200
-        self.id = self.main.query('*IDN?')
-        log.info(f"Agilent8164 ID: {self.id}")
+        self.id: str = self.main.query('*IDN?')
+        log.info(f"Agilent8164 ID: {self.id.strip()}")
         self.channels = channels
         
     def _to_bool(self, resp: str) -> bool:

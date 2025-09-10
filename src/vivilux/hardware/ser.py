@@ -65,10 +65,11 @@ class Board(daq.Board):
 
         command = f"W{self.uid},{channel},{voltage}\n"
         self.serial.write(command.encode())
-        log.info(f"Board {self.board_name} sent command: {command.strip()}")
+        # log.info(f"Board {self.board_name} sent command: {command.strip()}")
         response = self.serial.readline().decode().strip()
         if "ACK,W" in response:
-            log.info(f"Board {self.board_name} acknowledged command with: {response}")
+            # log.info(f"Board {self.board_name} acknowledged command with: {response}")
+            '''No action needed'''
         elif "ERROR:" in response:
             log.error(f"Error occurred while setting voltage on "
                       f"{self.board_name} channel {channel}: {response}")

@@ -42,10 +42,11 @@ class DetectorArray:
             # Initialize offsets if not already done
             # NOTE: this assumes that the first readout is a calibration of the offset
             self.offsets = values
-            log.debug(f"Initialized offsets: {self.offsets}")
+            # log.debug(f"Initialized offsets: {self.offsets}")
 
+        log.debug(f"Raw detector reading (V): {values}")
         reading = self.offsets - values  # Subtract offsets to get voltage difference
-        log.debug(f"Detector voltage drop (V): {reading}")
+        # log.debug(f"Detector voltage drop (V): {reading}")
         reading /= self.transimpedance  # Convert to photocurrent (proportional to power)
         # NOTE: most c-band detectors have around 0.9 A/W so photocurrent is
         # pretty close to power in Watts
