@@ -9,7 +9,7 @@ import __main__
 from time import sleep
 
 from vivilux.logger import log
-from board_config_6x6 import netlist
+from board_config_6x6_v2 import netlist
 from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.lasers import LaserArray, AgilentLaserArray, AgilentDetectorArray, dBm_to_mW
 from vivilux.hardware.hard_mzi import HardMZI_v2
@@ -20,13 +20,13 @@ from scipy.optimize import curve_fit
 from tqdm import tqdm
 
 # Set the seed and log to keep track during testing
-seed = 5
+seed = 50
 np.set_printoptions(suppress=True, precision=5)  # Set print options for numpy arrays
 np.seterr(invalid='raise') # error on invalid operations
 np.random.seed(seed=seed)
 log.info(f"Using seed {seed}.")
 
-num_points = 10
+num_points = 60
 use_power = True # Use power units instead of voltage
 hot_index = 0
 num_samples = 20
@@ -92,6 +92,7 @@ with netlist:
         outputDetectors=outputDetectors,
         inputLaser=inputLaser,
         psPins=["3_1_i", "2_2_i", "4_2_i", "3_3_i", "2_4_i", "4_4_i", # main pins for 4x4 subset
+                "2_2_o", "4_2_o", "3_3_o", "2_4_o", "4_4_o", # PHI phase shifters
                 ],
         netlist=netlist,
         updateMagnitude = 1.5e-2,
@@ -101,7 +102,7 @@ with netlist:
     )
     
     # Apply the optimal parameters from the previous calibration
-    optimal_params = json.load(open(os.path.join(current_dir, "4x4_best_scaled_params.json"), "r"))
+    optimal_params = json.load(open(os.path.join(current_dir, "4x4_final_params.json"), "r"))
     optimal_params = np.array(list(optimal_params["best_params"].values()))
     print(f"Setting params to: \n{optimal_params}")
     mzi.setParams([optimal_params])
@@ -114,7 +115,7 @@ with netlist:
     stepVector = np.random.normal(size=(mzi.numUnits))
     normStepVector = stepVector / np.linalg.norm(stepVector) # use normalized step vector
     print(f"Normalized step vector: \n{normStepVector}")
-    magnitudes = np.linspace(0.15, 0.4, num_points)
+    magnitudes = np.linspace(0.15, 0.9, num_points)
 
     derivatives = np.zeros((num_points, mzi.size))
     plusVectors = np.zeros((num_points, mzi.size))

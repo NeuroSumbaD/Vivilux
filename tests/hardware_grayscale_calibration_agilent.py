@@ -13,7 +13,7 @@ import __main__
 from time import sleep
 
 from vivilux.logger import log
-from board_config_6x6 import netlist
+from board_config_6x6_v2 import netlist
 from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.lasers import AgilentLaserArray, AgilentDetectorArray, dBm_to_mW
 from vivilux.hardware.hard_mzi import HardMZI_v2
@@ -99,9 +99,10 @@ with netlist:
         outputDetectors=outputDetectors,
         inputLaser=inputLaser,
         psPins=["3_1_i", "2_2_i", "4_2_i", "3_3_i", "2_4_i", "4_4_i", # main pins for 4x4 subset
+                "2_2_o", "4_2_o", "3_3_o", "2_4_o", "4_4_o", # PHI phase shifters
                 ],
         netlist=netlist,
-        updateMagnitude = 0.35,
+        updateMagnitude = 0.5,
         ps_delay=10e-3,  # delay for phase shifter voltage to settle
         num_samples=10,
         check_stop=50,
@@ -124,7 +125,7 @@ with netlist:
     # Calibrate the kernel onto the MZI
     record, params, matrices = mzi.ApplyDelta(delta_matrix,
                                               numSteps=100,
-                                              numDirections=3,
+                                              numDirections=6,
                                               eta=1,
                                               verbose=True,
                                               )

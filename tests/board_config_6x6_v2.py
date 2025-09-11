@@ -32,7 +32,7 @@ ni_boards =[
 ]
 
 ser_boards = [
-    ser.EVAL_AD5370("DAC", "216B19F",
+    ser.EVAL_AD5370("DAC", 0, 17, # 40-channel DAC with buffer board with csPin=17
         ser.AOPIN("3_5_o", 1), # NEW
         ser.AOPIN("3_5_i", 3),
         ser.AOPIN("1_5_i", 5),

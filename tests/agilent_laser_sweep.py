@@ -2,7 +2,7 @@
     test their interface.
 '''
 
-from board_config_6x6 import netlist
+from board_config_6x6_v2 import netlist
 
 if __name__ == "__main__":
     from time import sleep
@@ -56,7 +56,7 @@ if __name__ == "__main__":
                                         upperLimits = dBm_to_mW(np.array([-5, -5, -5, -5])),
                                         lowerLimits = dBm_to_mW(np.array([-10, -10, -10, -10])),
                                         port = 'GPIB0::20::INSTR',
-                                        channels = [1, 2, 4, 3],
+                                        channels = [1, 2, 3, 4],
                                         pause = 0.1,
                                         wait = 50,
                                         max_retries = 10,
