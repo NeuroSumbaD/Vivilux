@@ -102,9 +102,9 @@ with netlist:
                 "2_2_o", "4_2_o", "3_3_o", "2_4_o", "4_4_o", # PHI phase shifters
                 ],
         netlist=netlist,
-        updateMagnitude = 0.5,
+        updateMagnitude = 0.7,
         ps_delay=10e-3,  # delay for phase shifter voltage to settle
-        num_samples=10,
+        num_samples=1,
         check_stop=50,
     )
     
