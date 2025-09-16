@@ -10,6 +10,7 @@ import nidaqmx
 import pyvisa as visa
 import tqdm
 
+from vivilux.hardware.daq import Netlist
 from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.utils import magnitude
 import vivilux.hardware.daq as daq
@@ -17,6 +18,14 @@ from vivilux.logger import log
 
 SLEEP = 0.5 # seconds
 LONG_SLEEP = 0.5 # seconds
+
+def dBm_to_mW(dBm: float) -> float:
+    '''Convert power in dBm to mW.'''
+    return 10 ** (np.array(dBm) / 10)
+
+def mW_to_dBm(mW: float) -> float:
+    '''Convert power in mW to dBm.'''
+    return 10 * np.log10(mW)
 
 class LaserArray:
     '''Base class for interface with laser arrays for MZI input.
@@ -261,17 +270,43 @@ class Agilent8164():
 
         TODO: Update to be compliant with the new LaserArray interface.
     '''
-    def __init__(self, port='GPIB0::20::INSTR'):
+    def __init__(self,
+                 port='GPIB0::20::INSTR',
+                 channels=[1, 2, 3, 4]
+                 ):
         #self.wss = visa.SerialInstrument('COM1')
         self.rm = visa.ResourceManager()
-        self.main = self.rm.open_resource(port)
+        log.info(f"Found visa resources: {self.rm.list_resources()}")
+        self.main: visa.Resource = self.rm.open_resource(port)
         #self.main.baud_rate = 115200
-        self.id = self.main.query('*IDN?')
-        print(self.id)
+        self.id: str = self.main.query('*IDN?')
+        log.info(f"Agilent8164 ID: {self.id.strip()}")
+        self.channels = channels
+        
+    def _to_bool(self, resp: str) -> bool:
+        s = resp.strip().upper()
+        return s.startswith('1') or s.startswith('ON') or s.startswith('TRUE')
         
     def readpow(self,slot=2,channel=1):
         outpt = self.main.query('fetch'+str(slot) +':chan'+str(channel)+':pow?')
         return float(outpt)*1e9 #nW
+    
+    def isOn(self, channel: int) -> bool:
+        '''Checks if the laser on the specified channel is turned on.
+        '''
+        response = self.query(f"sour{channel}:pow:stat?")
+        # log.debug(f"Response while checking channel {channel} (pow:stat?)): {response.strip()}")
+        response = self._to_bool(response)
+        response2 = self.query(f"outp{channel}:stat?")
+        # log.debug(f"Response while checking channel {channel} (outp:stat?): {response2.strip()}")
+        response2 = self._to_bool(response2)
+        response = response or response2
+        return response
+
+    def allOn(self) -> bool:
+        '''Checks if all lasers are turned on.
+        '''
+        return all(self.isOn(chan) for chan in self.channels)
 
     def write(self,str):
         self.main.write(str)
@@ -279,163 +314,217 @@ class Agilent8164():
     def query(self,str):
         result = self.main.query(str)
         return result
-    
-    def readpowall4(self):
-        pow_list = []
-        slot_list = [2,4]
-        for k in slot_list:
-            for kk in range(2):
-                pow_list.append(self.readpow(slot=k,channel=kk+1))
-        return pow_list
-    
-    def readpowall2(self):
-        pow_list = []
-        pow_list.append(self.readpow(slot=4,channel=1))
-        pow_list.append(self.readpow(slot=4,channel=2))
-        return pow_list
-    
-    def laserpower(self,inpt):
-        self.main.write('sour0:pow '+str(inpt[0])+'uW')
-        self.main.write('sour1:pow '+str(inpt[1])+'uW')
-        self.main.write('sour3:pow '+str(inpt[2])+'uW')
-        self.main.write('sour4:pow '+str(inpt[3])+'uW')
-        
-    def lasers_on(self,inpt=[1,1,1,1]):
-        self.main.write('sour0:pow:stat '+str(inpt[0]))
-        self.main.write('sour1:pow:stat '+str(inpt[1]))
-        self.main.write('sour3:pow:stat '+str(inpt[2]))
-        self.main.write('sour4:pow:stat '+str(inpt[3]))
 
+    def laserpower(self, mW: list[float]):
+        '''Sets the power of each laser in mW
+        '''
+        for i, chan in enumerate(self.channels):
+            # log.debug(f"Writing the following command to channel {chan}: sour{chan}:pow {mW[i]}mW")
+            self.main.write(f'sour{chan}:pow {mW[i]}mW')
 
-class InputGenerator:
-    def __init__(self, size=4, detectors = [12,8,9,10], limits=[160,350], verbose=False) -> None:
-        self.size = size
-        self.agilent = Agilent8164()
-        self.agilent.lasers_on()
-        self.detectors = detectors
-        self.limits=limits
-        self.maxMagnitude = limits[1]-limits[0]
-        self.lowerLimit = limits[0]
-        self.chanScalingTable = np.ones((20, size)) #initialize scaling table
-        self.calibrated = False
-        # self.calibratePower()
-        self.readDetectors()
-        sleep(SLEEP)
-        self.calculateScatter()
-        
-    def calculateScatter(self):
-        print("Calculating the scatter matrix...")
-        Y = np.zeros((self.size,self.size))
-        Xinv = np.zeros((self.size,self.size))
-        for chan in range(self.size):
-            oneHot = np.zeros(self.size)
-            oneHot[chan] = 1
-            print("\tOne-hot: ", oneHot)
-            self.agilent.lasers_on(oneHot.astype(int))
-            sleep(LONG_SLEEP)
-            self.agilent.laserpower(oneHot*350)
-            sleep(LONG_SLEEP)
-            Y[:,chan] = self.readDetectors()
-            Xinv[:,chan] = oneHot/350
-            sleep(LONG_SLEEP)
-        # print("Detector outputs:\n", Y)
-        self.scatter = Y @ Xinv
-        # print("Scatter matrix:\n", self.scatter)
-        self.invScatter = np.linalg.inv(self.scatter)
-        print("Inverse scatter matrix:\n", self.invScatter)
-        # maxS = np.max(self.invScatter)
-        # minS = np.min(self.invScatter)
-        # self.a = 250/(maxS-minS)
-        # self.b = 350 - self.a*maxS
-        self.a = 350-100
-        self.b = 100
-        
+    def lasers_on(self, value: list[bool]):
+        for i, chan in enumerate(self.channels):
+            self.main.write(f'sour{chan}:pow:stat {value[i]}')
             
-
-    # def calibratePower(self):
-    #     '''Create a table for the scaling factors between power setting and the
-    #         true measured values detected on chip.
+    # def __del__(self):
+    #     '''Destructor to turn off the lasers when the object is deleted.
     #     '''
-    #     print("Calibrating power...")
-    #     self.powers = np.linspace(0,1,20)
+    #     self.lasers_on([0]*len(self.channels))  # Turn off all lasers
+    #     log.info("Agilent laser off signal sent.")
+    #     sleep(LONG_SLEEP)  # Allow time for the lasers to turn off
+        
 
-    #     for index, power in enumerate(self.powers):
-    #         vector = np.ones(self.size) * power
-    #         self.__call__(vector)
-    #         detectors = self.readDetectors()
-    #         # print(f"\tDetector values: {detectors}")
-    #         self.chanScalingTable[index,:] = np.min(detectors)/detectors # scaling factors
-    #     print("Scaling table:")
-    #     print(self.chanScalingTable)
-    #     self.calibrated = True
+class AgilentLaserArray(LaserArray):
+    def __init__(self,
+                 size: int,
+                 detectors: DetectorArray, #[12,8,9,10],
+                 netlist: Netlist,
+                 upperLimits: np.ndarray = dBm_to_mW(np.array([-5, -3, -5, -9])),
+                 lowerLimits: np.ndarray = dBm_to_mW(np.array([-10, -10, -10, -10])),
+                 port: str ='GPIB0::20::INSTR',
+                 channels: list[int] = [1, 2, 4, 3], # Agilent channels to use (order preserved calls to turn on/off)
+                 pause = 100e-3, # Delay before reading the detectors
+                 wait = 5, # Wait time after turning on the lasers
+                 max_retries = 5, # Number of retries for turning on lasers
+                 calibrate = False, # Whether to do normalization calibration
+                 ) -> None:
+        self.size = size
+        self.agilent = Agilent8164(port, channels=channels)
+        self.detectors = detectors
+        self.channels = channels
+        
+        self.lowerLimits = lowerLimits
+        self.upperLimits = upperLimits
+        self.maxMagnitude = upperLimits - lowerLimits
+        
+        self.powers = lowerLimits
+        self.pause = pause
+        self.wait = wait
+        self.max_retries = max_retries
+        
+        self.netlist = netlist
+        def lasers_off():
+            self.setMinimum()
+            self.agilent.lasers_on([0]*len(self.channels))
+        self.netlist.exit_queue.append(lasers_off)
 
-    # def chanScaling(self, vector):
-    #     '''Accounts for differing coupling factors when putting an input into
-    #         the MZI mesh. The scaling table must first be generated by running 
-    #         `calibratePower()`.
-    #     '''
-    #     scaleFactors = np.ones(self.size)
-    #     for chan in range(self.size):
-    #         intendedPower = vector[chan]
-    #         scaling = self.chanScalingTable[:, chan]
-    #         # Find index for sorted insertion
-    #         tableIndex = np.searchsorted(self.powers, intendedPower)
-    #         if tableIndex == 0 or tableIndex==len(self.powers):
-    #             scaleFactors[chan] = scaling[tableIndex] if tableIndex == 0 else scaling[tableIndex-1]
-    #         else:
-    #             lowerPower = self.powers[tableIndex-1] 
-    #             upperPower = self.powers[tableIndex] 
-    #             lowerFactor = scaling[tableIndex-1] 
-    #             upperFactor = scaling[tableIndex]
-    #             linInterpolation = (intendedPower-lowerPower)/(upperPower-lowerPower)
-    #             scaleFactors[chan] = (linInterpolation)*upperFactor + (1-linInterpolation)*lowerFactor
-    #     return np.multiply(vector, scaleFactors)
-
-    def scalePower(self, vector):
-        '''Takes in a vector with values on the range [0,1] and scales
-            according to the max and min of the lasers and the attenuation
-            factors between channels.
-        '''
-        # scaledVector = self.a * (self.invScatter @ vector)
-        scaledVector = self.a * vector
-        # if self.calibrated:
-        #     scaledVector = self.chanScaling(scaledVector)
-        return scaledVector + self.b
+        # Set the lasers to their minimum power and turn them on
+        self.setControl(self.powers)
+        self.lasers_on()  # Turn on all lasers
+        
+        def fromNormal(vector: np.ndarray) -> np.ndarray:
+            '''Converts a normalized vector to mW using the upper limits.
+            '''
+            return self.lowerLimits + vector * self.maxMagnitude
+        
+        if calibrate:
+            log.warning("Calibration mode enabled, this reduces the maximum "
+                        "power of each channel to the lowest channel maximum")
+            mw = fromNormal(np.ones(self.size))  # Set to maximum power
+            
+            self.setControl(mw)  # Set the lasers to maximum power
+            max_readings = self.detectors.read()
+            
+            self.setControl(self.lowerLimits)
+            min_readings = self.detectors.read()
+            
+            readings = max_readings - min_readings  # Calculate the readings range
+            
+            scale_factors = np.min(readings) / readings
+            
+            def scaledNormal(vector: np.ndarray) -> np.ndarray:
+                '''Scales the normalized vector to the maximum power.
+                '''
+                return self.lowerLimits + vector * self.maxMagnitude * scale_factors
+            
+            self._fromNormal = scaledNormal
+        else:
+            self._fromNormal = fromNormal
     
-    def readDetectors(self):
-        if not hasattr(self, "offset"):
-            self.agilent.lasers_on(np.zeros(self.size))
-            sleep(LONG_SLEEP)
-            with nidaqmx.Task() as task:
-                for chan in self.detectors:
-                    task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
-                    max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-                data = np.array(task.read(number_of_samples_per_channel=100))
-                data = np.mean(data[:,10:],axis=1)
-            self.offset = data
-            self.agilent.lasers_on(np.ones(self.size))
-            sleep(LONG_SLEEP)
-        with nidaqmx.Task() as task:
-            for chan in self.detectors:
-                task.ai_channels.add_ai_voltage_chan("Dev1/ai"+str(chan),min_val=-0.0,
-                max_val=2.0, terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-            data = np.array(task.read(number_of_samples_per_channel=100))
-            data = np.mean(data[:,10:],axis=1)
-        return np.maximum((self.offset - data),0)/220*1e3
-
-    def __call__(self, vector, verbose=False, scale=1, **kwds: Any) -> Any:
-        '''Sets the lasers powers according to the desired vector
+    def readPhotocurrent(self):
+        '''Reads the photocurrent from the DetectorArray.
+        
+            NOTE: For the Agilent lasers, turning off the laser completely
+            is slow, so it is better to use the minimum power as the off state
+            for all the lasers and create a new offset during each reading. It
+            is not possible to calibrate this offset at the beginning of a run
+            because the calibration will change the total power reaching each
+            detector at their minimum power setting.
         '''
+        return self.detectors.read()
 
-        vector = self.scalePower(vector)
-        vector *= scale
-        if verbose: print(f"Inputting power: {vector}")
-        self.agilent.laserpower(vector)
-        sleep(SLEEP)
-        if verbose:
-            reading = self.readDetectors()
-            print(f"Input detectors: {reading}, normalized: {reading/magnitude(reading)}")
+    def setControl(self, control_vector: np.ndarray):
+        '''Sets the laser powers according to the input vector in terms
+            of control signals (usually voltage).
+            The input vector should be in the range of self.limits=[min, max]
+        '''
+        if not isinstance(control_vector, np.ndarray):
+            control_vector = np.array(control_vector)
 
+        log.info(f"Setting laser control nets to: {control_vector} (mW)")
+
+        self.powers = control_vector
+        self.agilent.laserpower(control_vector)
+
+    def setLast(self):
+        '''Sets the laser powers to their previous power setting.
+        '''
+        self.agilent.laserpower(self.powers)
+        sleep(self.pause)  # Allow time for the lasers to settle
+
+    def setMinimum(self):
+        '''Sets the laser powers to their minimum values.
+        '''
+        self.agilent.laserpower(self.lowerLimits)
+        sleep(self.pause)  # Allow time for the lasers to settle
+
+    def setNormalized(self, vector: np.ndarray):
+        '''Sets the laser powers using normalized values.
+        
+            NOTE: The lasers do not have similar power levels, so for now each
+            one is scaled according to its own maximum power level. This is only
+            sufficient when using the lasers for one-hot patterns, and should be
+            improved for more complex analog patterns.
+
+            TODO: Create a calibration procedure to equalize the maximum normalized
+            power levels for each of the lasers.
+        '''
+        if not isinstance(vector, np.ndarray):
+            vector = np.array(vector)
+
+        if vector.max() > 1 or vector.min() < 0:
+            log.warning(f"Attempted to input an un-normalized vector: {vector}")
+        vector = np.clip(vector, 0, 1)
+        
+        mW  = self._fromNormal(vector)
+        self.setControl(mW)
+        sleep(self.pause)  # Allow time for the lasers to settle
+        
+    def lasers_on(self,):
+        '''Checks if the lasers are turned off and turns them on if necessary.
+            Uses recursion to try again, and will error out after max_retries.
+        '''
+        channel_states = [False] * self.size
+        for i in range(self.max_retries):
+            for index, channel in enumerate(self.channels):
+                if not self.agilent.isOn(channel):
+                    channel_states[index] = False
+                    if i == 0:
+                        self.agilent.lasers_on([1]*self.size)  # Turn on all lasers
+                        log.info(f"One or more lasers were not turned on (checked channel: {self.channels})"
+                             f" waiting {self.wait} seconds and trying again...")
+                        sleep(self.wait)
+                        continue
+                    if i == self.max_retries - 1:
+                        log.error(f"Laser on channel {channel} did not turn on correctly after {self.max_retries} attempts.")
+                        log.info(f"Laser powers are set to {self.powers} mW (lowering the power may improve stability)")
+                        raise RuntimeError(f"Laser on channel {channel} did not turn on correctly after {self.max_retries} attempts.")
+                    else:
+                        self.agilent.lasers_on([1]*self.size)
+                        log.warning(f"Laser on channel {channel} did not turn on correctly."
+                                    f" Retrying {i+1}/{self.max_retries} and waiting {self.wait} seconds...")
+                        sleep(self.wait)
+                        continue
+                else:
+                    channel_states[index] = True
+            if all(channel_states):
+                break
+
+class AgilentDetectorArray(DetectorArray):
+    '''A subclass of DetectorArray for working with the Agilent lasers, since they
+        cannot be turned off completely without a long delay, each measurement
+        requires a new offset to subtract the minimum power level.
+    '''
+    def __init__(self,
+                 detectors: DetectorArray,
+                 lasers: AgilentLaserArray,
+                 ):
+        if not isinstance(detectors, DetectorArray):
+            raise TypeError("detectors must be an instance of DetectorArray")
+        self.detectorArray = detectors
+        
+        if not isinstance(lasers, AgilentLaserArray):
+            raise TypeError("lasers must be an instance of AgilentLaserArray")
+        self.lasers = lasers
+
+    def read(self):
+        '''In this subclass, the reading needs to substract the minimum power
+            from the current reading.
+        '''
+        self.lasers.lasers_on()
+
+        on_reading = self.detectorArray.read()  # Call the base class read method
+        log.info(f"Detector reading with lasers on (mA): {on_reading*1e6}")
+        
+        # turn the lasers to their minimum power
+        self.lasers.setMinimum()
+        
+        off_reading = self.detectorArray.read()  # Read the detectors with lasers off
+        log.info(f"Detector reading with lasers off (mA): {off_reading*1e6}")
+
+        self.lasers.setLast()
+
+        return on_reading - off_reading
 
 if __name__ == "__main__":
     # Example usage of LaserArray
