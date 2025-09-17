@@ -400,7 +400,32 @@ class MZImesh(Mesh):
 #         data = np.pad(data[:self.size], (0, self.size - len(data)))
 #         # Return the output magnitude squared
 #         return np.square(np.abs(self.applyTo(data)))
+
+class MZImesh_theta(MZImesh):
+    '''Class of MZI mesh with only theta phase shifters and no phi.
+    '''
+    NAME = "Diag_Mesh"
+    def Initialize(self):
+        '''Initializes internal variables for each set of parameter.
+        '''
+        self.phaseShifters = np.random.rand(self.numUnits,1)*2*np.pi
+
+        self.concavity = 1.5
     
+    def getFromParams(self, params = None):
+        '''Function generates matrix from a list of params.
+
+            This function should be overwritten for meshes with different
+            parameter structures.
+        '''
+        params = self.getParams() if params is None else params
+        self.boundParams(params)
+        self.ApplyBitPrecision(params)
+        
+        ps = np.zeros((self.numUnits, 2))
+        ps[:, 0] = params[0].flatten()
+        complexMat = psToRect_v2(ps, self.size)
+        return np.square(np.abs(complexMat))
 
 class DiagMZI(MZImesh):
     '''Class of MZI mesh followed by a set of amplifier/attenuators forming
