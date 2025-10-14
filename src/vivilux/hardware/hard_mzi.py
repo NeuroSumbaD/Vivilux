@@ -481,7 +481,10 @@ class HardMZI_v2(MZImesh):
             column = np.maximum(columnReadout, 0) # assume negative values are noise
 
             # normalize the read to account for loss (TODO: check if this is necessary)
-            column /= L1norm(column)
+            if L1norm(column) == 0:
+                log.warning(f"Warning: Zero norm on chan={chan}. Column readout:\n{columnReadout}")
+            else:
+                column /= L1norm(column)
 
             powerMatrix[:,chan] = column
         

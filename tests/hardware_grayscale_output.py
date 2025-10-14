@@ -12,7 +12,7 @@ from os import path
 from time import sleep
 
 from vivilux.logger import log
-from board_config_6x6 import netlist
+from board_config_6x6_v2 import netlist
 from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.lasers import AgilentLaserArray, AgilentDetectorArray, dBm_to_mW
 from vivilux.hardware.hard_mzi import HardMZI_v2
@@ -20,6 +20,10 @@ from vivilux.hardware.hard_mzi import HardMZI_v2
 import numpy as np
 np.set_printoptions(suppress=True, precision=5)  # Set print options for numpy arrays
 np.random.seed(seed=100)
+
+# Add matplotlib for live visualization
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
 # Load the previous best parameters
 current_dir = os.path.dirname(__main__.__file__)
@@ -104,6 +108,7 @@ with netlist:
         outputDetectors=outputDetectors,
         inputLaser=inputLaser,
         psPins=["3_1_i", "2_2_i", "4_2_i", "3_3_i", "2_4_i", "4_4_i", # main pins for 4x4 subset
+                "2_2_o", "4_2_o", "3_3_o", "2_4_o", "4_4_o", # PHI phase shifters
                 ],
         netlist=netlist,
         updateMagnitude = 0.35,
@@ -122,18 +127,69 @@ with netlist:
     sleep(30) # wait for average temperature to stabilize
     print(f"Calibrated matrix after heating: \n{mzi.get()}")
 
+    # # Setup live visualization
+    # fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    # figManager = plt.get_current_fig_manager()
+    # try:
+    #     figManager.window.state('zoomed')  # For Windows (TkAgg backend)
+    # except Exception:
+    #     try:
+    #         figManager.window.showMaximized()  # For Qt backend
+    #     except Exception:
+    #         pass  # If not supported, ignore
+    # plt.ion()
+    # color_ax, gray_ax = axes
     # Process each image through the MZI
     # gray_images = []
     try:
         for index, img in enumerate(mnist_images[start_index:]):
             print(f"Processing image {index + 1 + start_index}/{len(mnist_images)}...\t\t")
             gray_image = []
+
+            # color_ax.set_title('Color Image')
+            # gray_ax.set_title('Grayscale Image')
+            # color_ax.axis('off')
+            # gray_ax.axis('off')
+
+            # # Initial images
+            # color_im = color_ax.imshow(img)
+            # # Grayscale image: initialize with orange for unprocessed
+            # red = np.array([1.0, 0.0, 0.0])
+            # gray_vis = np.ones((28, 28, 3)) * red
+            # gray_im = gray_ax.imshow(gray_vis)
+
+            # Rectangle for current pixel
+            # rect = Rectangle((0, 0), 1, 1, linewidth=2, edgecolor='red', facecolor='none')
+            # color_ax.add_patch(rect)
             for pixel_index, pixels in enumerate(img.reshape(-1, 3)):
                 print(f"\tProcessing pixel {pixel_index + 1}/{img.size // 3}", end="\r")
+                # # Visualization update
+                # y, x = divmod(pixel_index, 28)
+                # # Update red rectangle position
+                # rect.set_xy((x-0.5, y-0.5))
+                # fig.canvas.draw()
+                # fig.canvas.flush_events()
                 if not np.all(pixels == 0):
                     gray_image.append(mzi.applyTo(np.pad(pixels, (0,1))))  # Apply the MZI to each pixel
                 else:
                     gray_image.append(np.zeros(mzi.size))  # Append a zeroed pixel for black regions
+
+                # # Update grayscale image: processed pixels in grayscale, unprocessed in orange
+                # gray_arr = np.array(gray_image)
+                # if gray_arr.shape[0] > 0:
+                #     # Only update processed pixels
+                #     for i in range(gray_arr.shape[0]):
+                #         yy, xx = divmod(i, 28)
+                #         val = gray_arr[i, 0] if gray_arr[i, 0] > 0 else 0
+                #         gray_vis[yy, xx] = [val, val, val]
+                # # Unprocessed pixels remain orange
+                # gray_im.set_data(gray_vis)
+                # color_im.set_data(img)
+                # fig.canvas.draw()
+                # fig.canvas.flush_events()
+
+            # plt.ioff()
+            # plt.show()
             gray_image = np.array(gray_image)
             gray_image = gray_image[:,:1] # keep only first output
             gray_images.append(gray_image.reshape(28, 28, 1))

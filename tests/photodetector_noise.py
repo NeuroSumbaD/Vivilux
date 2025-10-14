@@ -17,7 +17,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Define the number of samples to take for each detector reading
-num_samples = 1000
+num_samples = 100
 num_iterations = 5  # Number of iterations to run the experiment
 
 rate = 250e3 #20e3 # Sampling rate in Hz
@@ -56,6 +56,7 @@ current_dir = os.path.dirname(__main__.__file__)
 json_path = os.path.join(current_dir, "4x4_bar_state_voltages.json")
 json_dict = json.load(open(json_path, "r"))
 optimal_params = json.load(open(os.path.join(current_dir, "4x4_final_params.json"), "r"))
+optimal_params = dict(optimal_params["best_params"])
 
 # Define experiment within netlist context
 with netlist:
@@ -106,11 +107,11 @@ with netlist:
     
     plt.pause(1)  # Allow time for the lasers to stabilize
     
-    # for net, voltage in json_dict.items():
-    #         netlist[net].vout(voltage)
-    # for net, voltage in optimal_params.items():
-    #     netlist[net].vout(voltage)
-    # plt.pause(10)
+    for net, voltage in json_dict.items():
+            netlist[net].vout(voltage)
+    for net, voltage in optimal_params.items():
+        netlist[net].vout(voltage)
+    plt.pause(10)
     
     for detector_index, detector_net in enumerate(detector_nets):
         print(f"Testing detector {detector_net} ({detector_index+1}/{len(detector_nets)})")

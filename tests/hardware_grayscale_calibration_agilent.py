@@ -22,25 +22,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Set the seed and log to keep track during testing
-seed = 5
+seed = 6
 np.set_printoptions(suppress=True, precision=5)  # Set print options for numpy arrays
 np.seterr(invalid='raise') # error on invalid operations
 np.random.seed(seed=seed)
 log.info(f"Using seed {seed}.")
 
-# # 4x4 grayscale kernel
-# grayscale_kernel = np.array([0.298936021293775, 0.587043074451121, 0.114020904255103, 0,])
-# target_matrix = np.zeros((4, 4))
-# target_matrix[0] = grayscale_kernel
-# target_matrix[1:, :] = (1-grayscale_kernel)/3  # Fill the rest with average value
+# 4x4 grayscale kernel
+grayscale_kernel = np.array([0.298936021293775, 0.587043074451121, 0.114020904255103, 0,])
+target_matrix = np.zeros((4, 4))
+target_matrix[0] = grayscale_kernel
+target_matrix[1:, :] = (1-grayscale_kernel)/3  # Fill the rest with average value
 
-# Define target as closest simulated to the 4x4 grayscale kernel
-target_matrix = np.array(
-    [[0.25741309, 0.50427055, 0.13937613, 0.09894023],
-    [0.28712348, 0.21053886, 0.28690439, 0.21543327],
-    [0.31897533, 0.17564228, 0.19403397, 0.31134843],
-    [0.1364881,  0.10954831, 0.37968551, 0.37427807]]
-    )
+# # Define target as closest simulated to the 4x4 grayscale kernel
+# target_matrix = np.array(
+#     [[0.25741309, 0.50427055, 0.13937613, 0.09894023],
+#     [0.28712348, 0.21053886, 0.28690439, 0.21543327],
+#     [0.31897533, 0.17564228, 0.19403397, 0.31134843],
+#     [0.1364881,  0.10954831, 0.37968551, 0.37427807]]
+#     )
 
 # Load the previous best parameters
 current_dir = os.path.dirname(__main__.__file__)
@@ -105,7 +105,7 @@ with netlist:
         updateMagnitude = 0.7,
         ps_delay=10e-3,  # delay for phase shifter voltage to settle
         num_samples=1,
-        check_stop=50,
+        check_stop=200, # set to a larger number to avoid stopping early
     )
     
     # Set the initial parameters to the best known parameters
@@ -124,7 +124,7 @@ with netlist:
 
     # Calibrate the kernel onto the MZI
     record, params, matrices = mzi.ApplyDelta(delta_matrix,
-                                              numSteps=100,
+                                              numSteps=200,
                                               numDirections=6,
                                               eta=1,
                                               verbose=True,
