@@ -502,6 +502,7 @@ class AgilentDetectorArray(DetectorArray):
         if not isinstance(detectors, DetectorArray):
             raise TypeError("detectors must be an instance of DetectorArray")
         self.detectorArray = detectors
+        self.size = detectors.size
         
         if not isinstance(lasers, AgilentLaserArray):
             raise TypeError("lasers must be an instance of AgilentLaserArray")
