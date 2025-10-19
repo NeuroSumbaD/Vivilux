@@ -156,7 +156,7 @@ with netlist:
         board=fpga,
         # use_vibrations=False,
         # pause=1,
-        pause=100e-3,
+        pause=50e-3,
     )
 
     outputDetectors = SFPDetectorArray(
@@ -186,9 +186,10 @@ with netlist:
                 "1_1_i", "1_3_o", "1_3_i", "1_5_i",
                 ],
         netlist=netlist,
-        updateMagnitude = 0.8,
-        ps_delay=10e-3,  # delay for phase shifter voltage to settle
+        updateMagnitude = 0.5,
+        ps_delay=50e-3,  # delay for phase shifter voltage to settle
         num_samples=1,
+        initialize=False,
         check_stop=200, # set to a larger number to avoid stopping early
         step_generator=gen_from_one_hot, # use one-hot step vectors (trivial basis function for stepVectors)
     )
@@ -197,12 +198,15 @@ with netlist:
     if best_params is not None:
         mzi.setParamsFromDict(best_params)
         mzi.setFromParams()
-    sleep(20) # wait for average temperature to stabilize
+    temp_wait_time = 60
+    print(f"Waiting {temp_wait_time} seconds for temperature to stabilize...")
+    sleep(temp_wait_time) # wait for average temperature to stabilize
 
     # Get the initial matrix from the MZI and calculate the delta matrix
     initial_matrix = mzi.get()
     log.info(f"Initial matrix: {initial_matrix}")
     print(f"Initial matrix: \n{initial_matrix}")
+    print(f"Target matrix: \n{target_matrix}")
     delta_matrix = target_matrix - initial_matrix
     log.info(f"Delta matrix: {delta_matrix}")
     print(f"Delta matrix: \n{delta_matrix}")
