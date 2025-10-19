@@ -589,6 +589,8 @@ class SFPDetectorArray(DetectorArray):
         if not isinstance(lasers, SFPLaserArray):
             raise TypeError("lasers must be an instance of SFPLaserArray")
         self.lasers = lasers
+        
+        self.transimpedance = detectors.transimpedance
 
     def read(self):
         '''In this subclass, the reading needs to substract the minimum power
@@ -596,12 +598,12 @@ class SFPDetectorArray(DetectorArray):
         '''
         on_reading = self.detectorArray.read()  # Call the base class read method
         log.info(f"Detector reading with lasers on (mA): {on_reading*1e6}")
-        
-        # turn the lasers to their minimum power
+
+        # if using vibrations, turn the lasers to their minimum power
         if self.lasers.use_vibrations:
             laser_states = self.lasers.board.vibration_states.copy()
         else:
-            laser_states = self.lasers.board.laser_states.copy()
+            return on_reading
         
         self.lasers.setNormalized([0]*self.size)  # Turn off all lasers
         off_reading = self.detectorArray.read()  # Read the detectors with lasers off
@@ -610,6 +612,24 @@ class SFPDetectorArray(DetectorArray):
         self.lasers.setNormalized(laser_states)  # Restore previous laser states
 
         return on_reading - off_reading
+    
+    def read_raw(self):
+        on_reading, on_dev = self.detectorArray.read_raw()  # Call the base class read method
+        log.info(f"Detector reading with lasers on (mA): {on_reading*1e6}")
+        
+        # turn the lasers to their minimum power
+        if self.lasers.use_vibrations:
+            laser_states = self.lasers.board.vibration_states.copy()
+        else:
+            return on_reading, on_dev
+        
+        self.lasers.setNormalized([0]*self.size)  # Turn off all lasers
+        off_reading, off_dev = self.detectorArray.read_raw()  # Read the detectors with lasers off
+        log.info(f"Detector reading with lasers off (mA): {off_reading*1e6}")
+
+        self.lasers.setNormalized(laser_states)  # Restore previous laser states
+
+        return on_reading - off_reading, np.max([on_dev, off_dev], axis=0)
         
 
 if __name__ == "__main__":

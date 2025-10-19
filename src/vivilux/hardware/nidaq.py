@@ -15,11 +15,23 @@ import vivilux.hardware.daq as daq
 class Board(daq.Board):
     '''Base class for National Instruments DAQ boards.
     '''
-    def __init__(self, name: str, dev_serial_num: int, *pins: list[daq.PIN]):
+    def __init__(self,
+                 name: str,
+                 dev_serial_num: int,
+                 *pins: list[daq.PIN],
+                 min_val: float = -0.0,
+                 max_val: float = 2.0,
+                 num_samples: int = 100,
+                 num_samples_to_skip: int = 10,
+                 ):
         super().__init__(name, *pins)
         self.unique_id = dev_serial_num
+        self.min_val = min_val
+        self.max_val = max_val
+        self.num_samples = num_samples
+        self.num_samples_to_skip = num_samples_to_skip
         
-    def group_vin(self, pin_names):
+    def group_vin(self, pin_names, std=False):
         '''Groups the voltage inputs from the specified pins into a single array.
         
         Parameters
@@ -38,11 +50,42 @@ class Board(daq.Board):
                 if not isinstance(pin, AIPIN):
                     raise TypeError(f"Pin {pin_name} is not an AIPIN.")
                 task.ai_channels.add_ai_voltage_chan(f"{self.board_num}/ai{pin.chnl}",
-                                                     min_val=-0.0,
-                                                     max_val=2.0,
+                                                     min_val=self.min_val,
+                                                     max_val=self.max_val,
                                                      terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-            data = np.array(task.read(number_of_samples_per_channel=100))
-            data = np.mean(data[:, 10:], axis=1)
+            raw_data = np.array(task.read(number_of_samples_per_channel=self.num_samples))
+            data = np.mean(raw_data[:, self.num_samples_to_skip:], axis=1) # skips first few samples to avoid noise during a transition
+        
+        if std:
+            return data, np.std(raw_data, axis=1)
+        return data
+    
+    def group_scan_vin(self, pin_names, num_samples = 100):
+        '''Groups the voltage inputs from the specified pins into a single array
+            by scanning multiple samples.
+
+        Parameters
+        ----------
+        pin_names : list[str]
+            A list of pin names to read the voltage inputs from.
+        num_samples : int
+            The number of samples to read from each pin.
+
+        Returns
+        -------
+        np.ndarray
+            An array containing the voltage inputs from the specified pins.
+        '''
+        with nidaqmx.Task() as task:
+            for pin_name in pin_names:
+                pin = self.pins[pin_name]
+                if not isinstance(pin, AIPIN):
+                    raise TypeError(f"Pin {pin_name} is not an AIPIN.")
+                task.ai_channels.add_ai_voltage_chan(f"{self.board_num}/ai{pin.chnl}",
+                                                     min_val=self.min_val,
+                                                     max_val=self.max_val,
+                                                     terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
+            data = np.array(task.read(number_of_samples_per_channel=self.num_samples))
         return data
 
 def get_driver_version() -> namedtuple:
@@ -121,6 +164,7 @@ class USB_6210(Board):
     def __init__(self, name: str, dev_serial_num: int, *pins: list[daq.PIN]):
         super().__init__(name, dev_serial_num, *pins)
 
+# TODO: implement std deviation option for vin like group_vin above
 class AIPIN(daq.PIN):
     direction = daq.PIN_DIRECTION.INPUT
     type = daq.PIN_TYPE.ANALOG

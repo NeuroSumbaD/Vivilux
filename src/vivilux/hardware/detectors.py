@@ -23,6 +23,23 @@ class DetectorArray:
         self.nets = nets
         self.netlist = netlist
         self.transimpedance = transimpedance
+        
+        shared_board = netlist.share_board(nets)
+        if shared_board is None:
+            def read_values(ret_std=False):
+                values = []
+                for net in self.nets:
+                    value = self.netlist[net].vin(std=ret_std)
+                    values.append(value)
+                if ret_std:
+                    vals, stds = zip(*values)
+                    return np.array(vals), np.array(stds)
+                    
+            self._read_values = lambda ret_std=False: read_values(ret_std)
+        else:
+            shared_board: daq.Board
+            self._read_values = lambda ret_std=False: \
+                shared_board.group_vin(self.nets, std=ret_std)
 
         self.read() # Initialize the offsets by reading the detectors without input
     
@@ -33,9 +50,7 @@ class DetectorArray:
 
             TODO: add support for reading multiple pins at once
         '''
-        values = np.zeros(self.size)
-        for i, net in enumerate(self.nets):
-            values[i] = self.netlist[net].vin()
+        values: np.ndarray = self._read_values()
 
         # TODO: refactor to get rid of the if statement (separate offset initialization)
         if not hasattr(self, "offsets"):
@@ -51,3 +66,10 @@ class DetectorArray:
         # NOTE: most c-band detectors have around 0.9 A/W so photocurrent is
         # pretty close to power in Watts
         return np.maximum(reading, 0)
+    
+    def read_raw(self) -> tuple[np.ndarray, np.ndarray]:
+        '''Reads the raw voltage values from the detector nets without offset
+            subtraction or transimpedance conversion.
+        '''
+        values, std_dev = self._read_values(True)
+        return values, std_dev

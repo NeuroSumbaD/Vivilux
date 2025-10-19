@@ -6,7 +6,7 @@
 '''
 
 from time import sleep
-from typing import Optional
+from typing import Optional, Callable
 
 import numpy as np
 
@@ -17,6 +17,69 @@ from vivilux.hardware.lasers import LaserArray #, InputGenerator
 from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware import daq
 from vivilux.logger import log
+
+type StepGenerator = Callable[[int], np.ndarray] # Type alias for step vector generator
+
+def gen_from_uniform(shape: tuple[int, ...]) -> StepGenerator:
+    '''Generates step vectors from a uniform distribution between -0.5 and 0.5.
+    '''
+    def _generator(num_vectors = 1) -> np.ndarray:
+        return (np.random.rand(num_vectors, *shape)-0.5)
+    return _generator
+
+def gen_from_sparse_permutation(shape: tuple[int, ...], numHot: int) -> StepGenerator:
+    '''Generates step vectors with a fixed number of hot (1.0) entries at
+        random positions.
+        
+        NOTE: Because numHot is an additional parameter, this generator must be
+        used with `Partial` from the `functools` module to fix the numHot value.
+        e.g. `step_generator=partial(gen_from_sparse_permutation, numHot=3)`
+    '''
+    def _generator(num_vectors=1) -> np.ndarray:
+        arr = np.zeros((num_vectors, *shape))
+        for i in range(num_vectors):
+            hot_indices = np.random.choice(np.prod(shape), size=numHot, replace=False)
+            np.put(arr[i], hot_indices, 1.0)
+        return arr
+    return _generator
+
+def gen_from_one_hot(shape: tuple[int, ...]) -> StepGenerator:
+    '''Generates one-hot step vectors.
+    
+        NOTE: Using sparse permutation with numHot=1 would achieve the same
+        effect but may generate duplicate vectors.
+    '''
+    def _generator(num_vectors=1) -> np.ndarray:
+        arr = np.eye(np.prod(shape))[np.random.permutation(np.prod(shape))]
+        arr = arr[:num_vectors].reshape((num_vectors, *shape))
+        return arr
+    return _generator
+
+def least_squares_solver(X: np.ndarray, V: np.ndarray,
+                         deltaFlat: np.ndarray,
+                         ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # minimize least squares difference to deltas
+    a = None
+    for iteration in range(X.shape[1]):
+        xtx = X.T @ X
+        rank = np.linalg.matrix_rank(xtx)
+        if rank == len(xtx): # matrix will have an inverse
+            a = np.linalg.inv(xtx) @ X.T @ deltaFlat
+            break
+        else: # direction vectors cary redundant information use one less
+            X = X[:,:-1]
+            V = V[:,:-1]
+            continue
+    if a is None:
+        raise RuntimeError("ERROR: Could not compute least squares solution")
+    return a, X, V
+
+def least_squares_solver_v2(X: np.ndarray, V: np.ndarray,
+                            deltaFlat: np.ndarray,
+                            ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    xtx = X.T @ X
+    a = np.linalg.pinv(xtx) @ X.T @ deltaFlat
+    return a, X, V
 
 class HardMZI_v3(MZImesh):
     '''Updated version of HardMZI that uses the daq modules for generating and
@@ -40,6 +103,7 @@ class HardMZI_v3(MZImesh):
                  check_stop: int = 5, # exits calibration loop after this many iterations with no improvement
                  initialize: bool = True, # whether to calculate the initial MZI matrix
                  use_norm: bool = True,  # whether to normalize the output columns
+                 step_generator: Callable[[tuple[int, ...]], StepGenerator] = gen_from_uniform, # step vector generator (used during matrix gradient calculation)
                  **kwargs):
         # TODO: add support for attachment to Leabra Net
         # Mesh.__init__(self, size, inLayer, **kwargs)
@@ -68,6 +132,7 @@ class HardMZI_v3(MZImesh):
             (self.psLimits[1]-self.psLimits[0])/2 + self.psLimits[0]
         self.powers = np.square(self.voltages) # power is proportional to square of voltage
 
+        self._gen_step_vector = step_generator(self.voltages.shape)
         
         self.resetDelta = np.zeros(self.shape)
 
@@ -126,8 +191,17 @@ class HardMZI_v3(MZImesh):
             self.netlist[self.psPins[index]].vout(volt)
         sleep(self.ps_delay)  # Allow time for the voltages to settle
 
-    def testParams(self, params: list[np.ndarray]):
-        '''Temporarily set the params'''
+    def testParams(self, params: list[np.ndarray], measure: bool = True) -> np.ndarray | None:
+        '''Temporarily set the params.
+        
+        Parameters
+        ----------
+        params : list[np.ndarray]
+            List containing a single numpy array of phase shifter powers.
+        measure : bool, optional
+            Whether to measure the matrix after setting the params. Default is True.
+        
+        '''
         params = self.clipParams(params)
         powers = params[0].flatten()  # Flatten the array to 1D
         voltages = np.sqrt(powers)  # Convert powers to voltages
@@ -140,6 +214,9 @@ class HardMZI_v3(MZImesh):
             self.netlist[self.psPins[index]].vout(volt)
         sleep(self.ps_delay)  # Allow time for the voltages to settle
 
+        if not measure:
+            return None
+        
         powerMatrix = np.zeros(self.shape) # for pass by reference
         powerMatrix = self.measureMatrix(powerMatrix)
         self.resetParams()
@@ -167,6 +244,10 @@ class HardMZI_v3(MZImesh):
             TODO: Improve this method to not use an external matrix.
         '''
         oneHots = np.eye(self.inputLaser.size) # create one-hot vectors for each channel
+        calculateNorms = False
+        if not hasattr(self, "norm_factors"):
+            self.norm_factors = np.zeros(self.shape)
+            calculateNorms = True
         for chan in range(self.inputLaser.size): # iterate over the input waveguides
             oneHot = oneHots[chan] # get the one-hot vector for this channel
             self.inputLaser.setNormalized(oneHot) # apply the one-hot vector
@@ -181,7 +262,9 @@ class HardMZI_v3(MZImesh):
                 log.warning(f"Warning: Zero norm on chan={chan}. Column readout:\n{columnReadout}")
             else:
                 if self.use_norm:
-                    column /= L1norm(column)
+                    if calculateNorms:
+                        self.norm_factors[:,chan] = L1norm(column)
+                    column /= self.norm_factors[:,chan]  # normalize the column
 
             powerMatrix[:,chan] = column
         
@@ -288,10 +371,9 @@ class HardMZI_v3(MZImesh):
             Returns derivativeMatrix, stepVector
         '''
         updateMagnitude = self.updateMagnitude
-        # TODO: Test normal distribution for better sampled step vectors
-        stepVector = (np.random.rand(*self.voltages.shape)-0.5) if stepVector is None else stepVector
-        # stepVector = (np.random.normal(size=self.voltages.shape)) if stepVector is None else stepVector
-        # stepVector = np.sign(np.random.rand(*voltages.shape)-0.5) if stepVector is None else stepVector
+        # TODO: Test various distributions for stepVector here
+        # stepVector = (np.random.rand(*self.voltages.shape)-0.5) if stepVector is None else stepVector
+        stepVector = self._gen_step_vector(1)[0] if stepVector is None else stepVector
         randMagnitude = np.sqrt(np.sum(np.square(stepVector)))
         stepVector = stepVector/randMagnitude
         stepVector = stepVector*updateMagnitude # update magnitude refers to the magnitude of the powers
@@ -301,21 +383,43 @@ class HardMZI_v3(MZImesh):
         derivativeMatrix = np.zeros(currMat.shape)
     
         # Forward step
-        plusVectors = self.powers + stepVector
+        plusVectors = self.powers.flatten() + stepVector.flatten()
         log.debug(f"Plus vector step: {plusVectors.flatten()}")
         # Backward step
-        minusVectors = self.powers - stepVector
+        minusVectors = self.powers.flatten() - stepVector.flatten()
         log.debug(f"Minus vector step: {minusVectors.flatten()}")
         
         # Calculate the plus and minus matrices
-        plusMatrix = self.testParams([plusVectors])
-        minusMatrix = self.testParams([minusVectors])
+        differenceMatrix = np.zeros(currMat.shape)
+        std_matrix = np.zeros(currMat.shape)
+        for col in range(currMat.shape[1]):
+            oneHot = np.zeros(self.inputLaser.size, dtype=int)
+            oneHot[col] = 1
+            self.inputLaser.setNormalized(oneHot)
+            self.testParams([plusVectors.reshape(-1,1)], measure=False)
+            plusReadout, plus_dev = self.outputDetectors.read_raw()
+            log.debug(f"Plus readout for column {col} (mV): {plusReadout*1e3} ± {plus_dev*1e3}")
 
-        differenceMatrix = plusMatrix-minusMatrix
-        derivativeMatrix = differenceMatrix/(2*updateMagnitude)
+            self.testParams([minusVectors.reshape(-1,1)], measure=False)
+            minusReadout, minus_dev = self.outputDetectors.read_raw()
+            log.debug(f"Minus readout for column {col} (mV): {minusReadout*1e3} ± {minus_dev*1e3}")
+
+            differenceMatrix[:,col] = plusReadout - minusReadout
+            std_matrix[:,col] = plus_dev + minus_dev # propagate uncertainty assuming independence
+            if self.use_norm:
+                differenceMatrix[:,col] /= self.norm_factors[:,col]
+                std_matrix[:,col] /= self.norm_factors[:,col]
+
+        # NOTE: The derivative is calculated as -difference/(2*updateMagnitude) because the
+        # measurement yields dV/dParam and we want dI/dParam, where I is proportional to V
+        # based on the photodetector response I = (offset-reading)/transimpedance, so an
+        # additional factor of transimpedance is also included (dI=-dV/transimpedance).
+        mask = np.abs(differenceMatrix) < std_matrix
+        differenceMatrix[mask] = 0.0  # zero out any differences that are less than the noise level
+        derivativeMatrix = -differenceMatrix/(2*updateMagnitude*self.outputDetectors.transimpedance)
         
 
-        return derivativeMatrix, stepVector/updateMagnitude
+        return derivativeMatrix, stepVector
 
 
     def getGradients(self,
@@ -332,12 +436,15 @@ class HardMZI_v3(MZImesh):
         X = np.zeros((deltaFlat.shape[0], numDirections))
         V = np.zeros((thetaFlat.shape[0], numDirections))
         
+        # Generate step vectors and check they are not identical
+        step_vectors = self._gen_step_vector(numDirections)       
+            
         # Calculate directional derivatives
         for i in range(numDirections):
             if verbose:
                 print(f"\tGetting derivative {i}")
             # TODO: Find some constraints for the correlation between the stepVectors
-            tempx, tempv = self.matrixGradient()
+            tempx, tempv = self.matrixGradient(stepVector=step_vectors[i].reshape(-1,1))
             tempv = np.concatenate([param.flatten() for param in tempv])
             X[:,i], V[:,i] = tempx[:m, :n].flatten(), tempv.flatten()
 
@@ -366,22 +473,27 @@ class HardMZI_v3(MZImesh):
             # currMat = self.get()/self.Gscale
             currMat = self.get()
             print(f"Step: {step}, magnitude delta = {magnitude(deltaFlat)}")  
-            X, V = self.getGradients(delta, newPs, numDirections, verbose)
-            # minimize least squares difference to deltas
-            for iteration in range(numDirections):
-                xtx = X.T @ X
-                rank = np.linalg.matrix_rank(xtx)
-                if rank == len(xtx): # matrix will have an inverse
-                    a = np.linalg.inv(xtx) @ X.T @ deltaFlat
-                    break
-                else: # direction vectors cary redundant information use one less
-                    X = X[:,:-1]
-                    V = V[:,:-1]
-                    continue
+            X_raw, V_raw = self.getGradients(delta, newPs, numDirections, verbose)
+            derivative_norms = np.linalg.norm(X_raw, axis=0)
+            # Drop any zero-norm directions
+            X_raw = X_raw[:, derivative_norms != 0]
+            V_raw = V_raw[:, derivative_norms != 0]
+            # Scale deltaFlat to reasonable step size based on derivative norms
+            deltaNorm = np.linalg.norm(deltaFlat)
+            scaledDelta = deltaFlat
+            if deltaNorm > np.sum(derivative_norms): # scale down if it is significantly larger than the total derivative norm
+                normRescale = np.sum(derivative_norms) / np.linalg.norm(deltaFlat)
+                scaledDelta *= normRescale
+            # scaledDelta *= np.minimum([deltaNorm, self.updateMagnitude]) / deltaNorm # Alternative rescaling
+            a, X, V = least_squares_solver_v2(X_raw, V_raw,
+                                            #   deltaFlat) # original
+                                              scaledDelta) # scaled to reasonable step size
             self.updateMagnitude *= self.updateMagDecay  # Decay the update magnitude
 
             log.debug(f"Norm of a: {np.linalg.norm(a)}")
             update = (V @ a).reshape(-1,1)
+            if (max_update:=np.max(update)) > self.powLimits[1]*0.25:
+                log.warning(f"Large param update detected: {max_update}!")
             scaledUpdate = eta*update
             scaledUpdate = scaledUpdate.flatten()
             log.debug(f"Norm of scaled update: {np.linalg.norm(scaledUpdate)}")
@@ -424,6 +536,3 @@ class HardMZI_v3(MZImesh):
             phase shifter voltages.
         '''
         return {pin_name: volt for pin_name, volt in zip(self.psPins, self.voltages.flatten())}
-
-    # def Update(self, delta: np.ndarray):
-    #     self.records.append(self.stepGradient(delta))

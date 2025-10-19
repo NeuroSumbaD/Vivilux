@@ -14,7 +14,7 @@ from time import sleep, time
 from vivilux.logger import log
 from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.lasers import SFPLaserArray, SFPDetectorArray, dBm_to_mW
-from vivilux.hardware.arbitrary_mzi import HardMZI_v3
+from vivilux.hardware.arbitrary_mzi import HardMZI_v3, gen_from_one_hot, gen_from_sparse_permutation
 
 import vivilux.hardware.daq as daq
 import vivilux.hardware.nidaq as ni
@@ -154,6 +154,9 @@ with netlist:
         detectors=inputDetectors,
         netlist=netlist,
         board=fpga,
+        # use_vibrations=False,
+        # pause=1,
+        pause=100e-3,
     )
 
     outputDetectors = SFPDetectorArray(
@@ -171,7 +174,7 @@ with netlist:
         raise RuntimeError("Bar state voltages file not found, cannot proceed with calibration.")
     
     inputLaser.setNormalized([0, 0, 0, 0])  # Set initial laser powers to 0
-    sleep(10)  # Allow time for the voltages to settle
+    sleep(1)  # Allow time for the voltages to settle
 
     # initialize the MZI with the defined components
     mzi = HardMZI_v3(
@@ -183,17 +186,18 @@ with netlist:
                 "1_1_i", "1_3_o", "1_3_i", "1_5_i",
                 ],
         netlist=netlist,
-        updateMagnitude = 0.9,
-        ps_delay=100e-3,  # delay for phase shifter voltage to settle
-        num_samples=5,
+        updateMagnitude = 0.8,
+        ps_delay=10e-3,  # delay for phase shifter voltage to settle
+        num_samples=1,
         check_stop=200, # set to a larger number to avoid stopping early
+        step_generator=gen_from_one_hot, # use one-hot step vectors (trivial basis function for stepVectors)
     )
     
     # Set the initial parameters to the best known parameters
     if best_params is not None:
         mzi.setParamsFromDict(best_params)
         mzi.setFromParams()
-    sleep(60) # wait for average temperature to stabilize
+    sleep(20) # wait for average temperature to stabilize
 
     # Get the initial matrix from the MZI and calculate the delta matrix
     initial_matrix = mzi.get()

@@ -72,8 +72,13 @@ class PIN:
         # log.debug(f"(ABSTRACT PIN) Setting pin {self.net_name} to {voltage}V on board {self.board.board_name}")
         return
     
-    def vin(self) -> float:
+    def vin(self, std=False) -> float | tuple[float, float]:
         '''Reads the voltage from the analog input pin.
+        
+        Parameters
+        ----------
+        std : bool, optional
+            Whether to return the standard deviation of the reading (default is False).
         
         Returns
         -------
@@ -280,13 +285,15 @@ class Board:
         #           f" {pin_name} on board {self.board_name}")
         return pin.scan_vin(num_samples)
 
-    def group_vin(self, pin_names: list[str]) -> np.ndarray:
+    def group_vin(self, pin_names: list[str], std: bool = False) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         '''Reads multiple samples from the specified pins.
         
         Parameters
         ----------
         pin_names : list[str]
             A list of pin names to read from.
+        std : bool, optional
+            Whether to return the standard deviation of the readings (default is False).
         
         Returns
         -------
@@ -550,3 +557,30 @@ class Netlist:
         
         # log.debug(f"(NETLIST) Group scanning {num_samples} samples from pins {net_names}")
         return self.board_dict[board_name].group_scan_vin(net_names, num_samples)
+    
+    def share_board(self, net_names: list[str]) -> Board | None:
+        '''Checks if all the given net names belong to the same board.
+        
+        Parameters
+        ----------
+        net_names : list[str]
+            A list of net names to check.
+        
+        Returns
+        -------
+        Board | None
+            The board if all net names belong to the same board, None otherwise.
+        '''
+        common_board = None
+        for net_name in net_names:
+            if net_name not in self.pins_dict:
+                log.error(f"Net name {net_name} not found in netlist")
+                raise KeyError(f"Net name {net_name} not found in netlist")
+            
+            if common_board is None:
+                common_board = self.pins_dict[net_name].board
+            else:
+                if self.pins_dict[net_name].board is not common_board:
+                    return None # if any net belongs to a different board, return None
+        
+        return common_board
