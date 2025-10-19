@@ -191,7 +191,134 @@ class EVAL_AD5370(Board):
                          csPin,
                          *pins)
         self.ao_ranges = ao_ranges
+        
+class VC_709(BoardManager):
+    '''Class representing the VC-709 FPGA board. Methods
+        defined in this class will interact with any specific features
+        unique to this board.
+    '''
+    # TODO: Modify the base class to more clearly distinguish between
+    # BoardManager and FPGA or other serial boards (maybe top-level 
+    # SerialBoard class with and initialization code)
+    def __init__(self, name: str,
+                 *pins: list[daq.PIN],
+                 **kwargs,
+                 ):
+        '''
+        Parameters
+        ----------
+        name : str
+            The UID programmed into the board manager for COM port identification.
+        pins : list[daq.PIN]
+            The list of pin definitions on the board.
+        '''
+        self.board_name = name
+        
+        self.pins: dict[str, daq.PIN] = {}
+        self.nets: list[str] = []
 
+        for pin in pins:
+            if not isinstance(pin, daq.PIN):
+                raise TypeError(f"Expected PIN instance, got {type(pin)}")
+            pin.assign_board(self)
+            # check for duplicate pin names
+            if pin.net_name in self.pins:
+                log.error(f"Duplicate pin name {pin.net_name} found in board {self.board_name}")
+                raise ValueError(f"Duplicate pin name {pin.net_name} found in board {self.board_name}")
+            self.pins[pin.net_name] = pin
+            # check for duplicate net names
+            if pin.net_name in self.nets:
+                log.error(f"Duplicate net name {pin.net_name} found in board {self.board_name}")
+                raise ValueError(f"Duplicate net name {pin.net_name} found in board {self.board_name}")
+            self.nets.append(pin.net_name)
+        
+    def initialize_board(self):
+        '''Sends serial commands to put the FPGA laser into a known state.
+        '''
+        if self.serial is None:
+            err_msg = f"Error: Attempted to initialize board {self.board_name} " \
+                       "before running 'ser.config_detected_devices()'."
+            log.error(err_msg)
+            raise RuntimeError(err_msg)
+        
+        # Write both address 4 and 8 to zero to tell FPGA to attend to the UART states
+        self.serial.write(b"W 4 F0000000\n") # Turn vibration off on lasers
+        response = self.serial.readline().decode().strip()
+        if response != "OK":
+            log.error(f"Error: Failed to turn off vibration on lasers: {response}")
+            raise RuntimeError(f"Error: Failed to turn off vibration on lasers: {response}")
+        self.serial.write(b"W 8 F0000000\n") # Turn off all lasers
+        response = self.serial.readline().decode().strip()
+        if response != "OK":
+            log.error(f"Error: Failed to turn off lasers: {response}")
+            raise RuntimeError(f"Error: Failed to turn off lasers: {response}")
+        
+        ###VIBRATION PERIOD SETTING
+        time.sleep(0.1)
+        self.serial.write(b"W C AAAAAAAA\n")  #Set PWM period to 16777216 clock cycles (approx 1 second at 16MHz)
+        resp = self.serial.readline().decode().strip()
+        if resp != "OK":
+            log.error(f"Error: Failed to write vibration: {resp}")
+            raise RuntimeError(f"Error: Failed to write vibration: {resp}")
+
+        time.sleep(0.1)
+        self.serial.write(b"W 10 AAAAAAAA\n")  #Set PWM period to 16777216 clock cycles (approx 1 second at 16MHz)
+        resp = self.serial.readline().decode().strip()
+        if resp != "OK":
+            log.error(f"Error: Failed to write vibration: {resp}")
+            raise RuntimeError(f"Error: Failed to write vibration: {resp}")
+
+        time.sleep(0.1)
+        self.serial.write(b"W 14 AAAAAAAA\n")  #Set PWM period to 16777216 clock cycles (approx 1 second at 16MHz)
+        resp = self.serial.readline().decode().strip()
+        if resp != "OK":
+            log.error(f"Error: Failed to write vibration: {resp}")
+            raise RuntimeError(f"Error: Failed to write vibration: {resp}")
+
+        time.sleep(0.1)
+        self.serial.write(b"W 18 AAAAAAAA\n")  #Set PWM period to 16777216 clock cycles (approx 1 second at 16MHz)
+        resp = self.serial.readline().decode().strip()
+        if resp != "OK":
+            log.error(f"Error: Failed to write vibration: {resp}")
+            raise RuntimeError(f"Error: Failed to write vibration: {resp}")
+        ##END VIBRATION PERIOD SETTING
+
+        #Initialize laser states now that state is known
+        log.info("Laser states should now be known.")
+        self.laser_states = [0, 0, 0, 0]
+        self.vibration_states = [0, 0, 0, 0]
+        
+    def update_lasers(self, states = None):
+        command = b"W 8 "
+        if states:
+            self.laser_states = states
+        command += self.to_hex_command(self.laser_states)
+        log.debug(f"Writing laser command: {command}")
+        self.serial.write(command + b"\n")
+        response = self.serial.readline().decode().strip()
+        if response != "OK":
+            err_str = f"Error: Failed to write laser command: {command}, response = {response}"
+            log.error(err_str)
+            raise RuntimeError(err_str)
+
+    def update_vibration(self, states = None):
+        command = b"W 4 "
+        if states is not None:
+            self.vibration_states = states
+        command += self.to_hex_command(self.vibration_states)
+        log.debug(f"Writing vibration command: {command}")
+        self.serial.write(command + b"\n")
+        response = self.serial.readline().decode().strip()
+        if response != "OK":
+            err_str = f"Error: Failed to write vibration command: {command}, response = {response}"
+            log.error(err_str)
+            raise RuntimeError(err_str)
+
+    def to_hex_command(self, states: list[int]):
+        '''Converts the states list to the correct hex command'''
+        state_str = '{:x}'.format(int(''.join(map(str, states)), 2)).upper()
+        byte_str = bytes("F000000" + state_str, encoding='utf-8')
+        return byte_str
 
 class AOPIN(daq.PIN):
     direction = daq.PIN_DIRECTION.OUTPUT
@@ -219,6 +346,25 @@ class AOPIN(daq.PIN):
         '''
         # log.debug(f"Resetting analog output for pin {self.net_name} to 0V")
         self.vout(0.0)
+        
+class DIOPIN(daq.PIN):
+    direction = daq.PIN_DIRECTION.OUTPUT
+    type = daq.PIN_TYPE.DIGITAL
+    supported_boards = [VC_709]
+
+    def __init__(self, net_name: str, channel: str):
+        super().__init__(net_name, channel)
+
+    def dout(self, value: bool):
+        self.board: VC_709
+         # TODO: Refactor this for better error checking and more clear ownership of state
+        self.board.laser_states[self.chnl] = int(bool(value))
+        self.board.update_lasers()
+        return
+
+    def reset(self):
+        self.dout(False)
+        return
 
 def find_boards(repeat = False) -> dict[str, serial.Serial]:
     '''Finds all connected DAQ boards and returns a mapping of their IDs to
@@ -246,14 +392,17 @@ def find_boards(repeat = False) -> dict[str, serial.Serial]:
     ports = serial.tools.list_ports.comports()
     for port in ports:
         try:
+            log.debug(f"Trying port {port.device}")
             # Attempt to connect to each port
             ser = serial.Serial(port.device, 115200, timeout=2)
             time.sleep(2) # Give time to reset after opening port
 
             # Read any initial messages and perform handshake
             while ser.in_waiting:
-                buffer = ser.readline() # Clear the buffer
+                log.debug(f"Port {port.device} has {ser.in_waiting} bytes.")
+                buffer = ser.read_all() # Clear the buffer
                 log.info(f"Pre-handshake buffer contained message: {buffer.decode().strip()}")
+                time.sleep(100e-3) # Give time to make sure buffer is clear
 
             # Step 1: Send handshake request
             ser.write(b"HANDSHAKE\n")

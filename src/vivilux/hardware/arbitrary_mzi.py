@@ -28,6 +28,8 @@ class HardMZI_v3(MZImesh):
                  inputLaser: LaserArray, # laser array for input
                  psPins: list[str], # phase shifter pin names
                  netlist: daq.Netlist, # netlist for daq
+                 # TODO: add support for opposing arm phase shifters
+                #  psCompliment: Optional[list[str]] = None, # phase shifter pin names for opposing arms in the MZI
                  updateMagnitude=0.01,
                  updateMagDecay=0.9945, # Decay rate of the update magnitude
                  numDirections=12,
@@ -37,6 +39,7 @@ class HardMZI_v3(MZImesh):
                  num_samples: int = 10, # number of samples to take for averaging detector readings
                  check_stop: int = 5, # exits calibration loop after this many iterations with no improvement
                  initialize: bool = True, # whether to calculate the initial MZI matrix
+                 use_norm: bool = True,  # whether to normalize the output columns
                  **kwargs):
         # TODO: add support for attachment to Leabra Net
         # Mesh.__init__(self, size, inLayer, **kwargs)
@@ -54,6 +57,7 @@ class HardMZI_v3(MZImesh):
         self.num_samples = num_samples
         self.check_stop = check_stop
         self.numUnits = len(psPins)
+        self.use_norm = use_norm
         
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
         self.updateMagDecay = updateMagDecay # Decay rate of the update magnitude
@@ -94,6 +98,20 @@ class HardMZI_v3(MZImesh):
         ps = np.sqrt(powers)  # Convert powers to voltages
         assert(ps.size == self.numUnits), f"Error: {ps.size} != {self.numUnits}"
         self.voltages = self.BoundParams([ps])[0]
+        self.powers = np.square(self.voltages)  # Update powers based on bounded voltages
+            
+        self.modified = True
+
+        return [self.voltages]
+    
+    def setParamsFromDict(self, params_dict: dict[str, float]):
+        '''Sets the current matrix from a dictionary of phase shifter params.
+        '''
+        voltages = np.zeros((self.numUnits,1))
+        for pin in params_dict.keys():
+            index = self.psPins.index(pin)
+            voltages[index] = np.sqrt(np.maximum(params_dict[pin], 0))
+        self.voltages = self.BoundParams([voltages])[0]
         self.powers = np.square(self.voltages)  # Update powers based on bounded voltages
             
         self.modified = True
@@ -162,7 +180,8 @@ class HardMZI_v3(MZImesh):
             if L1norm(column) == 0:
                 log.warning(f"Warning: Zero norm on chan={chan}. Column readout:\n{columnReadout}")
             else:
-                column /= L1norm(column)
+                if self.use_norm:
+                    column /= L1norm(column)
 
             powerMatrix[:,chan] = column
         
@@ -252,7 +271,7 @@ class HardMZI_v3(MZImesh):
             numParams = np.sum(paramsToReset)
             randomReInit = np.random.rand(numParams) * \
                 (self.psLimits[1]-self.psLimits[0])/2 + self.psLimits[0]
-            params[0][paramsToReset] = randomReInit
+            params[0][paramsToReset] = randomReInit.reshape(params[0][paramsToReset].shape)
             self.resetDelta = self.get(params) - matrix
             print("Reset delta:\n", self.resetDelta, ", magnitude: ", magnitude(self.resetDelta))
 
@@ -277,21 +296,6 @@ class HardMZI_v3(MZImesh):
         stepVector = stepVector/randMagnitude
         stepVector = stepVector*updateMagnitude # update magnitude refers to the magnitude of the powers
         log.debug(f"Using stepVector: {stepVector.flatten()}")
-        # NOTE: Switching to magnitude of power vector to make it consistent over the full
-        # range of voltages, otherwise the magnitude needs to be zero close to zero volts.
-        
-        # Push step vector within the bounds
-        # NOTE: the lower bound here is forced to zero
-        # TODO: Make this more general for different phase shifter ranges
-        # diffToMax = np.square(self.psLimits[1]) - self.powers
-        # stepVector = np.minimum(stepVector, diffToMax) # prevent plus going over
-        # stepVector = np.maximum(stepVector, -diffToMax) # prevent minus going over
-        # stepVector = np.maximum(stepVector, -self.powers) # prevent minus going under
-        # stepVector = np.minimum(stepVector, self.powers) # prevent plus going under
-        
-        # TODO: Attempt fallback to one-sided difference vs central difference when stepVector is close to the limits
-
-        # print(stepVector)
         
         currMat = self.get()
         derivativeMatrix = np.zeros(currMat.shape)

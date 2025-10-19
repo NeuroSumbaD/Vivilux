@@ -54,6 +54,20 @@ ser_boards = [
         ser.AOPIN("4_4_i", 8),
         ser.AOPIN("4_4_o", 10), # NEW (mislabeled as 5_4_o on board?)
         ser.AOPIN("5_5_i", 12),
+        
+        
+        # New channels available if needed (currently unused):
+        ser.AOPIN("2_1_i", 27),
+        ser.AOPIN("3_2_i", 29),
+        ser.AOPIN("2_3_i", 31),
+        ser.AOPIN("3_4_i", 33),
+        ser.AOPIN("2_5_i", 35),
+        
+        ser.AOPIN("4_1_i", 14),
+        ser.AOPIN("5_2_i", 16),
+        ser.AOPIN("4_3_i", 18),
+        ser.AOPIN("5_4_i", 20),
+        ser.AOPIN("4_5_i", 22),
     ),
 ]
 

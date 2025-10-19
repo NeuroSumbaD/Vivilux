@@ -1,19 +1,17 @@
 '''Submodule for laser hardware control.
 '''
 
-from typing import Any
 from time import sleep, time
 
 import numpy as np
 from scipy.optimize import curve_fit, fsolve
-import nidaqmx
 import pyvisa as visa
 import tqdm
 
 from vivilux.hardware.daq import Netlist
 from vivilux.hardware.detectors import DetectorArray
-from vivilux.hardware.utils import magnitude
 import vivilux.hardware.daq as daq
+import vivilux.hardware.ser as ser
 from vivilux.logger import log
 
 SLEEP = 0.5 # seconds
@@ -526,6 +524,93 @@ class AgilentDetectorArray(DetectorArray):
         self.lasers.setLast()
 
         return on_reading - off_reading
+    
+class SFPLaserArray(LaserArray):
+    '''A subclass of LaserArray for controlling SFP digital lasers.
+    '''
+    def __init__(self,
+                 size: int,
+                 control_nets: list[str],
+                 detectors: DetectorArray,
+                 netlist: daq.Netlist,
+                 board: ser.VC_709,
+                 use_vibrations: bool = True, # Whether to use vibrations for laser "on" state
+                 pause: float = 10e-3, # pause between control signal changes and read operations
+                ):
+        if not netlist.in_context:
+            log.error("Attempted to initialize LaserArray outside a daq.Netlist context.")
+            raise ValueError("LaserArray must be initialized in a netlist context. "
+                             "Use `with netlist: \n\t[Network definition and training]` ")
+
+        self.size = size
+        self.control_nets = control_nets
+        self.detectors = detectors
+        self.netlist = netlist
+        self.board = board
+        
+        self.use_vibrations = use_vibrations
+        self.pause = pause
+        
+        self.board.update_vibration([0]*self.size)  # Set all vibrations to off
+        if self.use_vibrations:
+            log.info("Using vibrations to control SFP laser array.")
+            self.board.update_lasers([1]*self.size)  # Ensure all lasers are on initially
+        else:
+            log.info("Using direct laser control for SFP laser array.")
+            self.board.update_lasers([0]*self.size)  # Ensure all lasers are off initially
+        
+        
+    def setNormalized(self, vector):
+        if any([v not in [0, 1] for v in vector]):
+            err_str = f"ERROR: SFP Lasers do not support non-binary values: {vector}."
+            log.error(err_str)
+            raise ValueError(err_str)
+        vector = [int(np.round(v)) for v in vector]
+        if self.use_vibrations:
+            self.board.update_vibration(vector)
+        else:
+            self.board.update_lasers(vector)
+        sleep(self.pause)  # Allow time for the lasers to settle
+            
+class SFPDetectorArray(DetectorArray):
+    '''A subclass of DetectorArray for working with the Agilent lasers, since they
+        cannot be turned off completely without a long delay, each measurement
+        requires a new offset to subtract the minimum power level.
+    '''
+    def __init__(self,
+                 detectors: DetectorArray,
+                 lasers: SFPLaserArray,
+                 ):
+        if not isinstance(detectors, DetectorArray):
+            raise TypeError("detectors must be an instance of DetectorArray")
+        self.detectorArray = detectors
+        self.size = detectors.size
+
+        if not isinstance(lasers, SFPLaserArray):
+            raise TypeError("lasers must be an instance of SFPLaserArray")
+        self.lasers = lasers
+
+    def read(self):
+        '''In this subclass, the reading needs to substract the minimum power
+            from the current reading.
+        '''
+        on_reading = self.detectorArray.read()  # Call the base class read method
+        log.info(f"Detector reading with lasers on (mA): {on_reading*1e6}")
+        
+        # turn the lasers to their minimum power
+        if self.lasers.use_vibrations:
+            laser_states = self.lasers.board.vibration_states.copy()
+        else:
+            laser_states = self.lasers.board.laser_states.copy()
+        
+        self.lasers.setNormalized([0]*self.size)  # Turn off all lasers
+        off_reading = self.detectorArray.read()  # Read the detectors with lasers off
+        log.info(f"Detector reading with lasers off (mA): {off_reading*1e6}")
+
+        self.lasers.setNormalized(laser_states)  # Restore previous laser states
+
+        return on_reading - off_reading
+        
 
 if __name__ == "__main__":
     # Example usage of LaserArray

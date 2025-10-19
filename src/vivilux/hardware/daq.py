@@ -23,7 +23,7 @@ class PIN:
     type = None  # To be defined in subclasses
     supported_boards: list[str] = []  # List of supported boards for this pin class
 
-    def __init__(self, net_name: str, channel: str):
+    def __init__(self, net_name: str, channel: str | int):
         self.net_name = net_name  # Name of the pin
         self.chnl = channel  # Channel name
         self.board = None
