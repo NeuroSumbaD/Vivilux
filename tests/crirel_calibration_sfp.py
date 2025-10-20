@@ -156,7 +156,7 @@ with netlist:
         board=fpga,
         # use_vibrations=False,
         # pause=1,
-        pause=50e-3,
+        # pause=50e-3,
     )
 
     outputDetectors = SFPDetectorArray(
@@ -187,7 +187,8 @@ with netlist:
                 ],
         netlist=netlist,
         updateMagnitude = 0.5,
-        ps_delay=50e-3,  # delay for phase shifter voltage to settle
+        updateMagDecay = 0.97,
+        # ps_delay=50e-3,  # delay for phase shifter voltage to settle
         num_samples=1,
         initialize=False,
         check_stop=200, # set to a larger number to avoid stopping early
@@ -196,9 +197,11 @@ with netlist:
     
     # Set the initial parameters to the best known parameters
     if best_params is not None:
+        print(f"Setting MZI to previous best parameters: \n{best_params}")
         mzi.setParamsFromDict(best_params)
         mzi.setFromParams()
-    temp_wait_time = 60
+        mzi.modified = True  # Force update of internal matrix
+    temp_wait_time = 180
     print(f"Waiting {temp_wait_time} seconds for temperature to stabilize...")
     sleep(temp_wait_time) # wait for average temperature to stabilize
 
@@ -213,7 +216,7 @@ with netlist:
     target_delta_matrix = delta_matrix.copy()
 
     # Calibrate the kernel onto the MZI
-    numSteps = 10
+    numSteps = 200
     start_time = time()
     record, params, matrices = mzi.ApplyDelta(delta_matrix,
                                               numSteps=numSteps,
@@ -248,6 +251,7 @@ if min_run_delta < min_delta:
         "seed": seed,
         "minimum_delta": min_delta,
         "best_params": final_params,
+        "final_matrix": mzi.get().tolist(),
     }
     params_json_file = os.path.join(current_dir, "crirel_params.json")
     json.dump(new_dict, open(params_json_file, "w"), indent=4)
@@ -259,7 +263,7 @@ else:
 
 plt.figure()
 plt.plot(record)
-plt.title("MZI Grayscale Calibration")
+plt.title("MZI Calibration")
 plt.xlabel("LAMM Iteration")
 plt.ylabel("Frobenius Norm of Delta Matrix")
 plt.show()
