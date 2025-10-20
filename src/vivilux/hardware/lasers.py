@@ -535,7 +535,7 @@ class SFPLaserArray(LaserArray):
                  netlist: daq.Netlist,
                  board: ser.VC_709,
                  use_vibrations: bool = True, # Whether to use vibrations for laser "on" state
-                 pause: float = 10e-3, # pause between control signal changes and read operations
+                 pause: float = 100e-6, # pause between control signal changes and read operations
                 ):
         if not netlist.in_context:
             log.error("Attempted to initialize LaserArray outside a daq.Netlist context.")
