@@ -98,7 +98,7 @@ class HardMZI_v3(MZImesh):
                  numDirections=12,
                  psReset: float = 4.5, # reset phase shifter past this voltage (TODO: calibrate this)
                  psLimits: tuple[float, float] =(0.0, 5.0), # min and max voltage for phase shifters
-                 ps_delay: float = 5e-3, # delay in seconds for phase shifter voltage to settle
+                 ps_delay: float = 25e-3, # delay in seconds for phase shifter voltage to settle
                  num_samples: int = 10, # number of samples to take for averaging detector readings
                  check_stop: int = 5, # exits calibration loop after this many iterations with no improvement
                  initialize: bool = True, # whether to calculate the initial MZI matrix
@@ -136,10 +136,10 @@ class HardMZI_v3(MZImesh):
         
         self.resetDelta = np.zeros(self.shape)
 
-        print('Initialized matrix with voltages: \n', self.voltages.flatten())
-        print('Initialized matrix with powers: \n', self.powers.flatten())
-        self.modified = True
         if initialize:
+            print('Initialized matrix with voltages: \n', self.voltages.flatten())
+            print('Initialized matrix with powers: \n', self.powers.flatten())
+            self.modified = True
             initMatrix = self.get()
             print('Initial Matrix: \n', initMatrix)
 
@@ -264,10 +264,11 @@ class HardMZI_v3(MZImesh):
                 if self.use_norm:
                     if calculateNorms:
                         self.norm_factors[:,chan] = L1norm(column)
+                        log.info(f"Calculated norm factor for channel {chan}: {self.norm_factors[:,chan]}")
                     column /= self.norm_factors[:,chan]  # normalize the column
 
             powerMatrix[:,chan] = column
-        
+
         return powerMatrix
 
     def get(self, params: Optional[list[np.ndarray]] = None) -> np.ndarray:
@@ -506,10 +507,16 @@ class HardMZI_v3(MZImesh):
             
             if verbose:
                 predDelta = eta *  (X @ a)
-                print("Correlation between update and derivative after step:")
-                print(correlate(trueDelta.flatten(), eta * predDelta.flatten()))
-                print("Correlation between update and target delta after step:")
-                print(correlate(deltaFlat.flatten(), predDelta.flatten()))
+                try:
+                    print("Correlation between update and derivative after step:")
+                    print(correlate(trueDelta.flatten(), eta * predDelta.flatten()))
+                except FloatingPointError as e:
+                    print(f"Floating point error occurred during correlate: {e}")
+                try:
+                    print("Correlation between update and target delta after step:")
+                    print(correlate(deltaFlat.flatten(), predDelta.flatten()))
+                except FloatingPointError as e:
+                    print(f"Floating point error occurred during correlate: {e}")
             deltaFlat -= trueDelta.flatten().reshape(-1,1) # substract update
             deltaFlat -= self.resetDelta.flatten().reshape(-1,1) # subtract any delta due to voltage reset
             self.resetDelta = np.zeros(self.shape) # reset the reset delta
