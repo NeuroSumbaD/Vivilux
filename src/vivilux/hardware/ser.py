@@ -333,7 +333,7 @@ class AOPIN(daq.PIN):
             pinName: str
                 The name of the pin to set to the analog voltage
         '''
-
+        voltage = float(voltage)
         super().vout(voltage)
 
         # TODO: Finish implementing analog output voltage setting

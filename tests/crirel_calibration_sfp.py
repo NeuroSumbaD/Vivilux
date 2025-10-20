@@ -9,6 +9,7 @@
 import json
 import os
 import __main__
+from functools import partial
 from time import sleep, time
 
 from vivilux.logger import log
@@ -105,7 +106,7 @@ ni.config_detected_devices(ni_boards, verbose=False)
 netlist = daq.Netlist(*ni_boards, pico, fpga)
 
 # Set the seed and log to keep track during testing
-seed = 6
+seed = 10
 np.set_printoptions(suppress=True, precision=5)  # Set print options for numpy arrays
 np.seterr(invalid='raise') # error on invalid operations
 np.random.seed(seed=seed)
@@ -136,7 +137,7 @@ with netlist:
     # Define the detector arrays before and after the MZI
     inputDetectors = DetectorArray(
         size=4,
-        nets=["PD_2_0", "PD_3_0",  "PD_4_0", "PD_5_0",],# "PD_5_0", "PD_6_0",],
+        nets=["PD_1_0", "PD_2_0",  "PD_3_0", "PD_4_0",],# "PD_5_0", "PD_6_0",],
         netlist=netlist,
         transimpedance=220e3,  # 220k ohms (TODO: double-check if these detectors are 220k or 10k)
     )
@@ -186,13 +187,16 @@ with netlist:
                 "1_1_i", "1_3_o", "1_3_i", "1_5_i",
                 ],
         netlist=netlist,
-        updateMagnitude = 0.5,
-        updateMagDecay = 0.97,
+        updateMagnitude = 0.8,
+        # updateMagDecay = 0.985,
         # ps_delay=50e-3,  # delay for phase shifter voltage to settle
         num_samples=1,
         initialize=False,
         check_stop=200, # set to a larger number to avoid stopping early
-        step_generator=gen_from_one_hot, # use one-hot step vectors (trivial basis function for stepVectors)
+        
+        # default generator is a uniform distribution on all parameters
+        # step_generator=gen_from_one_hot, # use one-hot step vectors (trivial basis function for stepVectors)
+        step_generator=partial(gen_from_sparse_permutation, numHot=5), # use sparse permutation basis for stepVectors
     )
     
     # Set the initial parameters to the best known parameters
@@ -216,11 +220,11 @@ with netlist:
     target_delta_matrix = delta_matrix.copy()
 
     # Calibrate the kernel onto the MZI
-    numSteps = 200
+    numSteps = 20
     start_time = time()
     record, params, matrices = mzi.ApplyDelta(delta_matrix,
                                               numSteps=numSteps,
-                                              numDirections=8,
+                                              numDirections=12,
                                               eta=1,
                                               verbose=True,
                                               )
@@ -238,6 +242,7 @@ print(f"Target delta matrix: \n{target_delta_matrix}")
 min_run_delta = np.min(record)
 min_index = np.argmin(record)
 min_run_params = params[min_index]
+min_run_matrix = matrices[min_index]
 print(f"Minimum run delta (index={min_index}): {min_run_delta}")
 
 if min_run_delta < min_delta:
@@ -251,7 +256,7 @@ if min_run_delta < min_delta:
         "seed": seed,
         "minimum_delta": min_delta,
         "best_params": final_params,
-        "final_matrix": mzi.get().tolist(),
+        "best_matrix": min_run_matrix.tolist(),
     }
     params_json_file = os.path.join(current_dir, "crirel_params.json")
     json.dump(new_dict, open(params_json_file, "w"), indent=4)
@@ -259,7 +264,8 @@ else:
     log.info(f"No improvement in minimum delta: {min_run_delta} >= {min_delta}")
     print(f"Run delta is NOT smaller than the previous minimum delta.")
 
-
+crirel_matrix = np.round((min_run_matrix[1:,:] - min_run_matrix[0,:])*33)
+print(f"Resulting CRIREL matrix (scaled & rounded): \n{crirel_matrix}")
 
 plt.figure()
 plt.plot(record)

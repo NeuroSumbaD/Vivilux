@@ -461,12 +461,12 @@ class HardMZI_v3(MZImesh):
             Updates self.matrix and returns the difference vector between target
             and implemented delta.
         '''
-
         deltaFlat = delta.copy().flatten().reshape(-1,1)
         self.record = [magnitude(deltaFlat)]
         self.params_hist=[self.voltages.copy()]
         self.matrix_hist = [self.get().copy()]  # store the initial matrix
         initial_update_mag = self.updateMagnitude
+        target_matrix = delta + self.get()
         
 
         for step in range(numSteps):
@@ -503,6 +503,7 @@ class HardMZI_v3(MZImesh):
             self.params_hist.append(newPs.flatten() + scaledUpdate)
             # trueDelta = self.get()/self.Gscale - currMat
             trueDelta = self.get() - currMat
+            log.debug(f"Calculated trueDelta: {trueDelta}")
             self.matrix_hist.append(trueDelta + currMat)
             
             if verbose:
@@ -517,8 +518,11 @@ class HardMZI_v3(MZImesh):
                     print(correlate(deltaFlat.flatten(), predDelta.flatten()))
                 except FloatingPointError as e:
                     print(f"Floating point error occurred during correlate: {e}")
-            deltaFlat -= trueDelta.flatten().reshape(-1,1) # substract update
-            deltaFlat -= self.resetDelta.flatten().reshape(-1,1) # subtract any delta due to voltage reset
+            # deltaFlat -= trueDelta.flatten().reshape(-1,1) # substract update
+            # deltaFlat -= self.resetDelta.flatten().reshape(-1,1) # subtract any delta due to voltage reset
+            newDelta = target_matrix - self.get()
+            log.debug(f"Calculated newDelta: {newDelta}")
+            deltaFlat = newDelta.flatten().reshape(-1,1)
             self.resetDelta = np.zeros(self.shape) # reset the reset delta
             self.record.append(magnitude(deltaFlat))
             if verbose: print(f"Magnitude of delta: {magnitude(deltaFlat)}")
