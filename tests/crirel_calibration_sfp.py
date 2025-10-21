@@ -82,6 +82,7 @@ ser_boards = [
         ser.AOPIN("2_3_i", 31),
         ser.AOPIN("3_4_i", 33),
         ser.AOPIN("2_5_i", 35),
+        ser.AOPIN("1_5_o", 37),
         
         ser.AOPIN("4_1_i", 14),
         ser.AOPIN("5_2_i", 16),
@@ -184,10 +185,10 @@ with netlist:
         inputLaser=inputLaser,
         psPins=["3_1_i", "2_2_i", "4_2_i", "3_3_i", "2_4_i", "4_4_i", # main pins for 4x4 subset
                 "2_2_o", "4_2_o", "3_3_o", "2_4_o", "4_4_o", # PHI phase shifters
-                "1_1_i", "1_3_o", "1_3_i", "1_5_i",
+                "1_1_i", "1_3_o", "1_3_i", "1_5_i", "1_5_o",
                 ],
         netlist=netlist,
-        updateMagnitude = 0.8,
+        updateMagnitude = 0.65,
         # updateMagDecay = 0.985,
         # ps_delay=50e-3,  # delay for phase shifter voltage to settle
         num_samples=1,
@@ -195,8 +196,8 @@ with netlist:
         check_stop=200, # set to a larger number to avoid stopping early
         
         # default generator is a uniform distribution on all parameters
-        # step_generator=gen_from_one_hot, # use one-hot step vectors (trivial basis function for stepVectors)
-        step_generator=partial(gen_from_sparse_permutation, numHot=5), # use sparse permutation basis for stepVectors
+        step_generator=gen_from_one_hot, # use one-hot step vectors (trivial basis function for stepVectors)
+        # step_generator=partial(gen_from_sparse_permutation, numHot=5), # use sparse permutation basis for stepVectors
     )
     
     # Set the initial parameters to the best known parameters
@@ -220,11 +221,11 @@ with netlist:
     target_delta_matrix = delta_matrix.copy()
 
     # Calibrate the kernel onto the MZI
-    numSteps = 20
+    numSteps = 500
     start_time = time()
     record, params, matrices = mzi.ApplyDelta(delta_matrix,
                                               numSteps=numSteps,
-                                              numDirections=12,
+                                              numDirections=len(mzi.psPins),
                                               eta=1,
                                               verbose=True,
                                               )
@@ -266,10 +267,13 @@ else:
 
 crirel_matrix = np.round((min_run_matrix[1:,:] - min_run_matrix[0,:])*33)
 print(f"Resulting CRIREL matrix (scaled & rounded): \n{crirel_matrix}")
+target_crirel_matrix = np.round((target_matrix[1:,:] - target_matrix[0,:])*33)
+print(f"Target CRIREL matrix (scaled & rounded): \n{target_crirel_matrix}")
 
 plt.figure()
 plt.plot(record)
 plt.title("MZI Calibration")
 plt.xlabel("LAMM Iteration")
 plt.ylabel("Frobenius Norm of Delta Matrix")
+plt.savefig(f"CRIREL_Calibration_minDelta--{np.round(min_delta, 6)}_seed--{seed}_lasers--11100_fixedTrueDelta")
 plt.show()
