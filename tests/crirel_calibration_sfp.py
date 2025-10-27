@@ -252,10 +252,10 @@ if min_run_delta < min_delta:
     min_delta = min_run_delta
     best_params = min_run_params
     # Save the final parameters to a JSON file
-    final_params = {net: value for net, value in zip(mzi.psPins, best_params)}
+    final_params = {net: float(value) for net, value in zip(mzi.psPins, best_params)}
     new_dict = {
         "seed": seed,
-        "minimum_delta": min_delta,
+        "minimum_delta": float(min_delta),
         "best_params": final_params,
         "best_matrix": min_run_matrix.tolist(),
     }
