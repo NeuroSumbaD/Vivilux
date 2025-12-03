@@ -44,6 +44,7 @@ class Board(daq.Board):
         np.ndarray
             An array containing the voltage inputs from the specified pins.
         '''
+        # TODO: guarantee that the output matrix has the channels in the same order
         with nidaqmx.Task() as task:
             for pin_name in pin_names:
                 pin = self.pins[pin_name]
@@ -161,8 +162,8 @@ def config_detected_devices(boards: list[Board],
 class USB_6210(Board):
     '''NI USB-6210 DAQ board.
     '''
-    def __init__(self, name: str, dev_serial_num: int, *pins: list[daq.PIN]):
-        super().__init__(name, dev_serial_num, *pins)
+    def __init__(self, name: str, dev_serial_num: int, *pins: list[daq.PIN], **kwargs):
+        super().__init__(name, dev_serial_num, *pins, **kwargs)
 
 # TODO: implement std deviation option for vin like group_vin above
 class AIPIN(daq.PIN):
@@ -181,8 +182,8 @@ class AIPIN(daq.PIN):
                                                  max_val=2.0,
                                                  terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
             task.timing.cfg_samp_clk_timing(rate=250e3)
-            data = np.array(task.read(number_of_samples_per_channel=1000))
-            data = np.mean(data[10:]) # skips first few samples to avoid noise from initialization
+            data = np.array(task.read(number_of_samples_per_channel=self.board.num_samples))
+            data = np.mean(data[self.board.num_samples_to_skip:]) # skips first few samples to avoid noise from initialization
             # TODO: make these values configurable for different sampling and averaging
         
         # log.debug(f"Read 100 samples from {self.board.board_num}/ai{self.chnl}"

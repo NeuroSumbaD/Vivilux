@@ -14,7 +14,7 @@ if __name__=="__main__":
                         # bad_dac2,
                         )
     
-    fpga = ser.VC_709("VC-709",
+    fpga = ser.VC_709("VC-709-6x6",
                       ser.DIOPIN("Laser 0",0),
                       ser.DIOPIN("Laser 1",1),
                       ser.DIOPIN("Laser 2",2),

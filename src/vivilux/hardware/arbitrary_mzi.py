@@ -104,6 +104,8 @@ class HardMZI_v3(MZImesh):
                  initialize: bool = True, # whether to calculate the initial MZI matrix
                  use_norm: bool = True,  # whether to normalize the output columns
                  step_generator: Callable[[tuple[int, ...]], StepGenerator] = gen_from_uniform, # step vector generator (used during matrix gradient calculation)
+                 one_hot: bool = True,
+                 skip_zeros: bool = False,
                  **kwargs):
         # TODO: add support for attachment to Leabra Net
         # Mesh.__init__(self, size, inLayer, **kwargs)
@@ -122,6 +124,8 @@ class HardMZI_v3(MZImesh):
         self.check_stop = check_stop
         self.numUnits = len(psPins)
         self.use_norm = use_norm
+        self.one_hot = one_hot
+        self.skip_zeros = skip_zeros
         
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
         self.updateMagDecay = updateMagDecay # Decay rate of the update magnitude
@@ -310,21 +314,28 @@ class HardMZI_v3(MZImesh):
         '''
         log.debug(f"Applying data to MZI: {data}")
         outputs = []
-        if np.all(data == 0):
+        if np.all(data == 0) and self.skip_zeros:
             return np.zeros(self.outputDetectors.size)  # return zero vector if input is zero (skips zero multiplication)
-        for index, datum in enumerate(data):
-            vector = np.zeros(len(data))
-            vector[index] = 1.0
-            self.inputLaser.setNormalized(vector)
+        if not self.one_hot:
+            self.inputLaser.setNormalized(data)
             outData = self.readOut(self.num_samples)
-            log.debug(f"Photocurrent (channel {index}) readout: {outData}")
-            norm_factor = L1norm(outData) 
-            outData /= norm_factor if norm_factor != 0 else 1.0  # avoid division by zero 
-            outData *= datum
-            log.debug(f"Normalized (channel {index}) output: {outData}")
-            outputs.append(outData)
+            # norm_factor = L1norm(outData)
+            # outData /= norm_factor if norm_factor != 0 else 1.0  # avoid division by zero 
+            output = np.array(outData)
+        else:
+            for index, datum in enumerate(data):
+                vector = np.zeros(len(data))
+                vector[index] = 1.0
+                self.inputLaser.setNormalized(vector)
+                outData = self.readOut(self.num_samples)
+                log.debug(f"Photocurrent (channel {index}) readout: {outData}")
+                norm_factor = L1norm(outData) 
+                outData /= norm_factor if norm_factor != 0 else 1.0  # avoid division by zero 
+                outData *= datum
+                log.debug(f"Normalized (channel {index}) output: {outData}")
+                outputs.append(outData)
             
-        output = np.sum(outputs, axis=0)
+            output = np.sum(outputs, axis=0)
         return output
 
     def readOut(self, num_samples: int = 10) -> np.ndarray:

@@ -261,7 +261,7 @@ class AOPIN(daq.PIN):
         pinName: str: The name of the pin to set the analog output voltage of
         voltage: float: The voltage to set the pin to
         '''
-
+        voltage = float(voltage)
         super().vout(voltage)
 
         self.board: Board

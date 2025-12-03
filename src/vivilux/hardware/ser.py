@@ -242,12 +242,12 @@ class VC_709(BoardManager):
             raise RuntimeError(err_msg)
         
         # Write both address 4 and 8 to zero to tell FPGA to attend to the UART states
-        self.serial.write(b"W 4 F0000000\n") # Turn vibration off on lasers
+        self.serial.write(b"W 4 FFF00000\n") # Turn vibration off on lasers
         response = self.serial.readline().decode().strip()
         if response != "OK":
             log.error(f"Error: Failed to turn off vibration on lasers: {response}")
             raise RuntimeError(f"Error: Failed to turn off vibration on lasers: {response}")
-        self.serial.write(b"W 8 F0000000\n") # Turn off all lasers
+        self.serial.write(b"W 8 FFF00000\n") # Turn off all lasers
         response = self.serial.readline().decode().strip()
         if response != "OK":
             log.error(f"Error: Failed to turn off lasers: {response}")
@@ -317,7 +317,7 @@ class VC_709(BoardManager):
     def to_hex_command(self, states: list[int]):
         '''Converts the states list to the correct hex command'''
         state_str = '{:x}'.format(int(''.join(map(str, states)), 2)).upper()
-        byte_str = bytes("F000000" + state_str, encoding='utf-8')
+        byte_str = bytes("FFF0000" + state_str, encoding='utf-8')
         return byte_str
 
 class AOPIN(daq.PIN):
