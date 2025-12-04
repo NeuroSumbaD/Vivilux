@@ -555,6 +555,8 @@ class SFPLaserArray(LaserArray):
         if self.use_vibrations:
             log.info("Using vibrations to control SFP laser array.")
             self.board.update_lasers([1]*self.size)  # Ensure all lasers are on initially
+            print("Waiting 5 seconds for SFP lasers to turn on...")
+            sleep(5)
         else:
             log.info("Using direct laser control for SFP laser array.")
             self.board.update_lasers([0]*self.size)  # Ensure all lasers are off initially

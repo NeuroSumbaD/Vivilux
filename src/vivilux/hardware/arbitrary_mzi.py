@@ -262,12 +262,13 @@ class HardMZI_v3(MZImesh):
             column = np.maximum(columnReadout, 0) # assume negative values are noise
 
             # normalize the read to account for loss (TODO: check if this is necessary)
-            if L1norm(column) == 0:
+            norm = L1norm(column)
+            if norm == 0:
                 log.warning(f"Warning: Zero norm on chan={chan}. Column readout:\n{columnReadout}")
             else:
                 if self.use_norm:
                     if calculateNorms:
-                        self.norm_factors[:,chan] = L1norm(column)
+                        self.norm_factors[:,chan] = norm
                         log.info(f"Calculated norm factor for channel {chan}: {self.norm_factors[:,chan]}")
                     column /= self.norm_factors[:,chan]  # normalize the column
 
@@ -479,12 +480,15 @@ class HardMZI_v3(MZImesh):
         initial_update_mag = self.updateMagnitude
         target_matrix = delta + self.get()
         
+        if self.record[0] < earlyStop:
+            print(f"Initial delta magnitude {self.record[0]} below early stop threshold {earlyStop}. No update applied.")
+            return self.record, self.params_hist, self.matrix_hist
 
         for step in range(numSteps):
             newPs = self.powers.copy()
             # currMat = self.get()/self.Gscale
             currMat = self.get()
-            print(f"Step: {step}, magnitude delta = {magnitude(deltaFlat)}")  
+            print(f"Step: {step}, magnitude delta = {magnitude(deltaFlat)}")
             X_raw, V_raw = self.getGradients(delta, newPs, numDirections, verbose)
             derivative_norms = np.linalg.norm(X_raw, axis=0)
             # Drop any zero-norm directions

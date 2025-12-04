@@ -18,11 +18,13 @@ class DetectorArray:
                  nets: list[str],  # List of detector net names to read from
                  netlist: daq.Netlist, # Netlist to use for reading the detectors
                  transimpedance: float = 220e3, # transimpedance of the detectors in ohms (default: 220k ohms)
+                 min_zero: bool = True, # whether to set negative readings to zero
                  ):
         self.size = size
         self.nets = nets
         self.netlist = netlist
         self.transimpedance = transimpedance
+        self.min_zero = min_zero
         
         shared_board = netlist.share_board(nets)
         if shared_board is None:
@@ -65,7 +67,10 @@ class DetectorArray:
         reading /= self.transimpedance  # Convert to photocurrent (proportional to power)
         # NOTE: most c-band detectors have around 0.9 A/W so photocurrent is
         # pretty close to power in Watts
-        return np.maximum(reading, 0)
+        if self.min_zero:
+            return np.maximum(reading, 0)
+        else:
+            return reading
     
     def read_raw(self) -> tuple[np.ndarray, np.ndarray]:
         '''Reads the raw voltage values from the detector nets without offset

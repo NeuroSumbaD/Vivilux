@@ -499,6 +499,12 @@ def config_detected_devices(boards: list[BoardManager],
         raise Exception(f"Error: {num_boards - num_initialized} boards not initialized. "
                         "Check if the unique IDs exist and are plugged in. "
                         "Use 'ser.get_detected_devices()' to see the available devices.")
+        
+    board_names = [board.board_name for board in boards]
+    for name in _board_dict:
+        if name not in board_names:
+            log.info(f"Closing unused connection to board {name}.")
+            _board_dict[name].close()
 
 # Mapping from unique board IDs to their serial connections
 _board_dict: dict[str, serial.Serial] = {}

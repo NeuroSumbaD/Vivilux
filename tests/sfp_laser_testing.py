@@ -34,4 +34,8 @@ if __name__=="__main__":
                 print("Exiting...")
                 break
             else:
-                fpga.update_lasers([int(bit) for bit in states])
+                if states[0].lower() == "v":
+                    vib_states = states[1:]
+                    fpga.update_vibration([int(bit) for bit in vib_states])
+                else:
+                    fpga.update_lasers([int(bit) for bit in states])

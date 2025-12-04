@@ -31,6 +31,10 @@ class Board(daq.Board):
         self.num_samples = num_samples
         self.num_samples_to_skip = num_samples_to_skip
         
+        self.pin_list: list[daq.PIN] = list(pins)
+        self.pin_index_map: dict[str, int] = {}
+        self.task = None
+        
     def group_vin(self, pin_names, std=False):
         '''Groups the voltage inputs from the specified pins into a single array.
         
@@ -44,18 +48,31 @@ class Board(daq.Board):
         np.ndarray
             An array containing the voltage inputs from the specified pins.
         '''
-        # TODO: guarantee that the output matrix has the channels in the same order
-        with nidaqmx.Task() as task:
-            for pin_name in pin_names:
-                pin = self.pins[pin_name]
+        if self.task is None:
+            self.task: nidaqmx.Task = nidaqmx.Task()
+            for idx, pin in enumerate(self.pin_list):
                 if not isinstance(pin, AIPIN):
-                    raise TypeError(f"Pin {pin_name} is not an AIPIN.")
-                task.ai_channels.add_ai_voltage_chan(f"{self.board_num}/ai{pin.chnl}",
-                                                     min_val=self.min_val,
-                                                     max_val=self.max_val,
-                                                     terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
-            raw_data = np.array(task.read(number_of_samples_per_channel=self.num_samples))
-            data = np.mean(raw_data[:, self.num_samples_to_skip:], axis=1) # skips first few samples to avoid noise during a transition
+                    raise TypeError(f"Pin {pin.net_name} is not an AIPIN.")
+                self.task.ai_channels.add_ai_voltage_chan(f"{self.board_num}/ai{pin.chnl}",
+                                                            min_val=self.min_val,
+                                                            max_val=self.max_val,
+                                                            terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
+                # Map pin name to its index in the task
+                self.pin_index_map[pin.net_name] = idx
+            self.task.timing.cfg_samp_clk_timing(rate=0.8*250e3/ len(self.pin_list), # 250 kHz divided by number of chann
+                                                 sample_mode=nidaqmx.constants.AcquisitionType.FINITE,  # Explicitly set finite acquisition
+                                                 samps_per_chan=self.num_samples
+                                                )  
+            self.task.start()
+            self.task.read(number_of_samples_per_channel=self.num_samples)  # Initial read to set up the task
+            self.task.stop() # Ensure task is stopped before reading
+        
+        self.task.start()
+        full_data = np.array(self.task.read(number_of_samples_per_channel=self.num_samples))
+        indices = [self.pin_index_map[pin_name] for pin_name in pin_names]
+        raw_data = full_data[indices, self.num_samples_to_skip:]  # Select only the requested pins
+        data = np.mean(raw_data, axis=1) # skips first few samples to avoid noise during a transition
+        self.task.stop()
         
         if std:
             return data, np.std(raw_data, axis=1)
@@ -88,6 +105,15 @@ class Board(daq.Board):
                                                      terminal_config=nidaqmx.constants.TerminalConfiguration.RSE)
             data = np.array(task.read(number_of_samples_per_channel=self.num_samples))
         return data
+    
+    def __del__(self):
+        '''Cleanup: close the task when the board object is destroyed.'''
+        if self.task is not None:
+            try:
+                self.task.close()
+                log.info("NI DAQ task closed during cleanup.")
+            except:
+                log.error("Error closing NI DAQ task during cleanup.")
 
 def get_driver_version() -> namedtuple:
     system = nidaqmx.system.System.local()
@@ -137,6 +163,7 @@ def config_detected_devices(boards: list[Board],
         for device in system.devices:
             print(f'Name: {device.product_type} ({device.dev_serial_num}) - '
                   f'Device ID = {device.product_num}') 
+            device.reset_device()
             if device.dev_serial_num in device_ids:
                 index = device_ids.index(device.dev_serial_num)
                 boards[index].board_num = device.name
