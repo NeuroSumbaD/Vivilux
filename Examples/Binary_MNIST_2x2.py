@@ -271,17 +271,6 @@ with netlist:
         lasers=inputLaser,  # Use the input laser for calibration
     )
     
-    # Load bar state MZI configuration and set initial voltages
-    # try:
-    #     # load bar state from test folder in parent directory
-    #     tests_dir = os.path.join(os.path.dirname(__main__.__file__), "tests")
-    #     json_path = os.path.join(tests_dir, "5x5_bar_state_voltages.json")
-    #     json_dict = json.load(open(json_path, "r"))
-    #     for net, voltage in json_dict.items():
-    #         netlist[net].vout(voltage)
-    # except FileNotFoundError:
-    #     raise RuntimeError("Bar state voltages file not found, cannot proceed with calibration.")
-    
     print("Turning the lasers off (vibration).")
     inputLaser.setNormalized([0, 0, 0, 0])  # Set initial laser powers to 0
 
