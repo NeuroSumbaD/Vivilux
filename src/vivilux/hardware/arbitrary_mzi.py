@@ -358,8 +358,8 @@ class HardMZI_v3(MZImesh):
         '''
         # params[0] = np.maximum(params[0],0)
         ps = params[0].flatten()  # Flatten the array to 1D
-        paramsToReset =  ps > self.powReset
-        paramsToReset = np.logical_or(ps < 0, paramsToReset)
+        paramsToReset =  ps >= self.powReset
+        paramsToReset = np.logical_or(ps <= 0, paramsToReset)
         paramsToReset = paramsToReset.flatten()
         # print(f"paramsToReset: {paramsToReset}")
         if np.sum(paramsToReset) > 0: #check if any values need resetting

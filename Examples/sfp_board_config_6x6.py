@@ -73,6 +73,18 @@ ser_boards = [
         ser.AOPIN("4_3_i", 18),
         ser.AOPIN("5_4_i", 20),
         ser.AOPIN("4_5_i", 22),
+        
+        ser.AOPIN("3_6_i", 39),
+        
+        ser.AOPIN("2_6_o", 24),
+        ser.AOPIN("2_6_i", 26),
+        ser.AOPIN("6_1_i", 28),
+        ser.AOPIN("6_5_i", 30),
+        
+        ser.AOPIN("6_5_o", 32),
+        ser.AOPIN("6_4_o", 34),
+        ser.AOPIN("6_3_o", 36),
+        ser.AOPIN("6_3_i", 38),
     ),
 ]
 
@@ -84,6 +96,13 @@ ser_boards = [
 #         mcc.AOPIN("Mod_3", 6),
 #         # mcc.AOPIN("laser_5", 1),
 #         # mcc.AOPIN("laser_6", 3),
+#     ),
+#     mcc.USB_3114("EXTRA", "1FD2F3C",
+#         mcc.AOPIN("", 0),
+#         mcc.AOPIN("", 0),
+#         mcc.AOPIN("", 0),
+#         mcc.AOPIN("", 0),
+#         mcc.AOPIN("", 0),
 #     ),
 # ]
 
