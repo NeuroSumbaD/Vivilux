@@ -93,6 +93,7 @@ class HardMZI_v3(MZImesh):
                  netlist: daq.Netlist, # netlist for daq
                  # TODO: add support for opposing arm phase shifters
                 #  psCompliment: Optional[list[str]] = None, # phase shifter pin names for opposing arms in the MZI
+                 compPsPins: Optional[list[str]] = None, # complementary pins for reversing phase shift (same MZI opposing arm)
                  updateMagnitude=0.01,
                  updateMagDecay=0.9945, # Decay rate of the update magnitude
                  numDirections=12,
@@ -115,6 +116,7 @@ class HardMZI_v3(MZImesh):
         self.inputLaser = inputLaser
         self.psPins = psPins # TODO: standardize pin names for any size MZI
         self.netlist = netlist # TODO: standard netlist names to avoid many net name lists above
+        self.compPsPins = compPsPins
         self.psReset = psReset
         self.psLimits = psLimits
         self.powLimits = tuple(lim**2 for lim in psLimits) # power limits for phase shifters
@@ -132,6 +134,7 @@ class HardMZI_v3(MZImesh):
         self.numDirections = numDirections
 
         # bound initial voltages between zero and middle of range
+        # TODO: find better initialization strategy (random uniform between -2pi and 2pi?)
         self.voltages = np.random.rand(self.numUnits,1) * \
             (self.psLimits[1]-self.psLimits[0])/2 + self.psLimits[0]
         self.powers = np.square(self.voltages) # power is proportional to square of voltage
@@ -148,6 +151,9 @@ class HardMZI_v3(MZImesh):
             print('Initial Matrix: \n', initMatrix)
 
         self.records = [] # for recording the convergence of deltas
+        
+        if self.compPsPins is not None and len(self.compPsPins) != len(self.psPins):
+            raise ValueError("Error: Length of compPsPins must match length of psPins")
 
         #TODO: Add any calibration procedures here, such as calibrating the laser to
         # make normalized power setting and reading easier
@@ -167,7 +173,7 @@ class HardMZI_v3(MZImesh):
         ps = np.sqrt(powers)  # Convert powers to voltages
         assert(ps.size == self.numUnits), f"Error: {ps.size} != {self.numUnits}"
         self.voltages = self.BoundParams([ps])[0]
-        self.powers = np.square(self.voltages)  # Update powers based on bounded voltages
+        self.powers = np.square(self.voltages) * np.sign(self.voltages)  # Update powers based on bounded voltages
             
         self.modified = True
 
@@ -179,9 +185,9 @@ class HardMZI_v3(MZImesh):
         voltages = np.zeros((self.numUnits,1))
         for pin in params_dict.keys():
             index = self.psPins.index(pin)
-            voltages[index] = np.sqrt(np.maximum(params_dict[pin], 0))
+            voltages[index] = np.sqrt(np.abs(params_dict[pin])) * np.sign(params_dict[pin])
         self.voltages = self.BoundParams([voltages])[0]
-        self.powers = np.square(self.voltages)  # Update powers based on bounded voltages
+        self.powers = np.square(self.voltages) * np.sign(self.voltages)  # Update powers based on bounded voltages
             
         self.modified = True
 
@@ -192,7 +198,16 @@ class HardMZI_v3(MZImesh):
         '''
         log.debug(f"Setting phase shifters to voltages: {self.voltages}")
         for index, volt in enumerate(self.voltages):
-            self.netlist[self.psPins[index]].vout(volt)
+            # TODO: should probably refactor to use array operation rather than for loops
+            if volt < 0:
+                if self.compPsPins is not None and self.compPsPins[index] is not None:
+                    # use complementary phase shifter to reverse phase shift
+                    self.netlist[self.compPsPins[index]].vout(np.abs(volt))
+                self.netlist[self.psPins[index]].vout(0.0) # set to zero volts
+            else:
+                self.netlist[self.psPins[index]].vout(volt)
+                if self.compPsPins is not None and self.compPsPins[index] is not None:
+                    self.netlist[self.compPsPins[index]].vout(0.0) # set complementary to zero volts
         sleep(self.ps_delay)  # Allow time for the voltages to settle
 
     def testParams(self, params: list[np.ndarray], measure: bool = True) -> np.ndarray | None:
@@ -358,11 +373,12 @@ class HardMZI_v3(MZImesh):
         '''
         # params[0] = np.maximum(params[0],0)
         ps = params[0].flatten()  # Flatten the array to 1D
-        paramsToReset =  ps >= self.powReset
-        paramsToReset = np.logical_or(ps <= 0, paramsToReset)
+        paramsToReset =  np.abs(ps) >= self.powReset
+        # paramsToReset = np.logical_or(ps <= 0, paramsToReset)
         paramsToReset = paramsToReset.flatten()
         # print(f"paramsToReset: {paramsToReset}")
         if np.sum(paramsToReset) > 0: #check if any values need resetting
+            # TODO: smart reset should traverse (-2pi, 2pi) range and find best reset
             matrix = self.get()
             numParams = np.sum(paramsToReset)
             randomReInit = np.random.rand(numParams) * \

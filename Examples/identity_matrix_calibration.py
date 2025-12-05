@@ -66,6 +66,10 @@ with netlist:
                 # "1_1_i", "1_3_o", "1_3_i", "1_5_i", "1_5_o",
                 ],
         netlist=netlist,
+        compPsPins=["1_1_i", "3_2_i", "1_3_i", "3_4_i", "2_5_i", # THETA
+                    "4_1_i", "4_3_i", "4_5_i", "5_2_i", "5_4_i", # THETA
+                    "6_1_i", "6_3_i", "6_5_i", # THETA
+                   ], # NOTE: must be complimentary to psPins and ordered accordingly
         updateMagnitude = 0.8,
         updateMagDecay = 0.985,
         # ps_delay=50e-3,  # delay for phase shifter voltage to settle
@@ -96,7 +100,7 @@ with netlist:
     result = mzi.ApplyDelta(delta,
                             eta=0.1,
                             numDirections=14,
-                            numSteps=50,
+                            numSteps=500,
                             earlyStop=1e-2,
                             verbose=True,
                             )
