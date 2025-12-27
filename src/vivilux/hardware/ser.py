@@ -390,12 +390,18 @@ def find_boards(repeat = False) -> dict[str, serial.Serial]:
 
     log.info("Searching for connected DAQ boards...")
     ports = serial.tools.list_ports.comports()
+    log.info(f"Found {len(ports)} serial ports: {[port.device for port in ports]}.")
     for port in ports:
         try:
             log.debug(f"Trying port {port.device}")
             # Attempt to connect to each port
-            ser = serial.Serial(port.device, 115200, timeout=2)
-            time.sleep(2) # Give time to reset after opening port
+            ser = serial.Serial(port.device,
+                                115200,
+                                timeout=3,
+                                dsrdtr=False, # Prevents resetting the device on port open
+                                rtscts=False, # Prevents resetting the device on port open
+                                exclusive=True)
+            time.sleep(3) # Give time to reset after opening port
 
             # Read any initial messages and perform handshake
             while ser.in_waiting:
@@ -415,7 +421,8 @@ def find_boards(repeat = False) -> dict[str, serial.Serial]:
                 log.info(f"Received UID: {board_id}")
             else:
                 log.warning(f"Unexpected response during handshake: {uid_response}")
-                return None
+                ser.close() # Close connection if handshake failed
+                continue
 
             if board_id:
                 _board_dict[board_id] = ser
