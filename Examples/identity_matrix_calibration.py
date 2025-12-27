@@ -1,3 +1,7 @@
+'''Example script to calibrate a 6x6 MZI mesh to the identity matrix
+    using SFP lasers and detectors. Used as a first attempt to verify
+    the functionality of the MZI calibration algorithm.
+'''
 from sfp_board_config_6x6 import netlist, fpga
 
 import __main__
@@ -12,9 +16,15 @@ from vivilux.hardware.detectors import DetectorArray
 from vivilux.hardware.arbitrary_mzi import HardMZI_v3, gen_from_one_hot, gen_from_sparse_permutation
 from vivilux.hardware.lasers import SFPLaserArray, SFPDetectorArray
 
-data = np.load("./Examples/identity_params.npz")
-old_params = data["params"][-1]
-old_history = data["history"]
+main_file = os.path.abspath(__main__.__file__)
+params_file = os.path.join(os.path.dirname(main_file), "identity_params.npz")
+if not os.path.exists(params_file):
+    old_params = np.ones(7)*3.5  # initial guess for 2*Vpi of each MZI in the mesh
+    old_history = None # empty history
+else:
+    data = np.load(params_file)
+    old_params = data["params"][-1]
+    old_history = data["history"]
 
 print("Entering netlist context...")
 # Define experiment within netlist context
@@ -50,6 +60,12 @@ with netlist:
         lasers=inputLaser,  # Use the input laser for calibration
     )
     
+    print("Loading the through states from json...")
+    with open(os.path.join(os.path.dirname(main_file), "through_states.json"), "r") as f:
+        through_states = json.load(f)
+    for ps_name, voltage in through_states.items():
+        netlist[ps_name].vout(voltage)
+    
     print("Turning the lasers off (vibration).")
     inputLaser.setNormalized([0, 0, 0, 0])  # Set initial laser powers to 0
 
@@ -59,28 +75,28 @@ with netlist:
         shape=(6, 4),
         outputDetectors=outputDetectors,
         inputLaser=inputLaser,
-        psPins=["2_1_i", "2_2_i", "2_3_i", "2_4_i", "1_5_i", # THETA
+        psPins=["2_2_i", "2_4_i", # THETA
                 "3_1_i", "3_3_i", "3_5_i", "4_2_i", "4_4_i", # THETA
-                "5_1_i", "5_3_i", "5_5_i", # THETA
-                # "2_2_o", "4_2_o", "3_3_o", "2_4_o", "4_4_o", # PHI phase shifters
-                # "1_1_i", "1_3_o", "1_3_i", "1_5_i", "1_5_o",
+                # "5_1_i", "5_3_i", "5_5_i", # THETA (should be in bar state for identity)
                 ],
         netlist=netlist,
-        compPsPins=["1_1_i", "3_2_i", "1_3_i", "3_4_i", "2_5_i", # THETA
+        compPsPins=["3_2_i", "3_4_i", # THETA
                     "4_1_i", "4_3_i", "4_5_i", "5_2_i", "5_4_i", # THETA
-                    "6_1_i", "6_3_i", "6_5_i", # THETA
+                    # "6_1_i", "6_3_i", "6_5_i", # THETA (should be in bar state for identity)
                    ], # NOTE: must be complimentary to psPins and ordered accordingly
         updateMagnitude = 0.8,
-        updateMagDecay = 0.985,
+        updateMagDecay = 0.92,
+        psLimits=(3.0, 4.0),  # Phase shifter voltage limits
+        psReset=5.2,
         # ps_delay=50e-3,  # delay for phase shifter voltage to settle
         num_samples=1,
-        # initialize=False,
+        initialize=False,
         check_stop=200, # set to a larger number to avoid stopping early
         skip_zeros=False, # don't skip zero vectors (gives reasonable noise output)
         one_hot=False, # send input vector in one shot (can be problematic for unbalanced lasers)
         
         # default generator is a uniform distribution on all parameters
-        # step_generator=gen_from_one_hot, # use one-hot step vectors (trivial basis function for stepVectors)
+        step_generator=gen_from_one_hot, # use one-hot step vectors (trivial basis function for stepVectors)
         # step_generator=partial(gen_from_sparse_permutation, numHot=3), # use sparse permutation basis for stepVectors
     )
     mzi.setParams([old_params])  # Load previous parameters
@@ -95,28 +111,36 @@ with netlist:
     
     initialMatrix = mzi.get()
     delta = target - initialMatrix
+    print("Initial MZI delta:")
+    print(delta)
     
     print("Initial error (Frobenius norm):", np.linalg.norm(delta))
     result = mzi.ApplyDelta(delta,
                             eta=0.1,
-                            numDirections=14,
-                            numSteps=500,
+                            numDirections=len(mzi.psPins),
+                            numSteps=15,
                             earlyStop=1e-2,
                             verbose=True,
                             )
     history, params_hist, matrix_hist = result
     
     finalMatrix = mzi.measureMatrix(np.zeros((6,4)))
-    print("Final error (Frobenius norm):", np.linalg.norm(target - finalMatrix))
+    finalDelta = target - finalMatrix
+    print("Final MZI delta:")
+    print(finalDelta)
+    print("Final error (Frobenius norm):", np.linalg.norm(finalDelta))
     
     print("Calibration complete.")
-    full_history = np.concatenate((old_history, history))
-    params_hist = np.array(params_hist)
-    full_params_hist = np.concatenate((data["params"], np.array(params_hist)), axis=0)
-    best_params = full_params_hist[np.argmin(full_history)]
-    full_params_hist = np.concatenate((full_params_hist, best_params[None,:]), axis=0)  # append best params at end
-    full_history = np.concatenate((full_history, [np.min(full_history)])) # append best error at end
-    np.savez("./Examples/identity_params.npz", params=full_params_hist, history=full_history)
+    if old_history is None:
+        np.savez("./Examples/identity_params.npz", params=np.array(params_hist), history=history)
+    else:
+        full_history = np.concatenate((old_history, history))
+        params_hist = np.array(params_hist)
+        full_params_hist = np.concatenate((data["params"], np.array(params_hist)), axis=0)
+        best_params = full_params_hist[np.argmin(full_history)]
+        full_params_hist = np.concatenate((full_params_hist, best_params[None,:]), axis=0)  # append best params at end
+        full_history = np.concatenate((full_history, [np.min(full_history)])) # append best error at end
+        np.savez("./Examples/identity_params.npz", params=full_params_hist, history=full_history)
     
 plt.figure()
 plt.plot(history)

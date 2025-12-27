@@ -81,9 +81,9 @@ ser_boards = [
         ser.AOPIN("6_1_i", 28),
         ser.AOPIN("6_5_i", 30),
         
-        ser.AOPIN("6_5_o", 32),
+        ser.AOPIN("5_5_o", 32), # Mislabeled as 6_5_o on board?
         ser.AOPIN("6_4_o", 34),
-        ser.AOPIN("6_3_o", 36),
+        ser.AOPIN("5_3_o", 36), # Mislabeled as 6_3_o on board?
         ser.AOPIN("6_3_i", 38),
     ),
 ]
