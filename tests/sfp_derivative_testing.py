@@ -10,7 +10,7 @@ from time import sleep
 
 from vivilux.logger import log
 from vivilux.hardware.detectors import DetectorArray
-from vivilux.hardware.lasers import SFPLaserArray
+from vivilux.hardware.lasers import SFPLaserArray, SFPDetectorArray
 from vivilux.hardware.arbitrary_mzi import HardMZI_v3
 
 import numpy as np
@@ -90,7 +90,7 @@ ser_boards = [
 
 pico = ser.BoardManager("PICO-001", *ser_boards)
 
-fpga = ser.VC_709("VC-709",
+fpga = ser.VC_709("VC-709-6x6",
                   ser.DIOPIN("Laser_0",0),
                   ser.DIOPIN("Laser_1",1),
                   ser.DIOPIN("Laser_2",2),
@@ -140,6 +140,11 @@ with netlist:
         board=fpga,
         use_vibrations=True,
         pause=50e-3,
+    )
+    
+    outputDetectors = SFPDetectorArray(
+        detectors=outputDetectors,
+        lasers=inputLaser,  # Use the input laser for calibration
     )
 
     

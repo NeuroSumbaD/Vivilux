@@ -107,6 +107,7 @@ class HardMZI_v3(MZImesh):
                  step_generator: Callable[[tuple[int, ...]], StepGenerator] = gen_from_uniform, # step vector generator (used during matrix gradient calculation)
                  one_hot: bool = True,
                  skip_zeros: bool = False,
+                 use_norm_rescale: bool = False,
                  **kwargs):
         # TODO: add support for attachment to Leabra Net
         # Mesh.__init__(self, size, inLayer, **kwargs)
@@ -119,7 +120,7 @@ class HardMZI_v3(MZImesh):
         self.compPsPins = compPsPins
         self.psReset = psReset
         self.psLimits = psLimits
-        self.powLimits = tuple(lim**2 for lim in psLimits) # power limits for phase shifters
+        self.powLimits = tuple(np.sign(lim)*lim**2 for lim in psLimits) # power limits for phase shifters
         self.powReset = psReset**2 # reset power for phase shifters
         self.ps_delay = ps_delay # delay for phase shifter voltage to settle
         self.num_samples = num_samples
@@ -128,6 +129,7 @@ class HardMZI_v3(MZImesh):
         self.use_norm = use_norm
         self.one_hot = one_hot
         self.skip_zeros = skip_zeros
+        self.use_norm_rescale = use_norm_rescale
         
         self.updateMagnitude = updateMagnitude # magnitude of stepVector in matrixGradient
         self.updateMagDecay = updateMagDecay # Decay rate of the update magnitude
@@ -135,9 +137,8 @@ class HardMZI_v3(MZImesh):
 
         # bound initial voltages between zero and middle of range
         # TODO: find better initialization strategy (random uniform between -2pi and 2pi?)
-        self.voltages = np.random.rand(self.numUnits,1) * \
-            (self.psLimits[1]-self.psLimits[0])/2 + self.psLimits[0]
-        self.powers = np.square(self.voltages) # power is proportional to square of voltage
+        self.voltages = np.random.uniform(low=self.psLimits[0], high=self.psLimits[1], size=(self.numUnits,1))
+        self.powers = np.square(self.voltages)*np.sign(self.voltages) # power is proportional to square of voltage
 
         self._gen_step_vector = step_generator(self.voltages.shape)
         
@@ -170,7 +171,7 @@ class HardMZI_v3(MZImesh):
         '''
         params = self.clipParams(params)
         powers = params[0]
-        ps = np.sqrt(powers)  # Convert powers to voltages
+        ps = np.sqrt(np.abs(powers))*np.sign(powers)  # Convert powers to voltages
         assert(ps.size == self.numUnits), f"Error: {ps.size} != {self.numUnits}"
         self.voltages = self.BoundParams([ps])[0]
         self.powers = np.square(self.voltages) * np.sign(self.voltages)  # Update powers based on bounded voltages
@@ -223,7 +224,7 @@ class HardMZI_v3(MZImesh):
         '''
         params = self.clipParams(params)
         powers = params[0].flatten()  # Flatten the array to 1D
-        voltages = np.sqrt(powers)  # Convert powers to voltages
+        voltages = np.sqrt(np.abs(powers))*np.sign(powers)  # Convert powers to voltages
         assert(voltages.size == self.numUnits), f"Error: {voltages.size} != {self.numUnits}, params[0]"
         # assert voltages.max() <= self.psLimits[1] and voltages.min() >= self.psLimits[0], \
             # f"Error: One or more params out of bounds: {voltages}"
@@ -425,11 +426,11 @@ class HardMZI_v3(MZImesh):
             oneHot = np.zeros(self.inputLaser.size, dtype=int)
             oneHot[col] = 1
             self.inputLaser.setNormalized(oneHot)
-            self.testParams([plusVectors.reshape(-1,1)], measure=False)
+            plusMatrix_sanity = self.testParams([plusVectors.reshape(-1,1)])#, measure=False)
             plusReadout, plus_dev = self.outputDetectors.read_raw()
             log.debug(f"Plus readout for column {col} (mV): {plusReadout*1e3} ± {plus_dev*1e3}")
 
-            self.testParams([minusVectors.reshape(-1,1)], measure=False)
+            minusMatrix_sanity = self.testParams([minusVectors.reshape(-1,1)])#, measure=False)
             minusReadout, minus_dev = self.outputDetectors.read_raw()
             log.debug(f"Minus readout for column {col} (mV): {minusReadout*1e3} ± {minus_dev*1e3}")
 
@@ -438,6 +439,8 @@ class HardMZI_v3(MZImesh):
             if self.use_norm:
                 differenceMatrix[:,col] /= self.norm_factors[:,col]
                 std_matrix[:,col] /= self.norm_factors[:,col]
+                
+        differenceMatrix_sanity_check = plusMatrix_sanity - minusMatrix_sanity
 
         # NOTE: The derivative is calculated as -difference/(2*updateMagnitude) because the
         # measurement yields dV/dParam and we want dI/dParam, where I is proportional to V
@@ -512,14 +515,19 @@ class HardMZI_v3(MZImesh):
             V_raw = V_raw[:, derivative_norms != 0]
             # Scale deltaFlat to reasonable step size based on derivative norms
             deltaNorm = np.linalg.norm(deltaFlat)
-            scaledDelta = deltaFlat
-            if deltaNorm > np.sum(derivative_norms): # scale down if it is significantly larger than the total derivative norm
-                normRescale = np.sum(derivative_norms) / np.linalg.norm(deltaFlat)
-                scaledDelta *= normRescale
-            # scaledDelta *= np.minimum([deltaNorm, self.updateMagnitude]) / deltaNorm # Alternative rescaling
-            a, X, V = least_squares_solver_v2(X_raw, V_raw,
-                                            #   deltaFlat) # original
-                                              scaledDelta) # scaled to reasonable step size
+            if self.use_norm_rescale:
+                scaledDelta = deltaFlat.copy()
+                sum_deriv_norms = np.sum(derivative_norms)
+                if deltaNorm > sum_deriv_norms: # scale down if it is significantly larger than the total derivative norm
+                    normRescale = sum_deriv_norms / deltaNorm
+                    scaledDelta *= normRescale
+                # scaledDelta *= np.minimum([deltaNorm, self.updateMagnitude]) / deltaNorm # Alternative rescaling
+                a, X, V = least_squares_solver_v2(X_raw, V_raw,
+                                                #   deltaFlat) # original
+                                                scaledDelta) # scaled to reasonable step size
+            else:
+                a, X, V = least_squares_solver_v2(X_raw, V_raw,
+                                                deltaFlat)
             self.updateMagnitude *= self.updateMagDecay  # Decay the update magnitude
 
             log.debug(f"Norm of a: {np.linalg.norm(a)}")
