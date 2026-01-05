@@ -21,12 +21,10 @@ import argparse
 import json
 import os
 import pathlib
-from time import time, sleep
+from time import sleep
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
-from tqdm import tqdm
 
 from sfp_board_config_6x6 import fpga, netlist
 
