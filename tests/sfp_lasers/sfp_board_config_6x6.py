@@ -30,6 +30,8 @@ ni_boards =[
         ni.AIPIN("PD_6_1", 13),
         ni.AIPIN("PD_1_3", 14),
         ni.AIPIN("PD_6_3", 15),
+        min_val=0.0,
+        max_val=1.3,
     ),
 ]
 
