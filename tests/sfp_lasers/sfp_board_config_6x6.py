@@ -12,19 +12,18 @@ import vivilux.hardware.ser as ser
 ni_boards =[
     ni.USB_6210("NI", 33703915, # NOTE: ni board is currently the only one with the necessary range for single-ended readout
         ni.AIPIN("PD_1_0", 0), 
-        ni.AIPIN("PD_1_5", 5), 
         ni.AIPIN("PD_2_0", 6), 
-        ni.AIPIN("PD_2_5", 11),
         ni.AIPIN("PD_3_0", 12),
-        
         ni.AIPIN("PD_4_0", 1),
         ni.AIPIN("PD_5_0", 2),
         ni.AIPIN("PD_6_0", 3),
-        
+
+        ni.AIPIN("PD_1_5", 5), 
+        ni.AIPIN("PD_2_5", 11),
         ni.AIPIN("PD_3_5", 4),
         ni.AIPIN("PD_4_5", 7),
         ni.AIPIN("PD_5_5", 8),
-        ni.AIPIN("PD_6_5", 9),
+        ni.AIPIN("PD_6_5", 9),      
         
         ni.AIPIN("PD_1_2", 10),
         ni.AIPIN("PD_6_1", 13),
