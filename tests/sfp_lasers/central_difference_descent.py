@@ -32,11 +32,16 @@ print(f"{main_script_dir=}, {tests_dir=}")
 bar_state_json = os.path.join(tests_dir, "4x4_bar_state_voltages.json")
 output_json_path = os.path.join(main_script_dir, "central_difference_descent_parameters.json")
 
-output_PDs = ["PD_2_5", "PD_3_5", "PD_4_5", "PD_5_5"]
-theta_nets = ["3_1_i", "2_2_i", "4_2_i", "3_3_i", "2_4_i", "4_4_i", "3_5_i"]
+output_PDs = ["PD_1_5","PD_2_5", "PD_3_5", "PD_4_5", "PD_5_5", "PD_6_5"]
+theta_nets = ["3_1_i", "2_2_i", "4_2_i", "3_3_i", "2_4_i", "4_4_i", "3_5_i",
+              "1_1_i", "5_1_i", "1_3_i", "5_3_i", "1_5_i", "5_5_i"]
+# theta_nets = ["3_1_i", "2_2_i", "4_2_i", "3_3_i", "2_4_i", "4_4_i", "3_5_i"]
 # phi_nets = ["2_2_o", "4_2_o", "3_3_o", "2_4_o", "4_4_o", "3_5_o"]
 
 ni_board = netlist.board_dict['NI']
+
+target_matrix = np.zeros((6,4))
+target_matrix[1:5, :] = np.eye(4)
 
 def set_params(params: np.ndarray) -> None:
     '''Set the parameters in the netlist according to the provided dictionary.'''
@@ -47,9 +52,7 @@ def set_params(params: np.ndarray) -> None:
             value = 0.0
         netlist[net].vout(value)
 
-def measure_matrix(#pd_offsets: np.ndarray,
-                #    norm_factors: np.ndarray,
-                   ) -> np.ndarray:
+def measure_matrix() -> np.ndarray:
     '''Measure the current 4x4 transfer matrix of the mesh using
         one-hot input vector (single laser on at a time). The initial
         offset of should be a measurement of the readout voltage with
@@ -58,7 +61,7 @@ def measure_matrix(#pd_offsets: np.ndarray,
         Note: We use the vibration state rather than directly
         turning on and off the lasers because the power settles more quickly
     '''
-    measured_matrix = np.zeros((4,4))
+    measured_matrix = np.zeros((6,4))
     for one_hot_index in range(4):
         vibration_state = [0, 0, 0, 0]
         fpga.update_vibration(vibration_state)
@@ -66,7 +69,7 @@ def measure_matrix(#pd_offsets: np.ndarray,
         pd_offsets = ni_board.group_vin(output_PDs)
 
         vibration_state[one_hot_index] = 1
-        fpga.update_vibration(vibration_state)
+        fpga.update_vibration(vibration_state[::-1]) # Laser indices are inversed because least significant bit is laser 1 and is big endian
         # Wait for power to settle
         sleep(1e-3) # 1 ms sleep for power to settle
 
@@ -83,9 +86,9 @@ with open( bar_state_json, 'r') as bar_file:
 mean_2pi_voltage = np.mean( [bar_state_params[net] for net in bar_state_params] )
 
 with netlist:
-    print("Setting initial bar state parameters...")
-    for net, value in bar_state_params.items():
-        netlist[net].vout(value)
+    # print("Setting initial bar state parameters...")
+    # for net, value in bar_state_params.items():
+    #     netlist[net].vout(value)
 
     laser_off_readout = ni_board.group_vin(output_PDs)
     print(f"{laser_off_readout=}")
@@ -107,7 +110,7 @@ with netlist:
     print(first_measurement)
 
     print("Setting initial theta parameters to mean 2pi voltage from bar state calibration in row 1 and 6...")
-    params = np.array([mean_2pi_voltage for net in theta_nets])/2
+    params = np.array([mean_2pi_voltage for net in theta_nets])
     set_params(params)
 
     # initial_matrix = measure_matrix(pd_offsets, norm_factors)
@@ -115,16 +118,16 @@ with netlist:
     print("Initial measured matrix with guessed theta parameters:")
     print(initial_matrix)
 
-    init_delta = np.eye(4) - initial_matrix
+    init_delta = target_matrix - initial_matrix
     init_delta_mag = np.linalg.norm(init_delta, 'fro')
     print("Initial error from identity matrix (Frobenius norm):", init_delta_mag)
     print("Delta matrix:")
     print(init_delta)
 
     # Gradient descent one parameter at a time
-    learning_rate = 0.1
+    learning_rate = 0.01
     delta_voltage = 0.1  # Small voltage change for central difference approximation
-    num_iterations = 100
+    num_iterations = 200
     history = np.full(num_iterations + 1, np.nan)  # Store delta magnitude at each step
     history[0] = init_delta_mag
     current_delta = init_delta.copy()
@@ -163,7 +166,7 @@ with netlist:
         # Measure new matrix and error
         # new_meas = measure_matrix(pd_offsets, norm_factors)
         new_meas = measure_matrix()
-        new_delta = np.eye(4) - new_meas
+        new_delta = target_matrix - new_meas
         new_delta_mag = np.linalg.norm(new_delta, 'fro')
         history[iteration + 1] = new_delta_mag
         current_delta = new_delta.copy()
