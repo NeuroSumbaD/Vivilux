@@ -104,7 +104,8 @@ with netlist:
     print(first_measurement)
 
     print("Setting initial theta parameters to mean 2pi voltage from bar state calibration in row 1 and 6...")
-    params = np.array([identity_params[net] for net in theta_nets])
+    # params = np.array([identity_params[net] for net in theta_nets])
+    params = np.random.uniform(0, 2, size=len(theta_nets)) # Random uniform initialization within first pi phase shift
     set_params(params)
 
     initial_matrix = measure_matrix()
@@ -120,7 +121,7 @@ with netlist:
     # Gradient descent one parameter at a time
     learning_rate = 0.2
     delta_voltage = 0.1  # Small voltage change for central difference approximation
-    num_iterations = 300
+    num_iterations = 1000
     history = np.full(num_iterations + 1, np.nan)  # Store delta magnitude at each step
     history[0] = init_delta_mag
     current_delta = init_delta.copy()
