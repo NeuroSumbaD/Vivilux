@@ -1,8 +1,6 @@
 import __main__
 import os
-import random
-from time import sleep
-from math import exp
+from time import time, sleep
 from threading import Thread
 from queue import Queue
 import json
@@ -18,6 +16,9 @@ from sfp_board_config_6x6 import fpga, netlist
 
 np.random.seed(42)
 np.set_printoptions(precision=3, suppress=True)
+
+total_iteration_count = 0
+total_iteration_time = 0.0
 
 # Get the path to the directory containing the main script
 main_script_dir = os.path.dirname(os.path.abspath(__main__.__file__))
@@ -118,6 +119,7 @@ def training_loop(data_queue, target_matrix):
         current_delta = init_delta.copy()
         data_queue.put((0, init_delta_mag))
         for iteration in range(num_iterations):
+            start_time = time()
             print(f"Iteration {iteration+1}/{num_iterations}...")
             gradients = np.zeros(len(theta_nets))
             for param_name in theta_nets:
@@ -159,6 +161,11 @@ def training_loop(data_queue, target_matrix):
 
             print(f"Updated parameters: {np.round(params, 3)}")
             print(f"New error from target matrix (Frobenius norm): {new_delta_mag}")
+
+            total_iteration_time += time() - start_time
+            total_iteration_count += 1
+            avg_time = total_iteration_time / total_iteration_count
+            print(f"Average time per iteration: {avg_time:.3f} seconds")
             data_queue.put((iteration + 1, new_delta_mag))
     print("Final measured matrix after optimization:")
     print(new_meas)
