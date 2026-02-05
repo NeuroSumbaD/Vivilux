@@ -17,9 +17,6 @@ from sfp_board_config_6x6 import fpga, netlist
 np.random.seed(42)
 np.set_printoptions(precision=3, suppress=True)
 
-total_iteration_count = 0
-total_iteration_time = 0.0
-
 # Get the path to the directory containing the main script
 main_script_dir = os.path.dirname(os.path.abspath(__main__.__file__))
 tests_dir = os.path.dirname(main_script_dir)
@@ -76,6 +73,9 @@ def measure_matrix() -> np.ndarray:
     return measured_matrix
 
 def training_loop(data_queue, target_matrix):
+    total_iteration_count = 0
+    total_iteration_time = 0.0
+
     with netlist:
         laser_off_readout = ni_board.group_vin(output_PDs)
         print(f"{laser_off_readout=}")
@@ -113,11 +113,11 @@ def training_loop(data_queue, target_matrix):
         # Gradient descent one parameter at a time
         learning_rate = 0.1
         delta_voltage = 0.1  # Small voltage change for central difference approximation
-        num_iterations = 500
+        num_iterations = 100
         history = np.full(num_iterations + 1, np.nan)  # Store delta magnitude at each step
         history[0] = init_delta_mag
         current_delta = init_delta.copy()
-        data_queue.put((0, init_delta_mag))
+        data_queue.put((0, init_delta_mag, current_delta))
         for iteration in range(num_iterations):
             start_time = time()
             print(f"Iteration {iteration+1}/{num_iterations}...")
@@ -166,7 +166,7 @@ def training_loop(data_queue, target_matrix):
             total_iteration_count += 1
             avg_time = total_iteration_time / total_iteration_count
             print(f"Average time per iteration: {avg_time:.3f} seconds")
-            data_queue.put((iteration + 1, new_delta_mag))
+            data_queue.put((iteration + 1, new_delta_mag, current_delta))
     print("Final measured matrix after optimization:")
     print(new_meas)
 
@@ -194,7 +194,7 @@ def main(): # interactive plotting
         for j in range(4):
             ax_text = fig_control.add_subplot(gs[i, j])
             tb = TextBox(ax_text, '', initial='0.0')
-            tb.set_val(f"{0.0 if (i-1)!=j else 1.0}")
+            tb.set_val(f"{0.0 if (i-1)!=(3-j) else 1.0}")
             row.append(tb)
         textboxes.append(row)
     
@@ -204,17 +204,26 @@ def main(): # interactive plotting
 
 
     # Set up plotting figure
-    fig, ax = plt.subplots()
-    ax.set_xlim(0, 100)
-    ax.set_ylim(0, 1)
+    fig, axs = plt.subplots(1, 3, figsize=(12, 6))
+    axs[0].set_xlim(0, 100)
+    axs[0].set_ylim(0, 4)
     xdata, ydata = [], []
     plt.xlabel('Epoch')
-    line, = ax.plot([], [])
+    line, = axs[0].plot([], [])
     plt.ylabel('Loss')
-    plt.title('Training Loss Over Time')
+    fig.suptitle('Training Loss Over Time')
+
+    # Plot initial delta vs current delta matrices
+    axs[1].set_title('Initial Delta Matrix')
+    axs[2].set_title('Current Delta Matrix')
+    fig.colorbar(plt.cm.ScalarMappable(cmap='bwr', norm=plt.Normalize(vmin=-1, vmax=1)),
+                 ax=axs[1:3], orientation='vertical', fraction=.1)
+    
+    axs[1].imshow(np.zeros((6,4)), vmin=-1, vmax=1, cmap='bwr')
+    axs[2].imshow(np.zeros((6,4)), vmin=-1, vmax=1, cmap='bwr')
 
     # Add annotation for global minimum (do not show until data is available)
-    min_annot = ax.annotate('', xy=(0,0), xytext=(95,0.95),
+    min_annot = axs[0].annotate('', xy=(0,0), xytext=(95,3.95),
                             horizontalalignment='right', verticalalignment='top',
                             bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.5),
                             arrowprops=dict(arrowstyle='->',
@@ -229,14 +238,22 @@ def main(): # interactive plotting
         return line,
 
     def update(frame):
+        updated_axes = []
+        current_delta = None
+
         while not data_queue.empty():
-            epoch, loss = data_queue.get()
+            epoch, loss, delta = data_queue.get()
             xdata.append(epoch)
             ydata.append(loss)
+            if epoch == 0:
+                # Update initial delta matrix plot
+                axs[1].images[0].set_data(delta)
+                updated_axes.append(axs[1].images[0])
+            current_delta = delta
         line.set_data(xdata, ydata)
 
         # Data is not empty, anotate the global minimum
-        if ydata:
+        if ydata and current_delta is not None:
             min_loss = min(ydata)
             min_epoch = xdata[ydata.index(min_loss)]
 
@@ -245,7 +262,13 @@ def main(): # interactive plotting
             min_annot.set_visible(True)
             min_annot.set_text(f'Min Loss: {min_loss:.4g} at Epoch {min_epoch}')
             min_annot.xy = (min_epoch, min_loss)
-        return line, min_annot
+
+            # Update current delta matrix plot
+            axs[2].images[0].set_data(current_delta)
+            updated_axes.append(axs[2].images[0])
+
+
+        return line, min_annot, *updated_axes
 
     ani = animation.FuncAnimation(fig, update, init_func=init, blit=True, interval=250, cache_frame_data=False)
     ani.pause()  # Start paused

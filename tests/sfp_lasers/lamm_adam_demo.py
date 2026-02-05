@@ -111,6 +111,9 @@ def get_directions(moment: np.ndarray,
     return directions
 
 def training_loop(data_queue, target_matrix):
+    total_iteration_count = 0
+    total_iteration_time = 0.0
+
     with netlist:
         laser_off_readout = ni_board.group_vin(output_PDs)
         print(f"{laser_off_readout=}")
@@ -129,8 +132,8 @@ def training_loop(data_queue, target_matrix):
         print(f"First measured matrix:")
         print(first_measurement)
 
-        print("Setting initial theta parameters to mean 2pi voltage from bar state calibration in row 1 and 6...")
-        params = np.array([identity_params[net] for net in theta_nets])
+        print("Setting initial theta parameters near previously calibrated identity parameters...")
+        params = np.array([identity_params[net] + np.random.uniform(-0.25, 0.25) for net in theta_nets])
         # params = np.random.uniform(0, 2, size=len(theta_nets)) # Random uniform initialization within first pi phase shift
         set_params(params)
 
@@ -138,7 +141,7 @@ def training_loop(data_queue, target_matrix):
         print("Initial measured matrix with guessed theta parameters:")
         print(initial_matrix)
 
-        init_delta = target_matrix - initial_matrix[1,:3]
+        init_delta = target_matrix - initial_matrix
         init_delta_mag = np.linalg.norm(init_delta)
         print("Initial error from target matrix (Frobenius norm):", init_delta_mag)
         print("Delta matrix:")
@@ -147,15 +150,15 @@ def training_loop(data_queue, target_matrix):
         # Adam and optimization parameters
         learning_rate = 0.1
         lr_decay = 0.99
-        beta1 = 0.85
-        beta2 = 0.999
+        beta1 = 0.9
+        beta2 = 0.99
         epsilon = 1e-8
         num_iterations = 200
 
         # LAMM parameters
         direction_magnitude: float = np.sqrt(len(theta_nets))  # Scale to roughly match GD step sizes
         num_directions = 6
-        bias_scale = 0.25
+        bias_scale = 0.5
 
         # Initialize Adam variables
         m = np.zeros(len(theta_nets))  # First moment
@@ -164,7 +167,7 @@ def training_loop(data_queue, target_matrix):
         history = np.full(num_iterations + 1, np.nan)  # Store delta magnitude at each step
         history[0] = init_delta_mag
         current_delta = init_delta.copy()
-        data_queue.put((0, init_delta_mag))
+        data_queue.put((0, init_delta_mag, current_delta))
         for iteration in range(num_iterations):
             start_time = time()
             print(f"Iteration {iteration+1}/{num_iterations}...")
@@ -177,11 +180,11 @@ def training_loop(data_queue, target_matrix):
             directions *= direction_magnitude  # Scale to desired step size
             derivatives = np.zeros((target_matrix.size, num_directions))  # shape (output_size, num_directions)
             for dir_index, direction in enumerate(directions.T):
-                derivatives[:, dir_index] = measure_directional_derivative(params, direction)[1,:3].flatten()
+                derivatives[:, dir_index] = measure_directional_derivative(params, direction).flatten()
             
             # Solve least squares for optimal step
-            a = np.linalg.pinv(derivatives.T @ derivatives) @ derivatives.T  @ current_delta # shape (num_directions,)
-
+            a = np.linalg.pinv(derivatives.T @ derivatives) @ derivatives.T  @ current_delta.flatten() # shape (num_directions,)
+            print(f"\tLeast squares coefficients: {np.round(a,3)}")
             optimal_step = (directions @ a).flatten()  # shape (num_params,)
 
             # Adam update
@@ -221,7 +224,7 @@ def training_loop(data_queue, target_matrix):
 
             # Measure new matrix and error
             new_meas = measure_matrix()
-            new_delta = target_matrix - new_meas[1,:3]
+            new_delta = target_matrix - new_meas
             new_delta_mag = np.linalg.norm(new_delta)
             history[iteration + 1] = new_delta_mag
             current_delta = new_delta.copy()
@@ -233,7 +236,7 @@ def training_loop(data_queue, target_matrix):
             total_iteration_count += 1
             avg_time = total_iteration_time / total_iteration_count
             print(f"Average time per iteration: {avg_time:.3f} seconds")
-            data_queue.put((iteration + 1, new_delta_mag))
+            data_queue.put((iteration + 1, new_delta_mag, current_delta))
         
     print("Final measured matrix after optimization:")
     print(new_meas)
@@ -262,7 +265,7 @@ def main(): # interactive plotting
         for j in range(4):
             ax_text = fig_control.add_subplot(gs[i, j])
             tb = TextBox(ax_text, '', initial='0.0')
-            tb.set_val(f"{0.0 if (i-1)!=j else 1.0}")
+            tb.set_val(f"{0.0 if (i-1)!=(3-j) else 1.0}")
             row.append(tb)
         textboxes.append(row)
     
@@ -272,17 +275,26 @@ def main(): # interactive plotting
 
 
     # Set up plotting figure
-    fig, ax = plt.subplots()
-    ax.set_xlim(0, 100)
-    ax.set_ylim(0, 1)
+    fig, axs = plt.subplots(1, 3, figsize=(12, 6))
+    axs[0].set_xlim(0, 200)
+    axs[0].set_ylim(0, 4)
     xdata, ydata = [], []
     plt.xlabel('Epoch')
-    line, = ax.plot([], [])
+    line, = axs[0].plot([], [])
     plt.ylabel('Loss')
-    plt.title('Training Loss Over Time')
+    fig.suptitle('Training Loss Over Time')
+
+    # Plot initial delta vs current delta matrices
+    axs[1].set_title('Initial Delta Matrix')
+    axs[2].set_title('Current Delta Matrix')
+    fig.colorbar(plt.cm.ScalarMappable(cmap='bwr', norm=plt.Normalize(vmin=-1, vmax=1)),
+                 ax=axs[1:3], orientation='vertical', fraction=.1)
+    
+    axs[1].imshow(np.zeros((6,4)), vmin=-1, vmax=1, cmap='bwr')
+    axs[2].imshow(np.zeros((6,4)), vmin=-1, vmax=1, cmap='bwr')
 
     # Add annotation for global minimum (do not show until data is available)
-    min_annot = ax.annotate('', xy=(0,0), xytext=(95,0.95),
+    min_annot = axs[0].annotate('', xy=(0,0), xytext=(195,3.95),
                             horizontalalignment='right', verticalalignment='top',
                             bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.5),
                             arrowprops=dict(arrowstyle='->',
@@ -297,14 +309,22 @@ def main(): # interactive plotting
         return line,
 
     def update(frame):
+        updated_axes = []
+        current_delta = None
+
         while not data_queue.empty():
-            epoch, loss = data_queue.get()
+            epoch, loss, delta = data_queue.get()
             xdata.append(epoch)
             ydata.append(loss)
+            if epoch == 0:
+                # Update initial delta matrix plot
+                axs[1].images[0].set_data(delta)
+                updated_axes.append(axs[1].images[0])
+            current_delta = delta
         line.set_data(xdata, ydata)
 
         # Data is not empty, anotate the global minimum
-        if ydata:
+        if ydata and current_delta is not None:
             min_loss = min(ydata)
             min_epoch = xdata[ydata.index(min_loss)]
 
@@ -313,7 +333,13 @@ def main(): # interactive plotting
             min_annot.set_visible(True)
             min_annot.set_text(f'Min Loss: {min_loss:.4g} at Epoch {min_epoch}')
             min_annot.xy = (min_epoch, min_loss)
-        return line, min_annot
+
+            # Update current delta matrix plot
+            axs[2].images[0].set_data(current_delta)
+            updated_axes.append(axs[2].images[0])
+
+
+        return line, min_annot, *updated_axes
 
     ani = animation.FuncAnimation(fig, update, init_func=init, blit=True, interval=250, cache_frame_data=False)
     ani.pause()  # Start paused
