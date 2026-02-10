@@ -10,11 +10,30 @@ authors = [
 ]
 description = "A package for simulating meshes of photonic elements with neuromorphic learning rules"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+]
+dependencies = [
+  "imageio>=2.37.0",
+  "jax>=0.6.1",
+  "matplotlib>=3.10.8",
+  "mcculw>=1.0.0",
+  "networkx>=3.2.1",
+  "nidaqmx>=1.0.0",
+  "numpy>=2.1.0",
+  "pandas>=2.2.2",
+  "pillow>=11.2.1",
+  "pyserial>=3.5",
+  "pytest>=8.2.2",
+  "pytest-benchmark>=4.0.0",
+  "pyvisa>=1.14.1",
+  "scikit-image>=0.25.2",
+  "scikit-learn>=1.7.0",
+  "scipy>=1.15.3",
+  "tensorflow>=2.19.0",
 ]
 
 [project.urls]
