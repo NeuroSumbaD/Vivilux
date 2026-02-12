@@ -525,6 +525,9 @@ class AgilentDetectorArray(DetectorArray):
 
         return on_reading - off_reading
     
+    def __len__(self):
+        return self.detectorArray.size
+    
 class SFPLaserArray(LaserArray):
     '''A subclass of LaserArray for controlling SFP digital lasers.
     '''

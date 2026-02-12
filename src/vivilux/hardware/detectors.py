@@ -14,7 +14,7 @@ class DetectorArray:
     '''
     
     def __init__(self,
-                 size: float, # number of detectors in the array
+                 size: int, # number of detectors in the array
                  nets: list[str],  # List of detector net names to read from
                  netlist: daq.Netlist, # Netlist to use for reading the detectors
                  transimpedance: float = 220e3, # transimpedance of the detectors in ohms (default: 220k ohms)
@@ -78,3 +78,6 @@ class DetectorArray:
         '''
         values, std_dev = self._read_values(True)
         return values, std_dev
+    
+    def __len__(self):
+        return self.size

@@ -261,11 +261,7 @@ class Mesh:
     
     def ClipLinMatrix(self):
         '''Bounds linear weights on range [0-1]'''
-        mask1 = self.linMatrix < 0
-        self.linMatrix[mask1] = 0
-        
-        mask2 = self.linMatrix > 1
-        self.linMatrix[mask2] = 1
+        self.linMatrix = np.clip(self.linMatrix, 0, 1)
 
     def CalculateUpdate(self,
                         dwtLog = None,
