@@ -25,7 +25,6 @@ lower_lim = 0.0
 # Get the path to the directory containing the main script
 main_script_dir = os.path.dirname(os.path.abspath(__main__.__file__))
 tests_dir = os.path.dirname(main_script_dir)
-print(f"{main_script_dir=}, {tests_dir=}")
 
 # bar_state_json = os.path.join(tests_dir, "4x4_bar_state_voltages.json")
 identity_json_path = os.path.join(main_script_dir, "central_difference_descent_parameters.json")
@@ -41,7 +40,7 @@ theta_nets = ["3_1_i", "2_2_i", "4_2_i", "3_3_i", "2_4_i", "4_4_i", "3_5_i",
 ni_board = netlist.board_dict['NI']
 
 def set_params(params: np.ndarray) -> None:
-    '''Set the parameters in the netlist according to the provided dictionary.'''
+    '''Set the parameters in the netlist according to the provided numpy array.'''
     for net, value in zip(theta_nets, params):
         if value > 5.2:
             value = 5.2

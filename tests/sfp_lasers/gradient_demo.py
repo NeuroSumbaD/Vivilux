@@ -20,9 +20,7 @@ np.set_printoptions(precision=3, suppress=True)
 # Get the path to the directory containing the main script
 main_script_dir = os.path.dirname(os.path.abspath(__main__.__file__))
 tests_dir = os.path.dirname(main_script_dir)
-print(f"{main_script_dir=}, {tests_dir=}")
 
-# bar_state_json = os.path.join(tests_dir, "4x4_bar_state_voltages.json")
 identity_json_path = os.path.join(main_script_dir, "central_difference_descent_parameters.json")
 output_json_path = os.path.join(main_script_dir, "demo_params.json")
 
@@ -129,14 +127,12 @@ def training_loop(data_queue, target_matrix):
                 params_plus = params.copy()
                 params_plus[param_index] += delta_voltage
                 set_params(params_plus)
-                # meas_plus = measure_matrix(pd_offsets, norm_factors)
                 meas_plus = measure_matrix()
                 delta_plus = meas_plus
 
                 params_minus = params.copy()
                 params_minus[param_index] -= delta_voltage
                 set_params(params_minus)
-                # meas_minus = measure_matrix(pd_offsets, norm_factors)
                 meas_minus = measure_matrix()
                 delta_minus = meas_minus
 
@@ -147,12 +143,10 @@ def training_loop(data_queue, target_matrix):
                 gradients[param_index] = grad_mag
 
             # Update parameter
-            # params[param_index] -= learning_rate * grad_mag
             params -= learning_rate * gradients
             set_params(params)
 
             # Measure new matrix and error
-            # new_meas = measure_matrix(pd_offsets, norm_factors)
             new_meas = measure_matrix()
             new_delta = target_matrix - new_meas
             new_delta_mag = np.linalg.norm(new_delta, 'fro')
