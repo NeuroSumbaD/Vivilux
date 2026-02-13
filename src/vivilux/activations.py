@@ -95,15 +95,16 @@ class NoisyXX1:
 
     def __call__(self, x: np.ndarray):
         out = x.copy()
-        mask1 = x < 0
+        exp = -(x * self.SigGainNVar) # exponential for sigmoid component
+
+        mask1 = np.logical_and(x < 0, exp <= 50)
+        submask1 = np.logical_and(x < 0, exp > 50)
         mask2 = np.logical_and(x < self.InterpRange, x >= 0)
         mask3 = x >= self.InterpRange
 
         # if x < 0 // sigmoidal for < 0
-        exp = -(x * self.SigGainNVar)
-        submask = exp > 50
         out[mask1] = self.SigMultEff / (1 + np.exp(exp[mask1]))
-        out[submask] = 0 # zero for small values
+        out[submask1] = 0 # zero for small values
 
         # else if x < self.InterpRange
         interp = 1 - ((self.InterpRange - x[mask2]) / self.InterpRange)
