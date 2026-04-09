@@ -5,13 +5,16 @@
     the output, and subtracting this from the positive components in software.
 '''
 
-from time import sleep
+from time import time, sleep
 from typing import Optional, Callable
+from functools import partial
 
 import numpy as np
 
-from ..meshes import Mesh
-from ..photonics.ph_meshes import MZImesh
+from vivilux.meshes import Mesh
+from vivilux.photonics.ph_meshes import MZImesh
+from vivilux.layers import Layer
+from vivilux.devices import Device, Generic
 from vivilux.hardware.utils import L1norm, magnitude, correlate
 from vivilux.hardware.lasers import LaserArray #, InputGenerator
 from vivilux.hardware.detectors import DetectorArray
@@ -576,7 +579,7 @@ class HardMZI_v3(MZImesh):
                     log.info(f"Breaking at step {step}.")
                     break
             
-        # reset update magnitud
+        # reset update magnitude
         self.updateMagnitude = initial_update_mag
         
         return self.record, self.params_hist, self.matrix_hist
@@ -586,3 +589,367 @@ class HardMZI_v3(MZImesh):
             phase shifter voltages.
         '''
         return {pin_name: volt for pin_name, volt in zip(self.psPins, self.voltages.flatten())}
+
+class HardMesh(Mesh):
+    '''An abstract class representing hardware interfaces for synaptic meshes.
+    '''
+    def __init__(self, *args, **kwargs):
+        # type hints for attributes that should be defined in subclasses' __init__ method
+        self.num_params: float
+        self.param_limits: tuple[float, float]
+        self.netlist: daq.Netlist
+        self.param_nets: list[str]
+        self.matrix: np.ndarray
+        self.linMatrix: np.ndarray
+        self.modified: bool
+        
+        raise NotImplementedError("Error: HardMesh is an abstract class and cannot"
+                                  " be instantiated directly. Please use a specific"
+                                  " implementation such as ArbitraryMZI.")
+    
+    def get_params(self) -> np.ndarray:
+        '''Gets the current parameters from the netlist and returns them as a
+            numpy array.
+        '''
+        return NotImplementedError("Error: get_params method must be implemented by subclass.")
+
+    def measure_matrix(self) -> np.ndarray:
+        raise NotImplementedError("Error: measure_matrix method must be implemented by subclass.")
+    
+    def ApplyDelta(self, delta: np.ndarray, m: int, n: int):
+        raise NotImplementedError("Error: ApplyDelta method must be implemented by subclass.")
+        
+    def get(self) -> np.ndarray:
+        '''Returns the current matrix implemented by the hardware.
+        '''
+        raise NotImplementedError("Error: get method must be implemented by subclass.")
+
+    def clip_params(self, params: np.ndarray) -> np.ndarray:
+        '''Clips the power to the correct limits.
+        '''
+        clipped = np.clip(params, self.param_limits[0], self.param_limits[1])
+        return clipped
+    
+    def set_params(self, params: np.ndarray):
+        '''Set the parameters in the netlist according to the provided numpy
+            array.
+        '''
+        clipped_params = self.clip_params(params)
+
+        for net, value in zip(self.param_nets, clipped_params):
+            self.netlist[net].vout(value)
+
+        self.modified = True
+    
+    def measure_directional_derivative(self,
+                                       params: np.ndarray,
+                                       direction: np.ndarray,
+                                       ) -> np.ndarray:
+        '''Measure the directional derivative for a step in the given direction
+            using central difference approximation.
+        '''
+        plus_step = params + direction
+        self.set_params(plus_step)
+        plus_matrix = self.measure_matrix()
+
+        minus_step = params - direction
+        self.set_params(minus_step)
+        minus_matrix = self.measure_matrix()
+
+        derivative_matrix = (plus_matrix - minus_matrix) / (2.0 * np.linalg.norm(direction))
+        return derivative_matrix
+    
+    def ApplyUpdate(self, delta, m, n):
+        '''Applies the delta vector to the linear weights and calculates the 
+            corresponding contrast enhanced matrix. Since the MZI cannot 
+            implement this change directly, it calculates a new delta from the
+            ideal change, and then implements that change.
+        '''
+        self.linMatrix[:m, :n] += delta
+        self.ClipLinMatrix()
+        matrix = self.get().copy() # matrix gets modified by SigMatrix
+        newMatrix = self.SigMatrix()
+        self.ApplyDelta(newMatrix-matrix) # implement with params
+    
+    
+def get_directions(moment: np.ndarray,
+                   num_directions: int = 6,
+                   bias_scale: float=0.1,
+                   ) -> np.ndarray:
+    '''Rather than using random directions, we use a set of random directions
+        that are biased by the current momentum term from Adam to help guide
+        the search space to a consistent direction in parameter space.
+    '''
+    directions = np.random.uniform(low = -1, # Normalization takes care of scaling
+                                   high = 1, # Uniform gives more orthogonal sample directions
+                                   size=(len(moment), num_directions)) # shape (num_params, num_directions)
+    directions += bias_scale * moment[:, np.newaxis]  # shape (num_params, num_directions)
+    # Normalize to unit vectors (along each column) for consistent step sizes
+    directions /= np.linalg.norm(directions, axis=0)[np.newaxis, :]  # shape (num_params, num_directions)
+    return directions
+
+def adam_lamm(init_delta: np.ndarray,
+              hardware_mesh: HardMesh, 
+              num_directions: int,
+              direction_magnitude: float,
+              learning_rate: float = 0.1,
+              lr_decay: float = 0.99,
+              beta1: float = 0.9,
+              beta2: float = 0.99,
+              epsilon: float = 1e-8,
+              num_iterations: int = 200,
+              bias_scale: float = 0.5,
+              convergence_threshold: float = 1e-3,
+              ):
+    # Initialize Adam variables
+    m = np.zeros(hardware_mesh.num_params)  # First moment
+    v = np.zeros(hardware_mesh.num_params)  # Second moment
+
+    # Initialize history with NaN values to indicate uninitialized entries
+    history = np.full(num_iterations + 1, np.nan)
+    current_delta = init_delta.copy()
+    history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
+
+    params = hardware_mesh.get_params()
+    target_matrix = hardware_mesh.get() + init_delta
+
+    for iteration in range(num_iterations):
+        optimal_step = np.zeros(hardware_mesh.num_params)
+        
+        # LSO of several directional derivatives to find optimal step
+        directions = get_directions(m,
+                                    num_directions=num_directions,
+                                    bias_scale=bias_scale) # shape (num_params, num_directions)
+        directions *= direction_magnitude  # Scale to desired step size
+        derivatives = np.zeros((current_delta.size, num_directions))  # shape (output_size, num_directions)
+        for dir_index, direction in enumerate(directions.T):
+            derivatives[:, dir_index] = hardware_mesh.measure_directional_derivative(params, direction).flatten()
+        
+        # Solve least squares for optimal step
+        a = np.linalg.pinv(derivatives.T @ derivatives) @ derivatives.T  @ current_delta.flatten() # shape (num_directions,)
+        optimal_step = (directions @ a).flatten()  # shape (num_params,)
+
+        # Adam update
+        t = iteration + 1
+        m = beta1 * m + (1 - beta1) * optimal_step
+        v = beta2 * v + (1 - beta2) * optimal_step**2
+        
+        # Bias correction
+        m_hat = m / (1 - beta1**t)
+        v_hat = v / (1 - beta2**t)
+
+        lr_hat = learning_rate / (np.sqrt(v_hat) + epsilon)
+
+        # Update parameter
+        params += lr_hat * m_hat
+
+        # Decay learning rate
+        learning_rate *= lr_decay
+
+        # Reflect momentum for parameters that hit boundaries
+        hit_lower = (params < hardware_mesh.param_limits[0])
+        hit_upper = (params > hardware_mesh.param_limits[1])
+        hit_boundary = hit_lower | hit_upper
+        
+        if np.any(hit_boundary):
+            m[hit_boundary] *= -0.8  # Reflect first moment (momentum)
+            v[hit_boundary] = 0.0  # Reset second moment (adaptive learning rate)
+    
+
+        params = hardware_mesh.clip_params(params)  # Ensure parameters are within limits after update
+
+        if np.any(np.isnan(params)):
+            raise ValueError("NaN encountered in parameters during optimization.")
+
+        hardware_mesh.set_params(params)
+
+        # Measure new matrix and error
+        new_meas = hardware_mesh.measure_matrix()
+        new_delta = target_matrix - new_meas
+        new_delta_mag = np.linalg.norm(new_delta)
+        history[iteration + 1] = new_delta_mag
+        current_delta = new_delta.copy()
+
+        if new_delta_mag < convergence_threshold:  # Early stopping threshold
+            break
+
+    history = history[~np.isnan(history)]  # Remove uninitialized entries
+    return history, params
+
+def central_difference_descent(init_delta: np.ndarray,
+                               hardware_mesh: HardMesh, 
+                               learning_rate: float = 0.1,
+                               delta_voltage: float = 0.1,
+                               num_iterations: int = 100,
+                               convergence_threshold: float = 1e-3,
+                               random_reset_dev: float = 10e-3, # random noise around the center of parameter range to reset to when a parameter hits the limit
+                               ):
+    # Initialize history with NaN values to indicate uninitialized entries
+    history = np.full(num_iterations + 1, np.nan)
+    current_delta = init_delta.copy()
+    history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
+
+    params = hardware_mesh.get_params()
+    target_matrix = hardware_mesh.get() + init_delta
+
+    reset_mean = 0.5 * (hardware_mesh.param_limits[1] - hardware_mesh.param_limits[0]) + hardware_mesh.param_limits[0]
+
+    for iteration in range(num_iterations):
+        gradients = np.zeros(hardware_mesh.num_params)
+        for param_index in range(hardware_mesh.num_params):
+            # Central difference approximation
+            params_plus = params.copy()
+            params_plus[param_index] += delta_voltage
+            hardware_mesh.set_params(params_plus)
+            meas_plus = hardware_mesh.measure_matrix()
+            delta_plus = meas_plus
+
+            params_minus = params.copy()
+            params_minus[param_index] -= delta_voltage
+            hardware_mesh.set_params(params_minus)
+            meas_minus = hardware_mesh.measure_matrix()
+            delta_minus = meas_minus
+
+            # Gradient calculation
+            grad_matrix = (delta_plus - delta_minus) / (2 * delta_voltage)
+            grad_mag = -2*np.sum(grad_matrix * current_delta)  # Chain rule for Frobenius norm squared (element-wise product and sum)
+            gradients[param_index] = grad_mag
+
+        # Update parameter
+        params -= learning_rate * gradients
+        overflow_params = params > hardware_mesh.param_limits[1]
+        params[overflow_params] = np.random.normal(loc=reset_mean, scale=random_reset_dev, size=np.sum(overflow_params)) # Prevent overflow
+        hardware_mesh.set_params(params)
+
+        # Measure new matrix and error
+        new_meas = hardware_mesh.measure_matrix()
+        new_delta = target_matrix - new_meas
+        new_delta_mag = np.linalg.norm(new_delta)
+        history[iteration + 1] = new_delta_mag
+        current_delta = new_delta.copy()
+
+        if new_delta_mag < convergence_threshold:  # Early stopping threshold
+            break
+
+    history = history[~np.isnan(history)]  # Remove uninitialized entries
+    return history, params
+
+standard_calibration: Callable[[np.ndarray, HardMesh],
+                           tuple[np.ndarray, np.ndarray]] = partial(central_difference_descent,
+                                                           learning_rate=0.1,
+                                                           delta_voltage=0.1,
+                                                           num_iterations=100)
+class ArbitraryMZI(HardMesh):
+    '''Hardware interface for an MZI mesh with abstracted parameters such that the shape is
+        determined by the number of input lasers and output detectors, with no restrictions
+        for the internal structure of the mesh. 
+
+        Note: Controlling params in terms of V^2 makes the MZI behavior more sinusoidal,
+        however, the complexity of switching between voltage and power does not seem to
+        have a reliable benefit, so I am just controlling the voltages directly here.
+    '''
+    def __init__(self,
+                 size: int,
+                 inLayer: Layer,
+                 outputDetectors: DetectorArray, # output pin names
+                 inputLaser: LaserArray, # laser array for input
+                 param_nets: list[str], # phase shifter pin names
+                 netlist: daq.Netlist, # netlist for daq
+                 compPsPins: Optional[list[str]] = None, # complementary pins for reversing phase shift (same MZI opposing arm)
+                 initial_params: Optional[np.ndarray] = None, # initial parameters for the phase shifters (voltages)
+                 param_limits: tuple[float, float] =(0.0, 5.2), # min and max voltage for phase shifters
+                 calibration_loop: Callable[[np.ndarray, HardMesh],
+                                         tuple[np.ndarray, np.ndarray]] = standard_calibration, # training loop for applying updates
+                 **kwargs):
+        if size != inputLaser.size:
+            raise ValueError(f"Error: Size {size} does not match number of output detectors {len(outputDetectors)}.")
+
+        Mesh.__init__(self, size, inLayer, **kwargs)
+
+        shape = (size, inputLaser.size)
+        self.shape = shape
+        self.outputDetectors = outputDetectors
+        self.inputLaser = inputLaser
+        self.param_nets = param_nets
+        self.netlist = netlist # TODO: standard netlist names to avoid many net name lists above
+        self.compPsPins = compPsPins
+        self.param_limits = param_limits
+        self.calibration_loop = calibration_loop
+
+
+        self.num_params: float = len(param_nets) # number of tunable parameters in the mesh (e.g. number of phase shifters)
+        self.modified = True # flag to indicate if the parameters have been modified since last matrix measurement
+
+        # bound initial voltages between zero and middle of range
+        # TODO: find better initialization strategy (random uniform between -2pi and 2pi?)
+        if initial_params is not None:
+            if initial_params.shape != self.voltages.shape:
+                raise ValueError(f"Error: Initial parameters shape {initial_params.shape} does not match expected shape {self.voltages.shape}")
+            self.voltages = np.clip(initial_params, self.param_limits[0], self.param_limits[1])
+        else:
+            # TODO: Add options for other common initialization distributions
+            self.voltages = np.random.uniform(low=self.param_limits[0], high=self.param_limits[1], size=(self.numUnits,1))
+
+        self.resetDelta = np.zeros(self.shape)
+
+        self.records = [] # for recording the convergence of deltas
+        
+        if self.compPsPins is not None and len(self.compPsPins) != len(self.param_nets):
+            raise ValueError("Error: Length of compPsPins must match length of psPins")
+
+    def measure_matrix(self,) -> np.ndarray:
+        '''Measure the current transfer matrix of the mesh using
+            one-hot input vector (single laser on at a time). The initial
+            offset of should be a measurement of the readout voltage with
+            all lasers turned to their lowest state.
+
+            Note: We use the vibration state rather than directly
+            turning on and off the lasers because the power settles more quickly
+        '''
+        measured_matrix = np.zeros((6,4))
+        for one_hot_index in range(4):
+            states = [0, 0, 0, 0]
+            self.inputLaser.setNormalized(states)
+            sleep(1e-3) # 1 ms sleep for power to settle
+            pd_offsets = self.outputDetectors.read() # measure the offsets with all lasers off
+
+            states[one_hot_index] = 1
+            self.inputLaser.setNormalized(states[::-1]) # Laser indices are inversed because least significant bit is laser 1 and is big endian
+            # Wait for power to settle
+            sleep(1e-3) # 1 ms sleep for power to settle
+
+            col = pd_offsets.copy()
+            col -= self.outputDetectors.read() # measure the readout with the laser on and subtract the offset
+            col /= np.sum(col) # Normalize to input power of 1
+            measured_matrix[:, one_hot_index] = col
+        return measured_matrix
+    
+    def get_params(self) -> np.ndarray:
+        '''Returns the current parameters as a numpy array. In this case, the
+            parameters are the voltages applied to the phase shifters.
+        '''
+        return self.voltages
+    
+    def get(self) -> np.ndarray:
+        '''Returns the current matrix implemented by the hardware.
+        '''
+        if self.modified:
+            self.matrix = self.measure_matrix()
+            self.InvSigMatrix()
+            self.modified = False
+        return Mesh.get(self)
+    
+    def ApplyDelta(self, delta: np.ndarray, m: int, n: int):
+        '''Applies the delta vector to the linear weights and calculates the 
+            corresponding contrast enhanced matrix. Since the MZI cannot 
+            implement this change directly, it calculates a new delta from the
+            ideal change, and then implements that change.
+
+            Note: This function is not guaranteed to converge, so it cannot be
+            assumed that the matrix matches the target and the internal representations
+            need to be updated to reflect the true matrix.
+        '''
+        history, params = self.calibration_loop(delta, self)
+        self.records.append(history)
+        self.set_params(params)
+        self.get() # update the stored matrix after attempting to apply the delta

@@ -2,6 +2,10 @@
     Ch 4 of [1]. Shows pattern learning for a small network of three layers
     with the following neuron counts: 4->4->2
 
+    Note: This XOR-style task is not linearly separable and represents the
+    simplest network-wide (aka "hiearchical") learning in a bio-inspired
+    network.
+
     [1] O'Reilly, R. C., Munakata, Y., Frank, M. J., Hazy, T. E., and
         Contributors (2012). Computational Cognitive Neuroscience. Wiki Book,
         4th Edition (2020). URL: https://github.com/CompCogNeuro/ed4

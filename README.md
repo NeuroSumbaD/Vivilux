@@ -19,6 +19,11 @@ For testing and development, clone and cd into the repository and type:
 pip install -e .
 ~~~
 
+*Note*: Rather than using `pip -r requirements.txt` to install dependencies, it is better to use a more modern package manager like `uv`. Regardless of package manager, the `pyproject,toml` now contains the dependencies and should now automatically install from the above local installtion command. It is still recommended to create a virtual environment to prevent conflicts with other projects, which `uv` can also handle automatically if you run:
+
+~~~
+uv pip install -e .
+~~~
 
 ## Simulator
 
