@@ -8,11 +8,11 @@ from scipy.optimize import curve_fit, fsolve
 import pyvisa as visa
 import tqdm
 
-from vivilux.hardware.daq import Netlist
+from pydaq.daq import Netlist
 from vivilux.hardware.detectors import DetectorArray
-import vivilux.hardware.daq as daq
-import vivilux.hardware.ser as ser
-from vivilux.logger import log
+import pydaq.daq as daq
+import pydaq.ser as ser
+from pydaq.logger import log
 
 SLEEP = 0.5 # seconds
 LONG_SLEEP = 0.5 # seconds
@@ -635,9 +635,3 @@ class SFPDetectorArray(DetectorArray):
         self.lasers.setNormalized(laser_states)  # Restore previous laser states
 
         return on_reading - off_reading, np.max([on_dev, off_dev], axis=0)
-        
-
-if __name__ == "__main__":
-    # Example usage of LaserArray
-    from vivilux.hardware.daq import Netlist
-    control_nets = ["laser_1", "laser_2"]

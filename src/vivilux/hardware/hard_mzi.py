@@ -11,8 +11,8 @@ from ..photonics.ph_meshes import MZImesh
 from vivilux.hardware.utils import L1norm, magnitude, correlate
 from vivilux.hardware.lasers import LaserArray #, InputGenerator
 from vivilux.hardware.detectors import DetectorArray
-from vivilux.hardware import daq
-from vivilux.logger import log
+from pydaq import daq
+from pydaq.logger import log
 
 SLEEP = 0.5 # seconds
 LONG_SLEEP = 0.5 # seconds

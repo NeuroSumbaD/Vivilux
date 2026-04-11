@@ -3,8 +3,8 @@
 
 import numpy as np
 
-import vivilux.hardware.daq as daq
-from vivilux.logger import log
+import pydaq.daq as daq
+from pydaq.logger import log
 
 class DetectorArray:
     '''Base class for detector arrays.

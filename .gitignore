@@ -252,3 +252,5 @@ cython_debug/
 
 # Ignore uv files (so users can choose their own package management system)
 uv.lock
+
+.vscode/

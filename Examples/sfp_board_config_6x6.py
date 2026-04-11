@@ -3,10 +3,10 @@
     but the expansion to larger numbers of lasers will be handled soon.
 '''
 
-import vivilux.hardware.daq as daq
-import vivilux.hardware.nidaq as ni
-import vivilux.hardware.ser as ser
-# import vivilux.hardware.mcc as mcc
+import pydaq.daq as daq
+import pydaq.nidaq as ni
+import pydaq.ser as ser
+# import pydaq.mcc as mcc
 
 # ------------ Set up boards and netlist ------------
 ni_boards =[

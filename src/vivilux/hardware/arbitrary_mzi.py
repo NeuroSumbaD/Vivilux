@@ -18,8 +18,8 @@ from vivilux.devices import Device, Generic
 from vivilux.hardware.utils import L1norm, magnitude, correlate
 from vivilux.hardware.lasers import LaserArray #, InputGenerator
 from vivilux.hardware.detectors import DetectorArray
-from vivilux.hardware import daq
-from vivilux.logger import log
+import pydaq.daq as daq
+from pydaq.logger import log
 
 type StepGenerator = Callable[[int], np.ndarray] # Type alias for step vector generator
 
