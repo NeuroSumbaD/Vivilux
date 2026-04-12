@@ -15,14 +15,7 @@ from vivilux.layers import Layer
 from vivilux.hardware.arbitrary_mzi import HardMesh
 from vivilux.hardware.lasers import LaserArray
 from vivilux.hardware.detectors import DetectorArray
-from vivilux.hardware.calibrations import row_wise_newton
 from pydaq.logger import log
-
-standard_calibration: Callable[[np.ndarray, HardMesh],
-                           tuple[np.ndarray, np.ndarray]] = partial(row_wise_newton,
-                                                           learning_rate=0.1,
-                                                           delta_voltage=0.1,
-                                                           num_iterations=100)
 
 class MZMCrossbar(HardMesh):
     '''Hardware interface for an MZI mesh with abstracted parameters such that the shape is
@@ -164,7 +157,7 @@ class MZMCrossbar(HardMesh):
         self.modified[mask] = True
         return self.voltages
 
-    def test_params(self, params: np.ndarray, mask: np.ndarray | None = None):
+    def test_params(self, params: np.ndarray, measure: bool = True, mask: np.ndarray | None = None):
         '''Temporarily set physical parameters without committing to
             self.voltages.
         '''
@@ -183,7 +176,10 @@ class MZMCrossbar(HardMesh):
             self.netlist[net].vout(value)
 
         self.modified[mask] = True
-        return clipped_params
+        if not measure:
+            return clipped_params
+
+        return self._read_matrix()
     
     def get(self) -> np.ndarray:
         '''Returns the current matrix implemented by the hardware.
@@ -292,7 +288,7 @@ class TDMCrossbar(MZMCrossbar):
             parent crossbar state.
         '''
         full_params = self._compose_full_params(self.internal_values)
-        self.crossbar.test_params(full_params, self.params_mask)
+        self.crossbar.test_params(full_params, measure=False, mask=self.params_mask)
 
     def get_params(self) -> np.ndarray:
         '''Returns the current parameters for this TDM slice.
@@ -311,6 +307,19 @@ class TDMCrossbar(MZMCrossbar):
                 clipped[i, j] = np.clip(clipped[i, j], slice_limits[i, j, 0], slice_limits[i, j, 1])
         self.internal_values = clipped
         return self.internal_values
+
+    def test_params(self, params: np.ndarray, measure: bool = True) -> np.ndarray | None:
+        '''Temporarily use a candidate TDM parameter slice for optional
+            measurement without modifying stored internal_values.
+        '''
+        previous_params = np.array(self.internal_values, copy=True)
+        self.set_params(params)
+        try:
+            if not measure:
+                return None
+            return self.measure_matrix()
+        finally:
+            self.internal_values = previous_params
 
     def get(self) -> np.ndarray:
         '''Returns the current matrix implemented by the hardware slice.
@@ -352,48 +361,89 @@ class TDMCrossbar(MZMCrossbar):
             assumed that the matrix matches the target and the internal representations
             need to be updated to reflect the true matrix.
         '''
-        delta_full = np.zeros(self.crossbar.shape)
-        delta_full[self.params_mask] = delta # create a full delta vector with zeros for the parameters that are not being updated
-        self._enforce_internal_values()
-
-        temp_full_params = self._compose_full_params(self.internal_values)
-
-        original_get_params = self.crossbar.get_params
-        original_set_params = self.crossbar.set_params
-        original_measure_matrix = self.crossbar.measure_matrix
-        original_get = self.crossbar.get
-
-        def _tdm_get_params():
-            return np.array(temp_full_params, copy=True)
-
-        def _tdm_set_params(params: np.ndarray, mask: np.ndarray | None = None):
-            nonlocal temp_full_params
-            clipped = self.crossbar.clip_params(params)
-            self.crossbar.test_params(clipped, self.params_mask)
-            temp_full_params = np.array(clipped, copy=True).reshape(self.crossbar.shape)
-            return temp_full_params
-
-        def _tdm_measure_matrix():
-            return self.crossbar._read_matrix()
-
-        def _tdm_get():
-            return self.crossbar.Gscale * _tdm_measure_matrix()
-
-        self.crossbar.get_params = _tdm_get_params
-        self.crossbar.set_params = _tdm_set_params
-        self.crossbar.measure_matrix = _tdm_measure_matrix
-        self.crossbar.get = _tdm_get
-
-        try:
-            history, params = self.calibration_loop(delta_full, self.crossbar)
-        finally:
-            self.crossbar.get_params = original_get_params
-            self.crossbar.set_params = original_set_params
-            self.crossbar.measure_matrix = original_measure_matrix
-            self.crossbar.get = original_get
-
+        history, params = self.calibration_loop(delta, self)
         self.records.append(history)
-        full_params = np.array(params, copy=True).reshape(self.crossbar.shape)
-        self.internal_values = full_params[self.params_mask].reshape(self.shape)
-        self._enforce_internal_values()
+        self.set_params(params)
         self.get() # update the stored matrix after attempting to apply the delta
+
+def col_wise_newton(init_delta: np.ndarray,
+                    hardware_mesh: MZMCrossbar | TDMCrossbar, 
+                    learning_rate: float = 1.0,
+                    delta_voltage: float = 0.1,
+                    num_iterations: int = 100,
+                    convergence_threshold: float = 1e-3,
+                    ) -> tuple[list[float], np.ndarray]:
+    '''A solver that uses Netwon-Raphson to minimize the difference to the
+        target delta using column-wise calculations. This calibration procedure
+        assumes each element of the matrix is only influenced by one parameter,
+        so the columns can be optimized one at a time using element-wise calculations
+        and by all rows of a column in parallel (thus reducing the number of
+        changes to the lasers). Additionally, the first and second derivatives
+        can both be calculated by finite differences from the same three measurements
+        (current, positive perturbation, negative perturbation) rather than requiring
+        additional measurements for second derivatives, thus making it more efficient
+        to implement on hardware.
+
+        NOTE: This calibration can only be applied to Mesh subclasses which agree to
+        the following function calls for testing vs setting parameters:
+            - test_params(params): temporarily set the parameters on hardware without
+                committing to the internal state (used for finite difference calculations)
+            - set_params(params): set the parameters on hardware and commit to the 
+                internal state (used for applying the calculated parameter updates)
+    '''
+    # Initialize history with NaN values to indicate uninitialized entries
+    history = np.full(num_iterations + 1, np.nan)
+    current_delta = init_delta.copy()
+    history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
+
+    params = hardware_mesh.get_params()
+    current_matrix = hardware_mesh.measure_matrix()
+    if init_delta.shape != current_matrix.shape:
+        raise ValueError(f"Error: init_delta shape {init_delta.shape} must match measured matrix shape {current_matrix.shape}.")
+
+    target_matrix = hardware_mesh.get() + init_delta
+
+    cols = np.arange(hardware_mesh.shape[1])
+    step_vector = np.zeros_like(params)
+    step_size = delta_voltage
+
+    for col_index in cols:
+        step_vector[:, col_index] = delta_voltage
+        for iteration in range(num_iterations):
+            forward_matrix = hardware_mesh.test_params(params + step_vector, measure=True) # test positive perturbation
+            forward_delta = (target_matrix - forward_matrix)[:, col_index]
+            backward_matrix = hardware_mesh.test_params(params - step_vector, measure=True) # test negative perturbation
+            backward_delta = (target_matrix - backward_matrix)[:, col_index]
+
+            first_derivative = (forward_delta - backward_delta)/(2*step_size)
+            second_derivative = (forward_delta - 2*current_delta[:,col_index] + backward_delta)/(step_size**2) 
+
+            # Avoid division by zero or very small second derivative which can cause large updates
+            unstable = np.abs(second_derivative) < 1e-6
+            if np.all(unstable):
+                log.warning(f"Second derivative for column {col_index} is too small across the slice, skipping update to avoid instability.")
+                continue
+
+            # Newton-Raphson update for the parameters corresponding to this column
+            update = np.zeros_like(first_derivative)
+            np.divide(-learning_rate * first_derivative,
+                      second_derivative,
+                      out=update,
+                      where=~unstable)
+            params[:, col_index] += update
+
+        
+            current_matrix = hardware_mesh.measure_matrix()
+            current_delta = target_matrix - current_matrix
+            history[iteration + 1] = np.linalg.norm(current_delta)  # Record delta magnitude after update
+
+            if np.linalg.norm(current_delta[:, col_index]) < convergence_threshold:
+                break # TODO: Check that this only breaks one level
+        step_vector[:, col_index] = 0.0
+    return history, params
+
+standard_calibration: Callable[[np.ndarray, HardMesh],
+                           tuple[np.ndarray, np.ndarray]] = partial(col_wise_newton,
+                                                           learning_rate=1.0,
+                                                           delta_voltage=0.1,
+                                                           num_iterations=100)
