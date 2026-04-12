@@ -5,14 +5,22 @@
 '''
 from time import sleep
 from typing import Callable
+from functools import partial
 
 import numpy as np
 
 from vivilux.meshes import Mesh
 from vivilux.layers import Layer
-from vivilux.hardware.arbitrary_mzi import HardMesh, standard_calibration
+from vivilux.hardware.arbitrary_mzi import HardMesh
+from vivilux.hardware.calibrations import central_difference_descent
 from vivilux.hardware.lasers import LaserArray
 from vivilux.hardware.detectors import DetectorArray
+
+standard_calibration: Callable[[np.ndarray, HardMesh],
+                           tuple[np.ndarray, np.ndarray]] = partial(central_difference_descent,
+                                                           learning_rate=0.1,
+                                                           delta_voltage=0.1,
+                                                           num_iterations=100)
 
 class DummyLasers(LaserArray):
     def __init__(self,

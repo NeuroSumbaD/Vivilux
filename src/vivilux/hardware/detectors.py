@@ -81,3 +81,67 @@ class DetectorArray:
     
     def __len__(self):
         return self.size
+
+class TIA_Array(DetectorArray):
+    '''A simpler class for photodetectors connected to a transimpedance 
+        amplifier (TIA) such that the voltage is directly proportional to the
+        photocurrent. In this case, readout and normalization is a simple scan
+        of the voltage and some normalization if desired.
+    '''
+    
+    def __init__(self,
+                 size: int, # number of detectors in the array
+                 normFactor: float, # multiplicative factor to convert voltage to arbitrary normalized units
+                 nets: list[str],  # List of detector net names to read from
+                 netlist: daq.Netlist, # Netlist to use for reading the detectors
+                 transimpedance: float = 10e3, # transimpedance of the detectors in ohms (default: 10k ohms to match Koheron TIA400)
+
+                 ):
+        self.size = size
+        self.nets = nets
+        self.netlist = netlist
+        self.transimpedance = transimpedance
+        self.normFactor = normFactor
+
+        shared_board = netlist.share_board(nets)
+        if shared_board is None:
+            def read_values(ret_std=False):
+                values = []
+                for net in self.nets:
+                    value = self.netlist[net].vin(std=ret_std)
+                    values.append(value)
+                if ret_std:
+                    vals, stds = zip(*values)
+                    return np.array(vals), np.array(stds)
+                    
+            self._read_values = lambda ret_std=False: read_values(ret_std)
+        else:
+            shared_board: daq.Board
+            self._read_values = lambda ret_std=False: \
+                shared_board.group_vin(self.nets, std=ret_std)
+
+        self.read() # Initialize the offsets by reading the detectors without input
+    
+    def read(self) -> np.ndarray:
+        '''Reads from the detector nets and returns normalized arbitrary units
+            as a numpy array. Minimum reading is 0 A (no negative photocurrent
+            reported).
+
+            TODO: add support for reading multiple pins at once
+        '''
+        values: np.ndarray = self._read_values()
+
+        # reading *= self.normFactor  # Convert to arbitrary normalized units (now handled in HardMesh class)
+        # if np.any(values > 1.0):
+        #     log.warning(f"Detector values exceeds 1.0 (a. u.): {values}")
+        return values
+    
+    def read_raw(self) -> tuple[np.ndarray, np.ndarray]:
+        '''Reads the raw voltage values from the detector nets without 
+            normalization. Returns the readings and their standard deviations.
+        '''
+        values, std_dev = self._read_values(True)
+        return values, std_dev
+    
+    def __len__(self):
+        return self.size

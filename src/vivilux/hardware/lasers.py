@@ -229,8 +229,6 @@ class LaserArray:
                 log.error(f"Control signal {control_vector[i]} for net {net} is out of bounds ")
                 raise ValueError(f"Control signal {control_vector[i]} for net {net} is out of bounds ")
 
-        # TODO: add sleep if necessary for stable turn-on time
-
     def setNormalized(self, vector: np.ndarray) -> None:
         '''Sets the laser powers from a normalized input vector.
         
@@ -635,3 +633,112 @@ class SFPDetectorArray(DetectorArray):
         self.lasers.setNormalized(laser_states)  # Restore previous laser states
 
         return on_reading - off_reading, np.max([on_dev, off_dev], axis=0)
+
+class ButterflyLasers(LaserArray):
+    '''Base class for interface with laser arrays for MZI input.
+        Assumes that the DAQ voltage output controls the laser power
+        (requires voltage controlled current controller circuit).
+        
+        Parameters
+        ----------
+        size : int
+            Number of channels in the laser array.
+        control_nets : list[str]
+            List of control net names to write to (e.g. "laser_1", "laser_2").
+        limits : tuple[float, float]
+            (min, max) control signal limits (usually voltage) for the laser array.
+        netlist : daq.Netlist
+            Netlist to use for reading and writing to the control and detector nets.
+        amplification : float
+            Precalibrated scale factor of DAC control voltage to laser power in arbitrary units.
+        threshold : float
+            DAC control voltage corresponding to laser threshold in arbitrary units.
+        pause : float
+            Pause between control signal changes and read operations (default: 10e-3 seconds).
+    '''
+    def __init__(self,
+                 size: int, # Number of channels in the laser array
+                 control_nets: list[str],  # List of control net names to write to
+                 limits: tuple[float, float], # (min, max) control signal limits
+                 netlist: daq.Netlist,
+                 amplification: float, # Precalibrated scale factor of DAC control voltage to laser power
+                 threshold: float, # DAC control voltage corresponding to laser threshold
+                 pause: float = 10e-3, # pause between control signal changes and read operations
+                ):
+        if not netlist.in_context:
+            log.error("Attempted to initialize LaserArray outside a daq.Netlist context.")
+            raise ValueError("LaserArray must be initialized in a netlist context. "
+                             "Use `with netlist: \n\t[Network definition and training]` ")
+
+        self.size = size
+        self.control_nets = control_nets
+        self.limits = limits
+        self.netlist = netlist
+        self.amplification = amplification
+        self.threshold = threshold
+        self.pause = pause
+
+        denormFactor = 1/amplification
+        self._denorm = lambda x: self.threshold + (x * denormFactor)
+        self._norm = lambda x: np.maximum(x - self.threshold, 0) * amplification
+
+    def reset(self):
+        for net in self.control_nets:
+            self.netlist[net].reset()  # Reset control nets to default state (0 V)
+
+    def clip(self, vector: np.ndarray) -> np.ndarray:
+        '''Ensures that the input vector is within the power limits.
+        '''
+        if not isinstance(vector, np.ndarray):
+            vector = np.array(vector)
+        return np.clip(vector, self.limits[0], self.limits[1])
+    
+    def normalize(self, vector: np.ndarray) -> np.ndarray:
+        '''Normalizes the input vector to the range [0, 1].
+        '''
+        return self._norm(vector)
+
+    def denormalize(self, vector: np.ndarray) -> np.ndarray:
+        '''Denormalizes the input vector from the range [0, 1] to the control
+            unit limits (usually voltage).
+        '''
+        return self._denorm(vector)
+
+    def calibrate_power(self,
+                        calibration_points: int,
+                        pause=10e-3,
+                        duty_cycle=0.1) -> None:
+        raise NotImplementedError("Calibration function not implemented for "
+                                  "ButterflyLasers which are expected to be pre-calibrated.")
+
+    
+    def setControl(self, control_vector: np.ndarray) -> None:
+        '''Sets the laser powers according to the input vector in terms
+            of control signals (usually voltage).
+            The input vector should be in the range of self.limits=[min, max]
+        '''
+        if not isinstance(control_vector, np.ndarray):
+            control_vector = np.array(control_vector)
+
+        log.info(f"Setting laser control nets to: {control_vector} (Volts)")
+
+        for i, net in enumerate(self.control_nets):
+            if control_vector[i] >= self.limits[0] and control_vector[i] <= self.limits[1]:
+                self.netlist[net].vout(control_vector[i])
+            else:
+                log.error(f"Control signal {control_vector[i]} for net {net} is out of bounds ")
+                raise ValueError(f"Control signal {control_vector[i]} for net {net} is out of bounds ")
+
+
+    def setNormalized(self, vector: np.ndarray) -> None:
+        '''Sets the laser powers from a normalized input vector.
+        
+            NOTE: This method is used after the calibration routine
+            and uses a settling delay to allow the lasers to stabilize.
+        '''
+        if not isinstance(vector, np.ndarray):
+            vector = np.array(vector)
+        
+        # Calculate the denormalized vector and set the power
+        self.setControl(self.denormalize(vector))
+        sleep(self.pause)  # Allow time for the lasers to settle
