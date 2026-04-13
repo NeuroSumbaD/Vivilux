@@ -63,13 +63,10 @@ class MZMCrossbar(HardMesh):
             # Expand global limits to individual limits for each parameter
             self.param_limits = np.tile(self.param_limits, (shape[0], shape[1], 1))
 
-        self.voltages = np.array(
-            [[np.random.uniform(low=self.param_limits[i,j,0], high=self.param_limits[i,j,1])
-              for j in range(shape[1])] for i in range(shape[0])]) # random initial voltages for the phase shifters within limits
+        self.voltages = np.random.uniform(low=self.param_limits[:,:,0], high=self.param_limits[:,:,1], size=shape) # random initial voltages for the phase shifters within limits
 
         self.num_params: float = self.voltages.size
         self.modified = np.full(self.shape, True, dtype=bool) # flag to indicate if the parameters have been modified since last matrix measurement
-        
 
         self.records = [] # for recording the convergence of deltas
 
@@ -235,7 +232,9 @@ class TDMCrossbar(MZMCrossbar):
                  param_indices: tuple[tuple[int,int],tuple[int,int]], # Double tuple with row (start,end) indices and column (start,end) indices to specify the submatrix of the underlying crossbar that this TDM crossbar will implement
                  calibration_loop: Callable[[np.ndarray, MZMCrossbar], tuple[list[float], np.ndarray]], # function that takes in the ideal delta and the underlying crossbar object and returns a history of deltas and the parameters to set for the underlying crossbar
                  calibrate: bool = False, # whether to run a calibration loop upon initialization
-                 initial_weights: np.ndarray | None = None, # optional initial values to set for the crossbar parameters (arbitrary normalized units, not necessarily voltages), if None then initialized randomly within limits
+                 target_weights: np.ndarray | None = None, # optional initial values to set for the crossbar parameters (arbitrary normalized units, not necessarily voltages), if None then initialized randomly within limits
+                 initial_params: np.ndarray | None = None, # optional initial parameters to set for the underlying crossbar (e.g. voltages), if None then initialized randomly within limits (only used if calibrate is True)
+                 **kwargs,
                  ):
 
         if not isinstance(crossbar, MZMCrossbar):
@@ -246,6 +245,8 @@ class TDMCrossbar(MZMCrossbar):
         if param_indices[1][1] - param_indices[1][0] != size: # Number of columns should match the underlying input shape
             raise ValueError(f"Error: Column indices {param_indices[1]} do not match specified input size {size}.")
         
+        Mesh.__init__(self, size, inLayer, **kwargs)
+
         self.param_indices = param_indices
         self.laser_indices = (param_indices[1][0], param_indices[1][1]) # indices of the input lasers to use for this TDM crossbar, which should match the column indices of the parameters
         self.shape = (param_indices[0][1]-param_indices[0][0], param_indices[1][1]-param_indices[1][0])
@@ -265,15 +266,20 @@ class TDMCrossbar(MZMCrossbar):
         # Inference normalization factor is based on the size of the TDM crossbar, not the underlying crossbar
         self.norm_factor_inference = crossbar.norm_factor / self.shape[1]
 
-        # Store initial values or calculate randomly (arbitrary normalized units)
-        self.norm_weights = initial_weights if initial_weights is not None else np.random.uniform(size=self.shape)
-        self.internal_values = np.array(self.norm_weights, copy=True) # to store the actual measured values corresponding to the normalized weights after calibration
 
         self.records = [] # for recording the convergence of deltas
 
+        # Store initial values or calculate randomly (arbitrary normalized units)
+        if initial_params is not None:
+            self.internal_values = np.array(initial_params, copy=True).reshape(self.shape)
+        else:
+            self.internal_values = np.random.uniform(low=crossbar.param_limits[param_indices[0][0]:param_indices[0][1], param_indices[1][0]:param_indices[1][1], 0],
+                                                     high=crossbar.param_limits[param_indices[0][0]:param_indices[0][1], param_indices[1][0]:param_indices[1][1], 1],
+                                                     size=self.shape)
         if calibrate: # Run an initial calibration loop to set the parameters to match the initial values
+            target_weights = target_weights if target_weights is not None else np.random.uniform(size=self.shape)
             matrix = self.measure_matrix()
-            delta = self.norm_weights - matrix
+            delta = target_weights - matrix
             self.ApplyDelta(delta)
 
     def _compose_full_params(self, params: np.ndarray) -> np.ndarray:

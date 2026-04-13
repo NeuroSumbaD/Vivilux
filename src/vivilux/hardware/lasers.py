@@ -661,8 +661,8 @@ class ButterflyLasers(LaserArray):
                  control_nets: list[str],  # List of control net names to write to
                  limits: tuple[float, float], # (min, max) control signal limits
                  netlist: daq.Netlist,
-                 amplification: float, # Precalibrated scale factor of DAC control voltage to laser power
-                 threshold: float, # DAC control voltage corresponding to laser threshold
+                 amplification: float| np.ndarray, # Precalibrated scale factor of DAC control voltage to laser power
+                 threshold: float | np.ndarray, # DAC control voltage corresponding to laser threshold
                  pause: float = 10e-3, # pause between control signal changes and read operations
                 ):
         if not netlist.in_context:
