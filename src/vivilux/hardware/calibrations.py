@@ -1,14 +1,14 @@
 '''Submodule defining calibration routings for hardware meshes.
 '''
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, TypeAlias
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from vivilux.hardware.arbitrary_mzi import HardMesh
+    from vivilux.hardware.hard_mesh import HardMesh
 
-type StepGenerator = Callable[[int], np.ndarray] # Type alias for step vector generator
+StepGenerator: TypeAlias = Callable[[int], np.ndarray] # Type alias for step vector generator
 
 def gen_from_uniform(shape: tuple[int, ...]) -> StepGenerator:
     '''Generates step vectors from a uniform distribution between -0.5 and 0.5.

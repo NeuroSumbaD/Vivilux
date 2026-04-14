@@ -12,9 +12,10 @@ import numpy as np
 
 from vivilux.meshes import Mesh
 from vivilux.layers import Layer
-from vivilux.hardware.arbitrary_mzi import HardMesh
+from vivilux.hardware.hard_mesh import HardMesh
 from vivilux.hardware.lasers import LaserArray
 from vivilux.hardware.detectors import DetectorArray
+import pydaq.daq as daq
 from pydaq.logger import log
 
 class MZMCrossbar(HardMesh):
@@ -34,6 +35,7 @@ class MZMCrossbar(HardMesh):
                  param_limits: tuple[float, float] | tuple[tuple[tuple[float, float],...], ...], # min and max voltage for phase shifters, can be a tuple for global limits or a nested tuple for individual limits
                  param_nets: list[list[str]], # Nested list of parameter net names corresponding to the phase shifters
                  calibration_loop: Callable[[np.ndarray, 'MZMCrossbar'], tuple[list[float], np.ndarray]], # function that takes in the ideal delta and the crossbar object and returns a history of deltas and the parameters to set
+                 netlist: daq.Netlist,
                  norm_factor: float = 1/0.03, # Factor to convert raw detector readings to normalized units (max reading for one-hot input)
                  sleep_time: float = 0.0, # time to sleep for simulating delay in hardware operations (in seconds)
                  **kwargs):
@@ -50,6 +52,7 @@ class MZMCrossbar(HardMesh):
         self.param_nets = np.array(param_nets, dtype=str)
         self.calibration_loop = calibration_loop
         self.norm_factor = norm_factor
+        self.netlist = netlist
 
         self.norm_factor_inference = norm_factor / size # during inference, a 1 from each input will sum together, so max reading is size
 
@@ -231,6 +234,7 @@ class TDMCrossbar(MZMCrossbar):
                  crossbar: MZMCrossbar, # underlying MZMCrossbar hardware
                  param_indices: tuple[tuple[int,int],tuple[int,int]], # Double tuple with row (start,end) indices and column (start,end) indices to specify the submatrix of the underlying crossbar that this TDM crossbar will implement
                  calibration_loop: Callable[[np.ndarray, MZMCrossbar], tuple[list[float], np.ndarray]], # function that takes in the ideal delta and the underlying crossbar object and returns a history of deltas and the parameters to set for the underlying crossbar
+                 netlist: daq.Netlist,
                  calibrate: bool = False, # whether to run a calibration loop upon initialization
                  target_weights: np.ndarray | None = None, # optional initial values to set for the crossbar parameters (arbitrary normalized units, not necessarily voltages), if None then initialized randomly within limits
                  initial_params: np.ndarray | None = None, # optional initial parameters to set for the underlying crossbar (e.g. voltages), if None then initialized randomly within limits (only used if calibrate is True)
@@ -258,6 +262,7 @@ class TDMCrossbar(MZMCrossbar):
         self.inLayer = inLayer
         self.crossbar = crossbar
         self.calibration_loop = calibration_loop
+        self.netlist = netlist
         
         # Create a mask to use when setting which parameters are modified
         self.params_mask = np.full(crossbar.shape, False, dtype=bool) # mask to specify which parameters on the underlying crossbar to update for this TDM crossbar

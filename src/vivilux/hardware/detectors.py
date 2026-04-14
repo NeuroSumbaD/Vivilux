@@ -28,20 +28,18 @@ class DetectorArray:
         
         shared_board = netlist.share_board(nets)
         if shared_board is None:
-            def read_values(ret_std=False):
+            def read_values():
                 values = []
                 for net in self.nets:
-                    value = self.netlist[net].vin(std=ret_std)
+                    value = self.netlist[net].vin()
                     values.append(value)
-                if ret_std:
-                    vals, stds = zip(*values)
-                    return np.array(vals), np.array(stds)
+                    return np.array(values)
                     
-            self._read_values = lambda ret_std=False: read_values(ret_std)
+            self._read_values = lambda : read_values()
         else:
             shared_board: daq.Board
-            self._read_values = lambda ret_std=False: \
-                shared_board.group_vin(self.nets, std=ret_std)
+            self._read_values = lambda : \
+                shared_board.group_vin(self.nets)
 
         self.read() # Initialize the offsets by reading the detectors without input
     
@@ -72,12 +70,12 @@ class DetectorArray:
         else:
             return reading
     
-    def read_raw(self) -> tuple[np.ndarray, np.ndarray]:
-        '''Reads the raw voltage values from the detector nets without offset
-            subtraction or transimpedance conversion.
-        '''
-        values, std_dev = self._read_values(True)
-        return values, std_dev
+    # def read_raw(self) -> tuple[np.ndarray, np.ndarray]:
+    #     '''Reads the raw voltage values from the detector nets without offset
+    #         subtraction or transimpedance conversion.
+    #     '''
+    #     values, std_dev = self._read_values(True)
+    #     return values, std_dev
     
     def __len__(self):
         return self.size
@@ -95,32 +93,37 @@ class TIA_Array(DetectorArray):
                  nets: list[str],  # List of detector net names to read from
                  netlist: daq.Netlist, # Netlist to use for reading the detectors
                  transimpedance: float = 10e3, # transimpedance of the detectors in ohms (default: 10k ohms to match Koheron TIA400)
-
+                 num_samples = 1, # Number of samples per measurement
                  ):
         self.size = size
         self.nets = nets
         self.netlist = netlist
         self.transimpedance = transimpedance
         self.normFactor = normFactor
+        self.num_samples = num_samples
 
         shared_board = netlist.share_board(nets)
+        log.info(f"Nets for TIA_Array belong to shared board: {shared_board}")
         if shared_board is None:
-            def read_values(ret_std=False):
+            def read_values():
                 values = []
                 for net in self.nets:
-                    value = self.netlist[net].vin(std=ret_std)
+                    if num_samples == 1:
+                        value = self.netlist[net].vin()
+                    else:
+                        value = np.mean(self.netlist[net].scan_vin(num_samples))
                     values.append(value)
-                if ret_std:
-                    vals, stds = zip(*values)
-                    return np.array(vals), np.array(stds)
+                return np.array(values)
                     
-            self._read_values = lambda ret_std=False: read_values(ret_std)
+            self._read_values = lambda : read_values()
         else:
             shared_board: daq.Board
-            self._read_values = lambda ret_std=False: \
-                shared_board.group_vin(self.nets, std=ret_std)
-
-        self.read() # Initialize the offsets by reading the detectors without input
+            if num_samples == 1:
+                self._read_values = lambda : \
+                    shared_board.group_vin(self.nets)
+            else:
+                self._read_values = lambda : \
+                    np.mean(shared_board.group_scan_vin(self.nets, num_samples),axis=1)
     
     def read(self) -> np.ndarray:
         '''Reads from the detector nets and returns normalized arbitrary units
@@ -135,13 +138,7 @@ class TIA_Array(DetectorArray):
         # if np.any(values > 1.0):
         #     log.warning(f"Detector values exceeds 1.0 (a. u.): {values}")
         return values
-    
-    def read_raw(self) -> tuple[np.ndarray, np.ndarray]:
-        '''Reads the raw voltage values from the detector nets without 
-            normalization. Returns the readings and their standard deviations.
-        '''
-        values, std_dev = self._read_values(True)
-        return values, std_dev
+
     
     def __len__(self):
         return self.size

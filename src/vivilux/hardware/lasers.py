@@ -663,6 +663,7 @@ class ButterflyLasers(LaserArray):
                  netlist: daq.Netlist,
                  amplification: float| np.ndarray, # Precalibrated scale factor of DAC control voltage to laser power
                  threshold: float | np.ndarray, # DAC control voltage corresponding to laser threshold
+                 norm_factor: float = 1/0.03,
                  pause: float = 10e-3, # pause between control signal changes and read operations
                 ):
         if not netlist.in_context:
@@ -674,13 +675,13 @@ class ButterflyLasers(LaserArray):
         self.control_nets = control_nets
         self.limits = limits
         self.netlist = netlist
-        self.amplification = amplification
+        self.amplification = amplification*norm_factor
         self.threshold = threshold
         self.pause = pause
 
-        denormFactor = 1/amplification
+        denormFactor = 1/self.amplification
         self._denorm = lambda x: self.threshold + (x * denormFactor)
-        self._norm = lambda x: np.maximum(x - self.threshold, 0) * amplification
+        self._norm = lambda x: np.maximum(x - self.threshold, 0) * self.amplification
 
     def reset(self):
         for net in self.control_nets:

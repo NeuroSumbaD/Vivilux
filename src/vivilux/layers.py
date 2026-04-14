@@ -16,7 +16,6 @@ import numpy as np
 # import defaults
 from .activations import NoisyXX1
 from .learningRules import CHL
-from .optimizers import Simple
 from .visualize import Monitor
 from .photonics.neurons import Neuron, YunJhuModel
 
@@ -38,7 +37,7 @@ class Layer:
                 #  freeze = False,
                 #  batchMode=False,
                  dtype = np.float64,
-                 name = None,
+                 name: str | None = None,
                  neuron: Neuron = YunJhuModel,
                  ):
         
@@ -83,8 +82,9 @@ class Layer:
         self.phaseHist = {}
         # self.ActPAvg = np.mean(self.outAct) # initialize for Gscale
 
-        self.name =  f"LAYER_{Layer.count}" if name == None else name
-        if isInput and name == None: self.name = "INPUT_" + self.name
+        self.name =  f"LAYER_{Layer.count}" if name is None else name
+        if isInput and name is None: 
+            self.name = "INPUT_" + self.name
         self.isInput = isInput
         self.isTarget = isTarget
         self.freeze = False
@@ -243,7 +243,8 @@ class Layer:
         self.monitors[monitor.name] = monitor
 
     def UpdateMonitors(self):
-        if not self.net.monitoring: return
+        if not self.net.monitoring:
+            return
         for monitor in self.monitors.values():
             monitor.update(self.snapshot)
     
@@ -326,9 +327,11 @@ class Layer:
         self.Vm = self.actFn.Thr + self.Act/self.actFn.Gain
 
     def Learn(self, batchComplete=False, dwtLog = {}):
-        if self.isInput or self.freeze: return
+        if self.isInput or self.freeze:
+            return
         for mesh in self.excMeshes:
-            if not mesh.trainable: continue
+            if not mesh.trainable:
+                continue
             mesh.Update(dwtLog=dwtLog)
         
     def Debug(self, **kwargs):
@@ -347,11 +350,13 @@ class Layer:
             currentLog = actLog[timeSeries==time]
             currentLog = currentLog[currentLog["name"]==self.name]
             currentLog = currentLog.drop(["time", "name", "nIndex"], axis=1)
-            if len(currentLog) == 0: return
+            if len(currentLog) == 0:
+                return
 
             # compare each internal variable
             for colName in currentLog:
-                if colName not in kwargs: continue
+                if colName not in kwargs:
+                    continue
 
                 #Generate column entry for debugLog
                 if colName not in self.debugLog:
@@ -414,6 +419,6 @@ class Layer:
     def __str__(self) -> str:
         layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
         layStr += f"Rule = {self.rule}"
-        layStr += f"\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
+        layStr += "\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
         layStr += f"\n\tActivity: \n\t\t{self.Act}"
         return layStr

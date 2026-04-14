@@ -5,7 +5,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .nets import Net
     from .layers import Layer
 
 from .devices import Device, Generic
@@ -211,8 +210,7 @@ class Mesh:
             return np.array(synapticWeights @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
         except ValueError as ve:
             raise ValueError(f"Attempted to apply {data} (shape: {data.shape})"
-                             f" to mesh of dimension: {self.shape}")
-            # print(ve)
+                             f" to mesh of dimension: {self.shape}.\n{ve}")
 
     def AttachLayer(self, rcvLayer: Layer):
         self.rcvLayer = rcvLayer
@@ -227,7 +225,8 @@ class Mesh:
             self.WtBalCtr = 0
 
             ####----WtBalFmWt----####
-            if not self.WtBalance: return
+            if not self.WtBalance:
+                return
             wbAvg = np.mean(self.matrix)
 
             if wbAvg < self.wbLoThr:
@@ -308,8 +307,10 @@ class Mesh:
               **kwargs):
         '''Checks the XCAL and weights against leabra data'''
         #TODO: This function is very messy, truncate if possible
-        if "dwtLog" not in kwargs: return
-        if kwargs["dwtLog"] is None: return #empty data
+        if "dwtLog" not in kwargs:
+            return
+        if kwargs["dwtLog"] is None:
+            return #empty data
         net = self.inLayer.net
         time = net.time
 
@@ -325,7 +326,8 @@ class Mesh:
         frame = dwtLog[dwtLog["sName"] == self.inLayer.name][dwtLog["rName"] == self.rcvLayer.name]
         frame = frame[frame["time"].round(3) == np.round(time, 3)]
         frame = frame.drop(["time", "rName", "sName"], axis=1)
-        if len(frame) == 0: return
+        if len(frame) == 0:
+            return
         
         leabraData = {}
         sendLen = frame["sendIndex"].max() + 1
@@ -347,7 +349,8 @@ class Mesh:
         # return #TODO: LINE UP THE DATA CORRECTLY
         allEqual = {}
         for key in leabraData:
-            if key not in viviluxData: continue #skip missing columns
+            if key not in viviluxData:
+                continue #skip missing columns
             vlDatum = viviluxData[key]
             shape = (len(self.rcvLayer), len(self.inLayer))
             vlDatum = vlDatum[:shape[0],:shape[1]]
