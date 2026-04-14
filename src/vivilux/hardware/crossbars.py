@@ -6,7 +6,6 @@
 
 from time import sleep
 from typing import Callable
-from functools import partial
 
 import numpy as np
 
@@ -422,12 +421,12 @@ def col_wise_newton(init_delta: np.ndarray,
         step_vector[:, col_index] = delta_voltage
         for iteration in range(num_iterations):
             forward_matrix = hardware_mesh.test_params(params + step_vector, measure=True) # test positive perturbation
-            forward_delta = (target_matrix - forward_matrix)[:, col_index]
+            # forward_delta = (target_matrix - forward_matrix)[:, col_index]
             backward_matrix = hardware_mesh.test_params(params - step_vector, measure=True) # test negative perturbation
-            backward_delta = (target_matrix - backward_matrix)[:, col_index]
+            # backward_delta = (target_matrix - backward_matrix)[:, col_index]
 
-            first_derivative = (forward_delta - backward_delta)/(2*step_size)
-            second_derivative = (forward_delta - 2*current_delta[:,col_index] + backward_delta)/(step_size**2) 
+            first_derivative = (forward_matrix - backward_matrix)/(2*step_size)
+            second_derivative = (forward_matrix[:,col_index] - 2*current_matrix[:,col_index] + backward_matrix[:,col_index])/(step_size**2) 
 
             # Avoid division by zero or very small second derivative which can cause large updates
             unstable = np.abs(second_derivative) < 1e-6
@@ -453,8 +452,66 @@ def col_wise_newton(init_delta: np.ndarray,
         step_vector[:, col_index] = 0.0
     return history, params
 
-standard_calibration: Callable[[np.ndarray, HardMesh],
-                           tuple[np.ndarray, np.ndarray]] = partial(col_wise_newton,
-                                                           learning_rate=1.0,
-                                                           delta_voltage=0.1,
-                                                           num_iterations=100)
+def col_wise_euler(init_delta: np.ndarray,
+                    hardware_mesh: MZMCrossbar | TDMCrossbar, 
+                    learning_rate: float = 1.0,
+                    delta_voltage: float = 0.1,
+                    num_iterations: int = 100,
+                    convergence_threshold: float = 1e-3,
+                    ) -> tuple[list[float], np.ndarray]:
+    '''A solver that uses Netwon-Raphson to minimize the difference to the
+        target delta using column-wise calculations. This calibration procedure
+        assumes each element of the matrix is only influenced by one parameter,
+        so the columns can be optimized one at a time using element-wise calculations
+        and by all rows of a column in parallel (thus reducing the number of
+        changes to the lasers). Additionally, the first and second derivatives
+        can both be calculated by finite differences from the same three measurements
+        (current, positive perturbation, negative perturbation) rather than requiring
+        additional measurements for second derivatives, thus making it more efficient
+        to implement on hardware.
+
+        NOTE: This calibration can only be applied to Mesh subclasses which agree to
+        the following function calls for testing vs setting parameters:
+            - test_params(params): temporarily set the parameters on hardware without
+                committing to the internal state (used for finite difference calculations)
+            - set_params(params): set the parameters on hardware and commit to the 
+                internal state (used for applying the calculated parameter updates)
+    '''
+    # Initialize history with NaN values to indicate uninitialized entries
+    history = np.full(num_iterations + 1, np.nan)
+    current_delta = init_delta.copy()
+    history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
+
+    params = hardware_mesh.get_params()
+    current_matrix = hardware_mesh.measure_matrix()
+    if init_delta.shape != current_matrix.shape:
+        raise ValueError(f"Error: init_delta shape {init_delta.shape} must match measured matrix shape {current_matrix.shape}.")
+
+    target_matrix = hardware_mesh.get() + init_delta
+
+    cols = np.arange(hardware_mesh.shape[1])
+    step_vector = np.zeros_like(params)
+    step_size = delta_voltage
+
+    for col_index in cols:
+        step_vector[:, col_index] = delta_voltage
+        for iteration in range(num_iterations):
+            forward_matrix = hardware_mesh.test_params(params + step_vector, measure=True) # test positive perturbation
+            backward_matrix = hardware_mesh.test_params(params - step_vector, measure=True) # test negative perturbation
+
+            first_derivative = (forward_matrix[:, col_index] - backward_matrix[:, col_index])/(2*step_size)
+
+
+            # Newton-Raphson update for the parameters corresponding to this column
+            update = learning_rate * current_delta[:, col_index] * first_derivative
+            params[:, col_index] -= update
+
+        
+            current_matrix = hardware_mesh.measure_matrix()
+            current_delta = target_matrix - current_matrix
+            history[iteration + 1] = np.linalg.norm(current_delta)  # Record delta magnitude after update
+
+            if np.linalg.norm(current_delta[:, col_index]) < convergence_threshold:
+                break # TODO: Check that this only breaks one level
+        step_vector[:, col_index] = 0.0
+    return history, params

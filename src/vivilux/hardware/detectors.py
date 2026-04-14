@@ -111,7 +111,8 @@ class TIA_Array(DetectorArray):
                     if num_samples == 1:
                         value = self.netlist[net].vin()
                     else:
-                        value = np.mean(self.netlist[net].scan_vin(num_samples))
+                        samples = self.netlist[net].scan_vin(num_samples)
+                        value = np.mean(samples[samples>=0])
                     values.append(value)
                 return np.array(values)
                     
@@ -119,11 +120,16 @@ class TIA_Array(DetectorArray):
         else:
             shared_board: daq.Board
             if num_samples == 1:
-                self._read_values = lambda : \
-                    shared_board.group_vin(self.nets)
+                def read_values():
+                    return shared_board.group_vin(self.nets)
+                self._read_values = read_values
             else:
-                self._read_values = lambda : \
-                    np.mean(shared_board.group_scan_vin(self.nets, num_samples),axis=1)
+                def read_values():
+                    samples = shared_board.group_scan_vin(self.nets, num_samples)
+                    samples = np.maximum(samples, 0)
+                    values = np.mean(samples,axis=1)
+                    return values
+                self._read_values = read_values
     
     def read(self) -> np.ndarray:
         '''Reads from the detector nets and returns normalized arbitrary units
