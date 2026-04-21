@@ -37,6 +37,7 @@ class MZMCrossbar(HardMesh):
                  netlist: daq.Netlist,
                  norm_factor: float = 1/0.03, # Factor to convert raw detector readings to normalized units (max reading for one-hot input)
                  sleep_time: float = 0.0, # time to sleep for simulating delay in hardware operations (in seconds)
+                 initial_params: np.ndarray | None = None,
                  **kwargs):
         if size != len(outputDetectors):
             raise ValueError(f"Error: Size {size} does not match number of output detectors {len(outputDetectors)}.")
@@ -52,6 +53,7 @@ class MZMCrossbar(HardMesh):
         self.calibration_loop = calibration_loop
         self.norm_factor = norm_factor
         self.netlist = netlist
+        self.params_mask = np.ones(shape, dtype=bool)
 
         self.norm_factor_inference = norm_factor / size # during inference, a 1 from each input will sum together, so max reading is size
 
@@ -65,19 +67,37 @@ class MZMCrossbar(HardMesh):
             # Expand global limits to individual limits for each parameter
             self.param_limits = np.tile(self.param_limits, (shape[0], shape[1], 1))
 
-        self.voltages = np.random.uniform(low=self.param_limits[:,:,0], high=self.param_limits[:,:,1], size=shape) # random initial voltages for the phase shifters within limits
+        if initial_params is None:
+            min_params = np.min(self.param_limits, axis=2)
+            max_params = np.max(self.param_limits, axis=2)
+            self.voltages = np.random.uniform(low=min_params,
+                                              high=max_params,
+                                              size=shape) # random initial voltages for the phase shifters within limits
+        else:
+            self.voltages = self.clip_params(initial_params)
 
         self.num_params: float = self.voltages.size
         self.modified = np.full(self.shape, True, dtype=bool) # flag to indicate if the parameters have been modified since last matrix measurement
 
         self.records = [] # for recording the convergence of deltas
 
-    def _read_matrix(self) -> np.ndarray:
+    def _read_matrix(self,
+                     mask: np.ndarray | None = None,
+                     shape: np.ndarray | None = None,
+                     ) -> np.ndarray:
         '''Read the currently enforced physical matrix without touching stored
             parameter state.
+
+            Mask allows for reading a subset of the matrix.
         '''
-        measured_matrix = np.full(self.shape, np.nan) # initialize measured matrix with NaN values
+        if mask is None:
+            mask = np.full(self.shape, True, dtype=bool)
+        if shape is None:
+            shape = self.shape
+        measured_matrix = np.full(self.shape, np.nan, dtype=float) # initialize measured matrix with NaN values
         for col_index in range(self.shape[1]):
+            if np.all(~mask[:, col_index]): # skip if whole column is masked
+                continue
             # Set the current column to be on and the rest to be off
             # Note that the physical crossbar behaves like a right-multiplication, but the
             # convention in this code is to treat the parameters as left-multiplying, so the
@@ -87,10 +107,14 @@ class MZMCrossbar(HardMesh):
             input_vector[col_index] = 1.0
             self.inputLaser.setNormalized(input_vector)
 
+            col_mask = mask[:,col_index] # Which rows in the column to keep
             sleep(self.sleep_time) # time delay to account for settling times
 
             # Read the output detectors to get the measured coupling parameters for this row
-            measured_matrix[:, col_index] = self.outputDetectors.read() * self.norm_factor # convert to normalized units
+            measured_matrix[:, col_index] = self.outputDetectors.read()[col_mask] * self.norm_factor # convert to normalized units
+
+        # Reshape the measurements
+        measured_matrix = measured_matrix[mask].reshape(shape)
 
         # Turn the lasers off after measurement for safety
         self.inputLaser.setNormalized(np.zeros(self.inputLaser.size))
@@ -112,17 +136,26 @@ class MZMCrossbar(HardMesh):
         self.inputLaser.setNormalized(np.zeros(self.inputLaser.size))
         return self._read_matrix()
     
-    def clip_params(self, params):
+    def clip_params(self,
+                    params: np.ndarray,
+                    param_limits: np.ndarray | None = None,
+                    # shape: np.ndarray | None = None,
+                    mask: np.ndarray | None = None,
+                    ) -> np.ndarray:
         '''Clips the parameters to be within the specified limits. Handles both global limits and individual limits.
         '''
-        params = np.array(params, copy=True).reshape(self.shape) # avoid modifying the original array
-        for i in range(self.shape[0]):
-            for j in range(self.shape[1]):
-                # TODO: Decide if I need a warning when parameters are out of bounds
-                # if params[i*self.shape[1]+j] < self.param_limits[i,j,0] or params[i*self.shape[1]+j] > self.param_limits[i,j,1]:
-                    # log.warning(f"Parameter at index ({i}, {j}) with value {params[i*self.shape[1]+j]:.2f} is out of limits ({self.param_limits[i,j,0]:.2f}, {self.param_limits[i,j,1]:.2f}). Clipping to limits.")
-                params[i, j] = np.clip(params[i, j], self.param_limits[i, j, 0], self.param_limits[i, j, 1])
-        return params
+        params = np.array(params, copy=True) # avoid modifying the original array
+        if param_limits is None:
+            param_limits = self.param_limits
+        # if shape is None:
+        #     shape = self.shape
+        if mask is None:
+            mask = self.params_mask
+        min_params = np.min(param_limits, axis=2)
+        max_params = np.max(param_limits, axis=2)
+        clipped = np.clip(params, min=min_params, max=max_params)
+        # return clipped[mask].reshape(shape)
+        return clipped
 
     
     def get_params(self) -> np.ndarray:
@@ -156,17 +189,27 @@ class MZMCrossbar(HardMesh):
         self.modified[mask] = True
         return self.voltages
 
-    def test_params(self, params: np.ndarray, measure: bool = True, mask: np.ndarray | None = None):
+    def test_params(self,
+                    params: np.ndarray,
+                    measure: bool = True,
+                    mask: np.ndarray | None = None,
+                    shape: np.ndarray | None = None,
+                    ) -> np.ndarray | None:
         '''Temporarily set physical parameters without committing to
             self.voltages.
         '''
-        clipped_params = self.clip_params(params)
         if mask is not None:
             mask = np.array(mask, dtype=bool).reshape(self.shape)
             masked_indices = np.argwhere(mask)
         else:
             mask = np.ones(self.shape, dtype=bool)
             masked_indices = np.argwhere(mask)
+
+        if shape is None:
+            shape = self.shape
+
+        clipped_params = self.clip_params(params=params,
+                                          mask=mask)
 
         for i, j in masked_indices:
             net = self.param_nets[i, j]
@@ -176,9 +219,31 @@ class MZMCrossbar(HardMesh):
 
         self.modified[mask] = True
         if not measure:
-            return clipped_params
+            return
 
-        return self._read_matrix()
+        return self._read_matrix(mask=mask, shape=shape)
+    
+    def test_col(self,
+                col_index: int,
+                params: np.ndarray,
+                measure: bool = True,
+                ) -> np.ndarray | None:
+        '''Temporarily use a candidate TDM parameter slice for optional
+            measurement without modifying stored internal_values.
+        '''
+        mask = np.copy(self.params_mask)
+        col_mask = np.zeros_like(mask, dtype=bool)
+        col_mask[:,col_index] = True
+        mask = np.logical_and(mask, col_mask)
+
+        shape = np.copy(self.shape)
+        shape[1] = 1 # Single column read means single column shape
+
+        return self.test_params(params,
+                                measure=measure,
+                                mask=mask,
+                                shape=shape,
+                                )
     
     def get(self) -> np.ndarray:
         '''Returns the current matrix implemented by the hardware.
@@ -266,10 +331,14 @@ class TDMCrossbar(MZMCrossbar):
         # Create a mask to use when setting which parameters are modified
         self.params_mask = np.full(crossbar.shape, False, dtype=bool) # mask to specify which parameters on the underlying crossbar to update for this TDM crossbar
         self.params_mask[param_indices[0][0]:param_indices[0][1], param_indices[1][0]:param_indices[1][1]] = True
+
+        # Calculate param limits from appropriate subset of underlying crossbar
+        self.param_limits = self.crossbar.param_limits[param_indices[0][0]:param_indices[0][1], param_indices[1][0]:param_indices[1][1]]
         
         # Inference normalization factor is based on the size of the TDM crossbar, not the underlying crossbar
         self.norm_factor_inference = crossbar.norm_factor / self.shape[1]
 
+        self.modified = np.full(self.shape, True, dtype=bool) # flag to indicate if the parameters have been modified since last matrix measurement
 
         self.records = [] # for recording the convergence of deltas
 
@@ -286,19 +355,13 @@ class TDMCrossbar(MZMCrossbar):
             delta = target_weights - matrix
             self.ApplyDelta(delta)
 
-    def _compose_full_params(self, params: np.ndarray) -> np.ndarray:
-        '''Build a full crossbar parameter matrix from this TDM slice.
-        '''
-        full_params = np.array(self.crossbar.get_params(), copy=True).reshape(self.crossbar.shape)
-        full_params[self.params_mask] = np.array(params, copy=True).reshape(self.shape)
-        return full_params
+    
 
     def _enforce_internal_values(self):
         '''Stage this TDM slice on physical hardware without committing the
             parent crossbar state.
         '''
-        full_params = self._compose_full_params(self.internal_values)
-        self.crossbar.test_params(full_params, measure=False, mask=self.params_mask)
+        self.crossbar.test_params(self.get_params, measure=False, mask=self.params_mask)
 
     def get_params(self) -> np.ndarray:
         '''Returns the current parameters for this TDM slice.
@@ -310,35 +373,78 @@ class TDMCrossbar(MZMCrossbar):
             them to the parent MZMCrossbar state.
         '''
         params = np.array(params, copy=True).reshape(self.shape)
-        slice_limits = self.crossbar.param_limits[self.params_mask].reshape(self.shape + (2,))
-        clipped = np.array(params, copy=True)
-        for i in range(self.shape[0]):
-            for j in range(self.shape[1]):
-                clipped[i, j] = np.clip(clipped[i, j], slice_limits[i, j, 0], slice_limits[i, j, 1])
+        # clipped = np.array(params, copy=True)
+        # for i in range(self.shape[0]):
+        #     for j in range(self.shape[1]):
+        #         clipped[i, j] = np.clip(clipped[i, j], slice_limits[i, j, 0], slice_limits[i, j, 1])
+        clipped = self.clip_params(params)
         self.internal_values = clipped
         return self.internal_values
+    
+    def _expand_params(self, params: np.ndarray) -> np.ndarray:
+        full_params = np.copy(self.crossbar.get_params())
+        full_params[self.param_indices[0][0]:self.param_indices[0][1], self.param_indices[1][0]:self.param_indices[1][1]] = params
+        return full_params
+    
+    def clip_params(self,
+                    params,
+                    param_limits: np.ndarray | None = None,
+                    mask: np.ndarray | None = None,
+                    shape: np.ndarray | None = None,
+                    ) -> np.ndarray:
+        if param_limits is None:
+            param_limits = self.param_limits
+        if shape is None:
+            shape = self.shape
+        if mask is None:
+            mask = self.params_mask
+        clipped = self.crossbar.clip_params(self._expand_params(params),
+                                            param_limits=param_limits,
+                                            mask=mask)
+        return clipped[mask].reshape(shape)
 
-    def test_params(self, params: np.ndarray, measure: bool = True) -> np.ndarray | None:
+    def test_params(self,
+                    params: np.ndarray,
+                    measure: bool = True,
+                    mask: np.ndarray | None = None,
+                    shape: np.ndarray | None = None,
+                    ) -> np.ndarray | None:
         '''Temporarily use a candidate TDM parameter slice for optional
             measurement without modifying stored internal_values.
         '''
-        previous_params = np.array(self.internal_values, copy=True)
-        self.set_params(params)
-        try:
-            if not measure:
-                return None
-            return self.measure_matrix()
-        finally:
-            self.internal_values = previous_params
+        if mask is None:
+            mask = self.params_mask
+        if shape is None:
+            shape = self.shape
+        return self.crossbar.test_params(params,
+                                         measure=measure,
+                                         mask=mask,
+                                         shape=shape,
+                                         )
 
     def get(self) -> np.ndarray:
         '''Returns the current matrix implemented by the hardware slice.
         '''
-        self.matrix = self.measure_matrix()
-        return self.matrix
+        if np.any(self.modified):
+            self.matrix = self.measure_matrix()
+            self.InvSigMatrix()
+            self.modified[:] = False
+        return Mesh.get(self)
 
     def measure_matrix(self,) -> np.ndarray:
         '''Measure the submatrix of the underlying crossbar specified by the 
+            indices while enforcing the current parameters before measurement.
+        '''
+        return self.crossbar.test_params(self.internal_values,
+                                         measure=True,
+                                         mask=self.params_mask,
+                                         shape=self.shape,
+                                         )
+    
+    def measure_column(self, col_index: int,
+                       params: np.ndarray | None = None
+                       ) -> np.ndarray:
+        '''Measure the column of the underlying crossbar specified by the 
             indices while enforcing the current parameters before measurement.
         '''
         self._enforce_internal_values()
@@ -377,11 +483,13 @@ class TDMCrossbar(MZMCrossbar):
         self.get() # update the stored matrix after attempting to apply the delta
 
 def col_wise_newton(init_delta: np.ndarray,
-                    hardware_mesh: MZMCrossbar | TDMCrossbar, 
-                    learning_rate: float = 1.0,
-                    delta_voltage: float = 0.1,
-                    num_iterations: int = 100,
-                    convergence_threshold: float = 1e-3,
+                    hardware_mesh: MZMCrossbar | TDMCrossbar,
+                    delta_voltage: float = 0.05,
+                    num_inner: int = 5,
+                    num_iterations: int = 50,
+                    learning_rate: float = 0.2,
+                    convergence_threshold: float = 5e-3,
+                    delta_mask: np.ndarray | None = None,
                     ) -> tuple[list[float], np.ndarray]:
     '''A solver that uses Netwon-Raphson to minimize the difference to the
         target delta using column-wise calculations. This calibration procedure
@@ -396,60 +504,83 @@ def col_wise_newton(init_delta: np.ndarray,
 
         NOTE: This calibration can only be applied to Mesh subclasses which agree to
         the following function calls for testing vs setting parameters:
-            - test_params(params): temporarily set the parameters on hardware without
-                committing to the internal state (used for finite difference calculations)
+            - test_col(col_index, params): temporarily set the given parameters and
+                measure a column of the output transfer matrix
             - set_params(params): set the parameters on hardware and commit to the 
                 internal state (used for applying the calculated parameter updates)
     '''
+    if not isinstance(hardware_mesh, MZMCrossbar):
+        err_msg = f"Calibration method `col_wise_euler` was called on type ({type(hardware_mesh)}) which is not a subclass of MZMCrossbar."
+        log.error(err_msg)
+        raise ValueError(err_msg)
+    
     # Initialize history with NaN values to indicate uninitialized entries
-    history = np.full(num_iterations + 1, np.nan)
+    history = np.full(num_iterations * num_inner * 4 + 1, np.nan)
     current_delta = init_delta.copy()
     history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
 
-    params = hardware_mesh.get_params()
+    if delta_mask is None:
+        delta_mask = np.full_like(current_delta, True, dtype=bool)
+
+    params = np.array(hardware_mesh.get_params(), copy=True)
     current_matrix = hardware_mesh.measure_matrix()
     if init_delta.shape != current_matrix.shape:
         raise ValueError(f"Error: init_delta shape {init_delta.shape} must match measured matrix shape {current_matrix.shape}.")
 
-    target_matrix = hardware_mesh.get() + init_delta
+    target_matrix = hardware_mesh.measure_matrix() + init_delta
 
     cols = np.arange(hardware_mesh.shape[1])
-    step_vector = np.zeros_like(params)
     step_size = delta_voltage
 
-    for col_index in cols:
-        step_vector[:, col_index] = delta_voltage
-        for iteration in range(num_iterations):
-            forward_matrix = hardware_mesh.test_params(params + step_vector, measure=True) # test positive perturbation
-            # forward_delta = (target_matrix - forward_matrix)[:, col_index]
-            backward_matrix = hardware_mesh.test_params(params - step_vector, measure=True) # test negative perturbation
-            # backward_delta = (target_matrix - backward_matrix)[:, col_index]
+    iteration_index = 1
+    for outer_iteration in range(num_iterations):
+        for col_index in cols:
+            if np.all(~delta_mask[:, col_index]):
+                continue # skip rows that don't matter
+            if np.all(np.abs(current_delta[:, col_index][delta_mask[:, col_index]]) < convergence_threshold):
+                continue # Skip inner loop iterations for rows within spec
+            
+            for iteration in range(num_inner):
+                current_col = current_matrix[:, col_index]
 
-            first_derivative = (forward_matrix - backward_matrix)/(2*step_size)
-            second_derivative = (forward_matrix[:,col_index] - 2*current_matrix[:,col_index] + backward_matrix[:,col_index])/(step_size**2) 
+                forward_col = hardware_mesh.test_col(col_index=col_index,
+                                                     params=params + step_size,
+                                                     measure=True,
+                                                     ).flatten() # test positive perturbation
 
-            # Avoid division by zero or very small second derivative which can cause large updates
-            unstable = np.abs(second_derivative) < 1e-6
-            if np.all(unstable):
-                log.warning(f"Second derivative for column {col_index} is too small across the slice, skipping update to avoid instability.")
-                continue
+                backward_col = hardware_mesh.test_col(col_index=col_index,
+                                                      params=params - step_size,
+                                                      measure=True,
+                                                      ).flatten() # test negative perturbation
 
-            # Newton-Raphson update for the parameters corresponding to this column
-            update = np.zeros_like(first_derivative)
-            np.divide(-learning_rate * first_derivative,
-                      second_derivative,
-                      out=update,
-                      where=~unstable)
-            params[:, col_index] += update
+                # Calculate derivatives of weights w.r.t. voltages by finite differences
+                first_derivative = (forward_col - backward_col)/(2*step_size)
+                second_derivative = (forward_col - 2*current_col + backward_col) / (step_size**2)
 
-        
-            current_matrix = hardware_mesh.measure_matrix()
-            current_delta = target_matrix - current_matrix
-            history[iteration + 1] = np.linalg.norm(current_delta)  # Record delta magnitude after update
+                # Calculate derivatives of loss function (SSE) with chain rule
+                first_derivative_delta = - current_delta[:, col_index] * first_derivative
+                second_derivative_delta = np.square(first_derivative) - (current_delta[:, col_index] * second_derivative)
 
-            if np.linalg.norm(current_delta[:, col_index]) < convergence_threshold:
-                break # TODO: Check that this only breaks one level
-        step_vector[:, col_index] = 0.0
+                # Netwon Raphson update rule
+                update = learning_rate * (first_derivative_delta / second_derivative_delta)
+
+                # if np.any(np.abs(update) > 0.5): # Large jump more than 0.5 V
+                #     print("WARNING: Large jump detected, continue with update? ")
+                #     response = input(f"Calculated update: {update},\nCurrent params: {params[:, col_index]}")
+                #     if response.lower() != "y" and response.lower() != "yes":
+                #         raise RuntimeError("Large jump detected, calibration canceled by user.")
+                update = np.where(np.abs(update) > 0.5, np.sign(update)*step_size, update)
+
+                params[:, col_index] -= update
+                params = hardware_mesh.clip_params(params)
+            
+                current_matrix = hardware_mesh.measure_matrix()
+                current_delta = target_matrix - current_matrix
+                history[iteration_index] = np.linalg.norm(current_delta)  # Record delta magnitude after update
+                iteration_index += 1
+
+                if np.all(np.abs(current_delta[:, col_index][delta_mask[:, col_index]]) < convergence_threshold):
+                    break
     return history, params
 
 def col_wise_euler(init_delta: np.ndarray,
@@ -477,6 +608,11 @@ def col_wise_euler(init_delta: np.ndarray,
             - set_params(params): set the parameters on hardware and commit to the 
                 internal state (used for applying the calculated parameter updates)
     '''
+    if not isinstance(hardware_mesh, MZMCrossbar):
+        err_msg = f"Calibration method `col_wise_euler` was called on type ({type(hardware_mesh)}) which is not a subclass of MZMCrossbar."
+        log.error(err_msg)
+        raise ValueError(err_msg)
+
     # Initialize history with NaN values to indicate uninitialized entries
     history = np.full(num_iterations + 1, np.nan)
     current_delta = init_delta.copy()

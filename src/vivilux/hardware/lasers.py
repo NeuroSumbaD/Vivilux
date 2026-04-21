@@ -741,5 +741,6 @@ class ButterflyLasers(LaserArray):
             vector = np.array(vector)
         
         # Calculate the denormalized vector and set the power
-        self.setControl(self.denormalize(vector))
+        controls = self.denormalize(vector)
+        self.setControl(controls)
         sleep(self.pause)  # Allow time for the lasers to settle
