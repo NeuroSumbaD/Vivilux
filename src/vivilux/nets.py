@@ -82,6 +82,19 @@ layerConfig_std = {
         "Send": 0.1,
         "Delta": 0.005,
     },
+    "XCALParams": {
+        "DRev": 0.1,
+        "DThr": 0.0001,
+        "hasNorm": True,
+        "Norm_LrComp": 0.15,
+        "normMin": 0.001,
+        "DecayTau": 1000,
+        "hasMomentum": True, #TODO allow this to be set by layer or mesh config
+        "MTau": 10, #TODO allow this to be set by layer or mesh config
+        "Momentum_LrComp": 0.1, #TODO allow this to be set by layer or mesh config
+        "LrnThr": 0.01,
+        "Lrate": 0.04,
+    },
     "optimizer": Simple,
     "optArgs": {},
     "ffMeshConfig": ffMeshConfig_std,

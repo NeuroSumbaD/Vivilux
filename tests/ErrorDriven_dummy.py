@@ -37,7 +37,7 @@ import json
 
 # Command-line arguments to test different seed, number of epochs, etc.
 parser = argparse.ArgumentParser(description='Run a neuromorphic error-driven learning example with idealized hardware.')
-parser.add_argument("-s", '--seed', type=int, default=100, help='Random seed for reproducibility')
+parser.add_argument("-s", '--seed', type=int, default=2, help='Random seed for reproducibility')
 parser.add_argument("-n", '--numEpochs', type=int, default=50, help='Number of training epochs')
 args = parser.parse_args()
 
@@ -98,7 +98,13 @@ layerList = [Layer(inputSize, isInput=True, name="Input"),
             Layer(hiddenSize, name="Hidden"),
             Layer(outputSize, isTarget=True, name="Output")]
 smallLayConfig = deepcopy(layerConfig_std)
+smallLayConfig = deepcopy(layerConfig_std)
+smallLayConfig["ActAvg"]["Fixed"] = True
+smallLayConfig["ActAvg"]["Init"] = 0.5
+smallLayConfig["ActAvg"]["Gain"] = 1.5
 smallLayConfig["FFFBparams"]["Gi"] = 1.3
+smallLayConfig["XCALParams"]["hasNorm"] = False
+smallLayConfig["XCALParams"]["hasMomentum"] = False
 leabraNet.AddLayers(layerList, layerConfig=smallLayConfig)
 
 # Add feedforward connections
@@ -115,6 +121,7 @@ for inLayer, outLayer in zip(layerList[:-1], layerList[1:]):
                                         "RelScale": 1,
                                         "param_limits": (0, 4.0),
                                         "calibration_loop": hardware_solver,
+                                        "wbOn": False, # Disable weight balancing for this test
                                         },
                                     }
                                 )
@@ -134,6 +141,7 @@ for inLayer, outLayer in zip(layerList[2:], layerList[1:2]):
                                         "RelScale": 0.3,
                                         "param_limits": (0, 4.0),
                                         "calibration_loop": hardware_solver,
+                                        "wbOn": False, # Disable weight balancing for this test
                                         },
                                     }
                                 )

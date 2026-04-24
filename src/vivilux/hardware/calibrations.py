@@ -1,6 +1,8 @@
 '''Submodule defining calibration routings for hardware meshes.
 '''
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Callable, TypeAlias
 
 import numpy as np
