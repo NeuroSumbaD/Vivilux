@@ -132,6 +132,9 @@ class Layer:
             self.FFFB = FFFB(self)
             self.Gi_FFFB = 0
 
+        # Attach XCAL Params
+        self.XCALParams = layerConfig["XCALParams"]
+
         # Attach optimizer
         self.optimizer = layerConfig["optimizer"](**layerConfig["optArgs"])
 

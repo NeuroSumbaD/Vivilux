@@ -156,7 +156,7 @@ class MZMCrossbar(HardMesh):
             self.matrix = self.measure_matrix()
             self.InvSigMatrix()
             self.modified = False
-        return Mesh.get(self)
+        return Mesh.get(self) # NOTE: This hides the fact that the gscale is multiplying the weights
     
     def ApplyDelta(self, delta: np.ndarray):
         '''Applies the delta vector to the linear weights and calculates the 

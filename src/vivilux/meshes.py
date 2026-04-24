@@ -214,7 +214,7 @@ class Mesh:
 
     def AttachLayer(self, rcvLayer: Layer):
         self.rcvLayer = rcvLayer
-        self.XCAL = XCAL() #TODO pass params from layer or mesh config
+        self.XCAL = XCAL(**rcvLayer.XCALParams) #pass params from layer config
         self.XCAL.AttachLayer(self.inLayer, rcvLayer)
 
     def WtBalance(self):
@@ -225,7 +225,7 @@ class Mesh:
             self.WtBalCtr = 0
 
             ####----WtBalFmWt----####
-            if not self.WtBalance:
+            if not self.wbOn:
                 return
             wbAvg = np.mean(self.matrix)
 
