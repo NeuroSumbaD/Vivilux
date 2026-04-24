@@ -59,7 +59,7 @@ class DetectorArray:
             self.offsets = values
             # log.debug(f"Initialized offsets: {self.offsets}")
 
-        log.debug(f"Raw detector reading (V): {values}")
+        log.info(f"Raw detector reading (V): {values}")
         reading = self.offsets - values  # Subtract offsets to get voltage difference
         # log.debug(f"Detector voltage drop (V): {reading}")
         reading /= self.transimpedance  # Convert to photocurrent (proportional to power)

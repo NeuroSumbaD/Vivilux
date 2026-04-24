@@ -122,7 +122,7 @@ class MZMCrossbar(HardMesh):
         if np.any(np.isnan(measured_matrix)):
             log.warning("Measured matrix contains NaN values, indicating that some measurements may have failed.")
 
-        return measured_matrix
+        return np.maximum(measured_matrix,0)
         
     def measure_matrix(self,) -> np.ndarray:
         '''Measure coupling parameter for each cell in the crossbar one row at
@@ -182,7 +182,7 @@ class MZMCrossbar(HardMesh):
             net = self.param_nets[i, j]
             value = clipped_params[i, j]
             if self.modified[i, j] or not np.isclose(value, self.voltages[i, j]):
-                log.info(f"Setting voltage of {value:.2f} V on net '{net}' for parameter.")
+                # log.info(f"Setting voltage of {value:.2f} V on net '{net}' for parameter.")
                 self.netlist[net].vout(value)
 
         self.voltages[mask] = clipped_params[mask]
@@ -214,7 +214,7 @@ class MZMCrossbar(HardMesh):
         for i, j in masked_indices:
             net = self.param_nets[i, j]
             value = clipped_params[i, j]
-            log.info(f"Testing voltage of {value:.2f} V on net '{net}' for parameter.")
+            # log.info(f"Testing voltage of {value:.2f} V on net '{net}' for parameter.")
             self.netlist[net].vout(value)
 
         self.modified[mask] = True
@@ -258,7 +258,7 @@ class MZMCrossbar(HardMesh):
         '''Applies a normalized input vector to the crossbar to compute some matrix
             multiplication.
         '''
-        log.info(f"Applying data to crossbar: {data}")
+        # log.info(f"Applying data to crossbar: {data}")
 
         if np.any(self.modified):
             self.set_params(self.get_params()) # ensure parameters are applied before applying data
@@ -266,9 +266,12 @@ class MZMCrossbar(HardMesh):
         self.inputLaser.setNormalized(data) # set the input lasers according to the input data
 
         output = self.outputDetectors.read() 
-        output *= self.norm_factor_inference # read the output detectors and convert to normalized units
+        # output *= self.norm_factor_inference # read the output detectors and convert to normalized units
+        output *= self.norm_factor # NOTE: Additional normalization not needed above 
+
+        self.inputLaser.setNormalized(np.zeros_like(data)) # turn off lasers to protect them
         
-        return output
+        return self.Gscale * np.maximum(output, 0)
     
     def ApplyDelta(self, delta: np.ndarray):
         '''Applies the delta vector to the linear weights and calculates the 
@@ -517,6 +520,7 @@ def col_wise_newton(init_delta: np.ndarray,
     # Initialize history with NaN values to indicate uninitialized entries
     history = np.full(num_iterations * num_inner * 4 + 1, np.nan)
     current_delta = init_delta.copy()
+    log.info(f"Initial Delta: {current_delta.tolist()}")
     history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
 
     if delta_mask is None:
@@ -527,7 +531,7 @@ def col_wise_newton(init_delta: np.ndarray,
     if init_delta.shape != current_matrix.shape:
         raise ValueError(f"Error: init_delta shape {init_delta.shape} must match measured matrix shape {current_matrix.shape}.")
 
-    target_matrix = hardware_mesh.measure_matrix() + init_delta
+    target_matrix = current_matrix + init_delta
 
     cols = np.arange(hardware_mesh.shape[1])
     step_size = delta_voltage
@@ -564,15 +568,16 @@ def col_wise_newton(init_delta: np.ndarray,
                 # Netwon Raphson update rule
                 update = learning_rate * (first_derivative_delta / second_derivative_delta)
 
-                # if np.any(np.abs(update) > 0.5): # Large jump more than 0.5 V
-                #     print("WARNING: Large jump detected, continue with update? ")
+                large_updates = np.abs(update) > 0.5
+                if np.any(large_updates): # Large jump more than 0.5 V
+                    log.warning(f"WARNING: Large jump detected! Calculated update: {update},\nCurrent params: {params[:, col_index]}")
                 #     response = input(f"Calculated update: {update},\nCurrent params: {params[:, col_index]}")
                 #     if response.lower() != "y" and response.lower() != "yes":
                 #         raise RuntimeError("Large jump detected, calibration canceled by user.")
-                update = np.where(np.abs(update) > 0.5, np.sign(update)*step_size, update)
+                update = np.where(large_updates, np.sign(update)*step_size, update)
 
                 params[:, col_index] -= update
-                params = hardware_mesh.clip_params(params)
+                params = hardware_mesh.set_params(params)
             
                 current_matrix = hardware_mesh.measure_matrix()
                 current_delta = target_matrix - current_matrix
@@ -584,23 +589,157 @@ def col_wise_newton(init_delta: np.ndarray,
     return history, params
 
 def col_wise_euler(init_delta: np.ndarray,
-                    hardware_mesh: MZMCrossbar | TDMCrossbar, 
-                    learning_rate: float = 1.0,
-                    delta_voltage: float = 0.1,
-                    num_iterations: int = 100,
-                    convergence_threshold: float = 1e-3,
-                    ) -> tuple[list[float], np.ndarray]:
-    '''A solver that uses Netwon-Raphson to minimize the difference to the
+                   hardware_mesh: MZMCrossbar | TDMCrossbar,
+                   delta_voltage: float = 0.05,
+                   num_inner: int = 5,
+                   num_iterations: int = 50,
+                   learning_rate: float = 0.2,
+                   convergence_threshold: float = 5e-3,
+                   bounce_step: float = 0.05,
+                   delta_mask: np.ndarray | None = None,
+                   reset_params: np.ndarray | None = None,
+                   ) -> tuple[list[float], np.ndarray]:
+    '''A solver that uses gradient-descent to minimize the difference to the
         target delta using column-wise calculations. This calibration procedure
         assumes each element of the matrix is only influenced by one parameter,
         so the columns can be optimized one at a time using element-wise calculations
         and by all rows of a column in parallel (thus reducing the number of
-        changes to the lasers). Additionally, the first and second derivatives
-        can both be calculated by finite differences from the same three measurements
-        (current, positive perturbation, negative perturbation) rather than requiring
-        additional measurements for second derivatives, thus making it more efficient
-        to implement on hardware.
+        changes to the lasers). Additionally, the first derivatives can be calculated
+        by finite differences.
 
+        NOTE: This calibration can only be applied to Mesh subclasses which agree to
+        the following function calls for testing vs setting parameters:
+            - test_col(col_index, params): temporarily set the given parameters and
+                measure a column of the output transfer matrix
+            - set_params(params): set the parameters on hardware and commit to the 
+                internal state (used for applying the calculated parameter updates)
+    '''
+    if not isinstance(hardware_mesh, MZMCrossbar):
+        err_msg = f"Calibration method `col_wise_euler` was called on type ({type(hardware_mesh)}) which is not a subclass of MZMCrossbar."
+        log.error(err_msg)
+        raise ValueError(err_msg)
+    
+    # Initialize history with NaN values to indicate uninitialized entries
+    history = np.full(num_iterations * num_inner * 4 + 1, np.nan)
+    current_delta = init_delta.copy()
+    history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
+    log.info(f"Initial Delta magnitude={history[0]}), max={current_delta.max():.3f}, min={current_delta.min():.3f}, mean={current_delta.mean():.3f}")
+
+    min_limit = np.min(hardware_mesh.param_limits, axis=2)
+    max_limit = np.max(hardware_mesh.param_limits, axis=2)
+
+    if reset_params is None:
+        reset_params = 0.5 * (min_limit + max_limit)
+
+    if delta_mask is None:
+        delta_mask = np.full_like(current_delta, True, dtype=bool)
+
+    params = np.array(hardware_mesh.get_params(), copy=True)
+    current_matrix = hardware_mesh.measure_matrix()
+    if init_delta.shape != current_matrix.shape:
+        raise ValueError(f"Error: init_delta shape {init_delta.shape} must match measured matrix shape {current_matrix.shape}.")
+
+    target_matrix = current_matrix + init_delta
+
+    cols = np.arange(hardware_mesh.shape[1])
+    step_size = delta_voltage
+
+    iteration_index = 1
+    # edge_bounce = np.zeros_like(params, dtype=int)
+    for outer_iteration in range(num_iterations):
+        for col_index in cols:
+            for iteration in range(num_inner):
+                # # If error is large (> 0.1) near the minimm boundary,
+                # # bounce away by incrementing bounce and taking some step away
+                # min_edge_detected = np.logical_and(np.isclose(
+                #     params[:,col_index],
+                #     min_limit[:,col_index],
+                #     atol=3e-3, # Within 3 mV
+                #     rtol=0.0),
+                #     (current_delta[:,col_index] > 0.1)
+                #     )
+                # # edge_bounce[:,col_index] = np.where(min_edge_detected,
+                # #                                     edge_bounce[:,col_index] + 1,
+                # #                                     edge_bounce[:,col_index])
+                
+                # # If error is large (> 0.1) near the maximum boundary,
+                # # bounce away by decrementing bounce and taking some step away
+                # max_edge_detected = np.logical_and(np.isclose(
+                #     params[:,col_index],
+                #     max_limit[:,col_index],
+                #     atol=3e-3, # Within 3 mV
+                #     rtol=0.0),
+                #     (current_delta[:,col_index] > 0.1)
+                #     )
+                # # edge_bounce[:,col_index] = np.where(max_edge_detected,
+                # #                                     edge_bounce[:,col_index] - 1,
+                # #                                     edge_bounce[:,col_index])
+                
+                # edge_detected = np.logical_or(min_edge_detected, max_edge_detected)
+                # # if np.any(edge_detected):
+                # #     log.warning(f"(iteration={iteration_index}) Num. of params at upper boundary: {np.sum(max_edge_detected)}, lower boundary: {np.sum(min_edge_detected)}")
+                # # params[:,col_index] += np.where(edge_detected,
+                # #                                 edge_bounce[:,col_index] * bounce_step,
+                # #                                 0
+                # #                                 )
+                # # params = hardware_mesh.clip_params(params) # bound params for safety
+                
+                # params[:, col_index] += np.where(edge_detected,
+                #                                  np.random.normal(loc=reset_params[:, col_index],
+                #                                                   scale=0.05,
+                #                                                   size=params.shape[1]),
+                #                                  0
+                #                                 )
+                # if np.any(edge_detected): # re-calculate current matrix and delta when this occurs
+                #     current_matrix = hardware_mesh.measure_matrix()
+                #     current_delta = target_matrix - current_matrix
+
+                forward_col = hardware_mesh.test_col(col_index=col_index,
+                                                     params=params + step_size,
+                                                     measure=True,
+                                                     ).flatten() # test positive perturbation
+
+                backward_col = hardware_mesh.test_col(col_index=col_index,
+                                                      params=params - step_size,
+                                                      measure=True,
+                                                      ).flatten() # test negative perturbation
+
+                # Calculate derivatives of weights w.r.t. voltages by finite differences
+                first_derivative = (forward_col - backward_col)/(2*step_size)
+
+                # Calculate derivatives of loss function (SSE) with chain rule
+                first_derivative_delta = - current_delta[:, col_index] * first_derivative
+
+                # Euler update for the parameters corresponding to this column
+                update = learning_rate * first_derivative_delta
+                params[:, col_index] -= update
+
+                params = hardware_mesh.set_params(params)
+            
+                current_matrix = hardware_mesh.measure_matrix()
+                current_delta = target_matrix - current_matrix
+                history[iteration_index] = np.linalg.norm(current_delta)  # Record delta magnitude after update
+                iteration_index += 1
+
+                if np.all(np.abs(current_delta[:, col_index][delta_mask[:, col_index]]) < convergence_threshold):
+                    break
+    
+    log.info(f"Final Delta magnitude {history[iteration_index-1]}")
+    return history, params
+
+def col_wise_hybrid(init_delta: np.ndarray,
+                   hardware_mesh: MZMCrossbar | TDMCrossbar,
+                   delta_voltage: float = 0.05,
+                   num_inner: int = 5,
+                   num_iterations: int = 50,
+                   num_line_searches: int = 2, # number of lines to search per parameter (similar to binary search)
+                   num_line_points: int = 5, # number of points in the line search
+                   learning_rate: float = 0.2,
+                   convergence_threshold: float = 5e-3,
+                   delta_mask: np.ndarray | None = None,
+                   ) -> tuple[list[float], np.ndarray]:
+    '''A solver that uses an initial logarithmic line search to get close to the
+        optimum before starting a gradient-descent loop for fine tuning
         NOTE: This calibration can only be applied to Mesh subclasses which agree to
         the following function calls for testing vs setting parameters:
             - test_params(params): temporarily set the parameters on hardware without
@@ -612,42 +751,75 @@ def col_wise_euler(init_delta: np.ndarray,
         err_msg = f"Calibration method `col_wise_euler` was called on type ({type(hardware_mesh)}) which is not a subclass of MZMCrossbar."
         log.error(err_msg)
         raise ValueError(err_msg)
-
+    
     # Initialize history with NaN values to indicate uninitialized entries
-    history = np.full(num_iterations + 1, np.nan)
+    history = np.full(num_iterations * num_inner * 4 + num_line_searches, np.nan)
     current_delta = init_delta.copy()
+    log.info(f"Initial Delta: {current_delta.tolist()}")
     history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
 
-    params = hardware_mesh.get_params()
+    if delta_mask is None:
+        delta_mask = np.full_like(current_delta, True, dtype=bool)
+
+    params = np.array(hardware_mesh.get_params(), copy=True)
     current_matrix = hardware_mesh.measure_matrix()
     if init_delta.shape != current_matrix.shape:
         raise ValueError(f"Error: init_delta shape {init_delta.shape} must match measured matrix shape {current_matrix.shape}.")
 
-    target_matrix = hardware_mesh.get() + init_delta
+    target_matrix = current_matrix + init_delta
 
     cols = np.arange(hardware_mesh.shape[1])
-    step_vector = np.zeros_like(params)
     step_size = delta_voltage
 
-    for col_index in cols:
-        step_vector[:, col_index] = delta_voltage
-        for iteration in range(num_iterations):
-            forward_matrix = hardware_mesh.test_params(params + step_vector, measure=True) # test positive perturbation
-            backward_matrix = hardware_mesh.test_params(params - step_vector, measure=True) # test negative perturbation
+    min_limit = np.min(hardware_mesh.param_limits, axis=2)
+    max_limit = np.max(hardware_mesh.param_limits, axis=2)
 
-            first_derivative = (forward_matrix[:, col_index] - backward_matrix[:, col_index])/(2*step_size)
+    # Line Search
+    min_error = np.full_like(current_delta, np.inf)
+    for line_iteration in range(num_line_searches):
+        # Generate parameters to search within the limts (reverse order to account for heating heating effects)
+        search_line = np.linspace(min_limit, max_limit, num=num_line_points)[:,:,::-1]
+        for point_index, point in enumerate(search_line):
+            sampled_matrix = hardware_mesh.test_params(point, measure=True)
+            error = target_matrix - sampled_matrix
+
+            # TODO: Decide replacement and record keeping with minimal memory requirement            
+            min_error = np.where(np.abs(error) < np.abs(min_error), error, min_error)
+            params = np.where(np.abs(error) < np.abs(min_error), point, params)
 
 
-            # Newton-Raphson update for the parameters corresponding to this column
-            update = learning_rate * current_delta[:, col_index] * first_derivative
-            params[:, col_index] -= update
+    # Gradient Descent Loop
+    iteration_index = 1 + num_line_searches
+    for outer_iteration in range(num_iterations):
+        for col_index in cols:
+            for iteration in range(num_inner):
+                forward_col = hardware_mesh.test_col(col_index=col_index,
+                                                     params=params + step_size,
+                                                     measure=True,
+                                                     ).flatten() # test positive perturbation
 
-        
-            current_matrix = hardware_mesh.measure_matrix()
-            current_delta = target_matrix - current_matrix
-            history[iteration + 1] = np.linalg.norm(current_delta)  # Record delta magnitude after update
+                backward_col = hardware_mesh.test_col(col_index=col_index,
+                                                      params=params - step_size,
+                                                      measure=True,
+                                                      ).flatten() # test negative perturbation
 
-            if np.linalg.norm(current_delta[:, col_index]) < convergence_threshold:
-                break # TODO: Check that this only breaks one level
-        step_vector[:, col_index] = 0.0
+                # Calculate derivatives of weights w.r.t. voltages by finite differences
+                first_derivative = (forward_col - backward_col)/(2*step_size)
+
+                # Calculate derivatives of loss function (SSE) with chain rule
+                first_derivative_delta = - current_delta[:, col_index] * first_derivative
+
+                # Euler update for the parameters corresponding to this column
+                update = learning_rate * first_derivative_delta
+                params[:, col_index] -= update
+
+                params = hardware_mesh.set_params(params)
+            
+                current_matrix = hardware_mesh.measure_matrix()
+                current_delta = target_matrix - current_matrix
+                history[iteration_index] = np.linalg.norm(current_delta)  # Record delta magnitude after update
+                iteration_index += 1
+
+                if np.all(np.abs(current_delta[:, col_index][delta_mask[:, col_index]]) < convergence_threshold):
+                    break
     return history, params

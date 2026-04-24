@@ -721,7 +721,7 @@ class ButterflyLasers(LaserArray):
         if not isinstance(control_vector, np.ndarray):
             control_vector = np.array(control_vector)
 
-        log.info(f"Setting laser control nets to: {control_vector} (Volts)")
+        # log.info(f"Setting laser control nets to: {control_vector} (Volts)")
 
         for i, net in enumerate(self.control_nets):
             if control_vector[i] >= self.limits[0] and control_vector[i] <= self.limits[1]:
@@ -742,5 +742,6 @@ class ButterflyLasers(LaserArray):
         
         # Calculate the denormalized vector and set the power
         controls = self.denormalize(vector)
+        controls = np.where(vector==0,0,controls) # Set zeros to true zero
         self.setControl(controls)
         sleep(self.pause)  # Allow time for the lasers to settle
