@@ -287,6 +287,18 @@ class MZMCrossbar(HardMesh):
         self.records.append(history)
         self.set_params(params)
         self.get() # update the stored matrix after attempting to apply the delta
+    
+    def ApplyUpdate(self, delta, m, n):
+        '''Applies the delta vector to the linear weights and calculates the 
+            corresponding contrast enhanced matrix. Since the MZI cannot 
+            implement this change directly, it calculates a new delta from the
+            ideal change, and then implements that change.
+        '''
+        self.linMatrix[:m, :n] += delta
+        self.ClipLinMatrix()
+        matrix = self.matrix.copy() # matrix gets modified by SigMatrix
+        newMatrix = self.SigMatrix()
+        self.ApplyDelta(newMatrix-matrix) # implement with params
 
 class TDMCrossbar(MZMCrossbar):
     '''Hardware interface for a time-division multiplexed (TDM) crossbar where an

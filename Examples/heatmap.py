@@ -1,3 +1,8 @@
+'''
+    Mostly an example usage of the Heatmap class, this script is meant as a
+    test for generating heatmap animations of the neural network as it learns
+    a simple pattern matching task.
+'''
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
@@ -6,10 +11,7 @@ from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 from vivilux.visualize import Record, Heatmap
 
 import numpy as np
-from sklearn import datasets
 import matplotlib.pyplot as plt
-import networkx as nx
-import imageio
 np.random.seed(seed=0)
 
 from copy import deepcopy
@@ -64,23 +66,44 @@ for layer in layerList:
     )
 layConfig = deepcopy(layerConfig_std)
 # layConfig["FFFBparams"]["Gi"] = 1.3
-layConfig["FFFBparams"]["FF"] = 1.2
-leabraNet.AddLayers(layerList[:-1], layerConfig=layConfig)
-outputConfig = deepcopy(layerConfig_std)
-outputConfig["FFFBparams"]["Gi"] = 1.1
-outputConfig["FFFBparams"]["FF"] = 1.2
-leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
+smallLayConfig = deepcopy(layerConfig_std)
+smallLayConfig["ActAvg"]["Fixed"] = True
+smallLayConfig["ActAvg"]["Init"] = 0.5
+smallLayConfig["ActAvg"]["Gain"] = 1.5
+smallLayConfig["FFFBparams"]["Gi"] = 1.3
+smallLayConfig["XCALParams"]["hasNorm"] = False
+smallLayConfig["XCALParams"]["hasMomentum"] = False
+leabraNet.AddLayers(layerList, layerConfig=smallLayConfig)
 
-# Add feedforward connections
-ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:])
+
+# Add bidirectional connections
+ffMeshConfig = {"meshType": Mesh,
+                "meshArgs": {"AbsScale": 1,
+                                "RelScale": 1,
+                                "numDirections": 16,
+                                "rtol":1e-2,
+                                "numSteps": 1000,
+                                "updateMagnitude":1e-4,
+                                "wbOn": False, # Disable weight balancing for this test
+                                },
+                }
+ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:],
+                                    meshConfig=ffMeshConfig,
+                                    )
 # Add feedback connections
 fbMeshConfig = {"meshType": Mesh,
                 "meshArgs": {"AbsScale": 1,
-                             "RelScale": 0.2},
+                                "RelScale": 0.3,
+                                "numDirections": 16,
+                                "rtol":1e-2,
+                                "numSteps": 500,
+                                "updateMagnitude":1e-4,
+                                "wbOn": False, # Disable weight balancing for this test
+                                },
                 }
-fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
-                                    meshConfig=fbMeshConfig)
-
+fbMeshes = leabraNet.AddConnections(layerList[2:], layerList[1:2],
+                                    meshConfig=fbMeshConfig,
+                                    )
 plt.ioff()
 
 heatmap = Heatmap(leabraNet, numEpochs, numSamples)

@@ -1,3 +1,15 @@
+'''
+    Baseline test of Leabra learning a pattern matching task. This script
+    matches the style of input-output pattern matching in Leabra's Ra25 example
+    and meant to be used as a test for any breaking changes made to this
+    repository.
+
+    Args:
+        -s, --seed: Random seed for reproducibility (default: 0)
+'''
+
+from argparse import ArgumentParser
+
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
@@ -6,11 +18,15 @@ from vivilux.metrics import RMSE, ThrMSE, ThrSSE
 
 import numpy as np
 import matplotlib.pyplot as plt
-# import tensorflow as tf
-np.random.seed(seed=0)
-# np.seterr(all='raise')
+
+parser = ArgumentParser(description='Run a Leabra learning example with random input-output (5x5) pattern matching.')
+parser.add_argument("-s", '--seed', type=int, default=0, help='Random seed for reproducibility')
+args = parser.parse_args()
+
+np.random.seed(seed=args.seed)
 
 from copy import deepcopy
+
 
 
 numEpochs = 50
@@ -72,26 +88,7 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          shuffle=False,
                          EvaluateFirst=False,
                          )
-time = np.linspace(0,leabraNet.time, len(result['AvgSSE']))
-plt.plot(time, result['AvgSSE'], label="Leabra Net")
-
-
-
-# sig = lambda x: tf.math.sigmoid(10*(x-0.5))
-# refModel = tf.keras.models.Sequential([
-#     tf.keras.layers.InputLayer(input_shape=(4,)),
-#     tf.keras.layers.Dense(4, use_bias=False, activation=sig),
-#     tf.keras.layers.Dense(4, use_bias=False, activation=sig),
-# ])
-# refModel.compile(optimizer=tf.keras.optimizers.SGD(0.001084),
-#                  loss = "mae",
-#                  metrics = "mse"
-# )
-
-# refResult = np.sqrt(refModel.fit(inputs, targets, epochs=numEpochs, batch_size=1).history["mse"])
-# plt.plot(refResult, label="SGD")
-
-
+plt.plot(result['AvgSSE'], label="Leabra Net")
 
 baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,inputSize))])
 plt.axhline(y=baseline, color="b", linestyle="--", label="baseline guessing")
