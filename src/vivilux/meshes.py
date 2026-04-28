@@ -54,7 +54,7 @@ class Mesh:
         self.wbLoGain = wbLoGain
         self.wbInc = wbInc
         self.wbDec = wbDec
-        self.WtBalInterval = 0
+        self.WtBalInterval = WtBalInterval
         self.softBound = softBound
 
         # Weight Balance variables
