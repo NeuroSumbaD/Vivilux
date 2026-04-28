@@ -288,6 +288,18 @@ class MZMCrossbar(HardMesh):
         self.set_params(params)
         self.get() # update the stored matrix after attempting to apply the delta
 
+    def ApplyUpdate(self, delta, m, n):
+        '''Applies the delta vector to the linear weights and calculates the 
+            corresponding contrast enhanced matrix. Since the MZI cannot 
+            implement this change directly, it calculates a new delta from the
+            ideal change, and then implements that change.
+        '''
+        self.linMatrix[:m, :n] += delta
+        self.ClipLinMatrix()
+        matrix = self.matrix.copy() # matrix gets modified by SigMatrix
+        newMatrix = self.SigMatrix()
+        self.ApplyDelta(newMatrix-matrix) # implement with params
+
 class TDMCrossbar(MZMCrossbar):
     '''Hardware interface for a time-division multiplexed (TDM) crossbar where an
         underlying MZMCrossbar is used to implement multiple crossbars. The
@@ -595,7 +607,7 @@ def col_wise_euler(init_delta: np.ndarray,
                    num_iterations: int = 50,
                    learning_rate: float = 0.2,
                    convergence_threshold: float = 5e-3,
-                   bounce_step: float = 0.05,
+                   max_repetitions: int = 3,
                    delta_mask: np.ndarray | None = None,
                    reset_params: np.ndarray | None = None,
                    ) -> tuple[list[float], np.ndarray]:
@@ -619,12 +631,6 @@ def col_wise_euler(init_delta: np.ndarray,
         log.error(err_msg)
         raise ValueError(err_msg)
     
-    # Initialize history with NaN values to indicate uninitialized entries
-    history = np.full(num_iterations * num_inner * 4 + 1, np.nan)
-    current_delta = init_delta.copy()
-    history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
-    log.info(f"Initial Delta magnitude={history[0]}), max={current_delta.max():.3f}, min={current_delta.min():.3f}, mean={current_delta.mean():.3f}")
-
     min_limit = np.min(hardware_mesh.param_limits, axis=2)
     max_limit = np.max(hardware_mesh.param_limits, axis=2)
 
@@ -632,67 +638,56 @@ def col_wise_euler(init_delta: np.ndarray,
         reset_params = 0.5 * (min_limit + max_limit)
 
     if delta_mask is None:
-        delta_mask = np.full_like(current_delta, True, dtype=bool)
+        delta_mask = np.full_like(init_delta, True, dtype=bool)
+
+    
+    # Initialize history with NaN values to indicate uninitialized entries
+    history = np.full(num_iterations * num_inner * 4 + 1, np.nan)
+    current_delta = init_delta.copy()
+    history[0] = np.linalg.norm(current_delta[delta_mask])  # Record initial delta magnitude
+    log.info(f"Initial Delta magnitude={history[0]}), max={current_delta[delta_mask].max():.3f}, "
+             f"min={current_delta[delta_mask].min():.3f}, mean={current_delta[delta_mask].mean():.3f}")
+
 
     params = np.array(hardware_mesh.get_params(), copy=True)
     current_matrix = hardware_mesh.measure_matrix()
     if init_delta.shape != current_matrix.shape:
         raise ValueError(f"Error: init_delta shape {init_delta.shape} must match measured matrix shape {current_matrix.shape}.")
 
-    target_matrix = current_matrix + init_delta
+    target_matrix = np.clip(current_matrix + init_delta, min=0, max=1)
+    if np.max(target_matrix) > 1 or np.min(target_matrix) < 0:
+        log.warning(f"Target matrix has an element out of the expected bounds: {target_matrix.tolist()}")
 
     cols = np.arange(hardware_mesh.shape[1])
     step_size = delta_voltage
 
     iteration_index = 1
     # edge_bounce = np.zeros_like(params, dtype=int)
+    repetition_count = np.zeros(hardware_mesh.shape[1], dtype=int)
     for outer_iteration in range(num_iterations):
         for col_index in cols:
+            if np.all(~delta_mask[:, col_index]):
+                    continue # skip rows that don't matter
+            if np.all(np.abs(current_delta[:, col_index][delta_mask[:, col_index]]) < convergence_threshold):
+                continue # Skip inner loop iterations for rows within spec
+
+            previous_col_delta = current_delta[:, col_index].copy()
+            repetition_count[:] = 0
             for iteration in range(num_inner):
-                # # If error is large (> 0.1) near the minimm boundary,
-                # # bounce away by incrementing bounce and taking some step away
-                # min_edge_detected = np.logical_and(np.isclose(
-                #     params[:,col_index],
-                #     min_limit[:,col_index],
-                #     atol=3e-3, # Within 3 mV
-                #     rtol=0.0),
-                #     (current_delta[:,col_index] > 0.1)
-                #     )
-                # # edge_bounce[:,col_index] = np.where(min_edge_detected,
-                # #                                     edge_bounce[:,col_index] + 1,
-                # #                                     edge_bounce[:,col_index])
-                
-                # # If error is large (> 0.1) near the maximum boundary,
-                # # bounce away by decrementing bounce and taking some step away
-                # max_edge_detected = np.logical_and(np.isclose(
-                #     params[:,col_index],
-                #     max_limit[:,col_index],
-                #     atol=3e-3, # Within 3 mV
-                #     rtol=0.0),
-                #     (current_delta[:,col_index] > 0.1)
-                #     )
-                # # edge_bounce[:,col_index] = np.where(max_edge_detected,
-                # #                                     edge_bounce[:,col_index] - 1,
-                # #                                     edge_bounce[:,col_index])
-                
-                # edge_detected = np.logical_or(min_edge_detected, max_edge_detected)
-                # # if np.any(edge_detected):
-                # #     log.warning(f"(iteration={iteration_index}) Num. of params at upper boundary: {np.sum(max_edge_detected)}, lower boundary: {np.sum(min_edge_detected)}")
-                # # params[:,col_index] += np.where(edge_detected,
-                # #                                 edge_bounce[:,col_index] * bounce_step,
-                # #                                 0
-                # #                                 )
-                # # params = hardware_mesh.clip_params(params) # bound params for safety
-                
-                # params[:, col_index] += np.where(edge_detected,
-                #                                  np.random.normal(loc=reset_params[:, col_index],
-                #                                                   scale=0.05,
-                #                                                   size=params.shape[1]),
-                #                                  0
-                #                                 )
-                # if np.any(edge_detected): # re-calculate current matrix and delta when this occurs
-                #     current_matrix = hardware_mesh.measure_matrix()
-                #     current_delta = target_matrix - current_matrix
+                repetition_encountered = np.logical_and(repetition_count > max_repetitions, np.abs(current_delta[:,col_index]) > 0.05)
+                params[:, col_index]  = np.where( # random resets for stuch
+                    repetition_encountered,
+                    np.random.normal(loc=reset_params[:, col_index],
+                        scale=0.2,
+                        size=params.shape[1]),
+                    params[:, col_index]
+                )
+                if np.any(repetition_encountered):
+                    params = hardware_mesh.set_params(params)
+                    current_matrix = hardware_mesh.measure_matrix()
+                    current_delta = target_matrix - current_matrix
+                    repetition_count = np.where(repetition_encountered, 0, repetition_count) # Reset the repetition count
+
 
                 forward_col = hardware_mesh.test_col(col_index=col_index,
                                                      params=params + step_size,
@@ -718,14 +713,24 @@ def col_wise_euler(init_delta: np.ndarray,
             
                 current_matrix = hardware_mesh.measure_matrix()
                 current_delta = target_matrix - current_matrix
-                history[iteration_index] = np.linalg.norm(current_delta)  # Record delta magnitude after update
+                history[iteration_index] = np.linalg.norm(current_delta[delta_mask])  # Record delta magnitude after update
                 iteration_index += 1
+
+                repetition_count += np.where( # if delta is large and unchanging, increase repetition count
+                    np.logical_and(
+                        np.isclose(previous_col_delta, current_delta[:,col_index], atol=5e-3, rtol=0.0),
+                        np.abs(current_delta[:,col_index]) > 0.05
+                        ),
+                    1,0
+                    )
+
+                previous_col_delta[:] = current_delta[:,col_index]
 
                 if np.all(np.abs(current_delta[:, col_index][delta_mask[:, col_index]]) < convergence_threshold):
                     break
     
     log.info(f"Final Delta magnitude {history[iteration_index-1]}")
-    return history, params
+    return history[~np.isnan(history)], params
 
 def col_wise_hybrid(init_delta: np.ndarray,
                    hardware_mesh: MZMCrossbar | TDMCrossbar,

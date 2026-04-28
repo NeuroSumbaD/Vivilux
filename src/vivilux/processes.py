@@ -3,27 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .meshes import Mesh
     from .layers import Layer
 
 from abc import ABC, abstractmethod
 
 import numpy as np
 
-# import defaults
-# from .activations import Sigmoid
-# from .learningRules import CHL
-# from .optimizers import Simple
-# from .visualize import Monitor
-
 class Process(ABC):
     @abstractmethod
     def AttachLayer(self, layer: Layer):
         pass
-
-    # @abstractmethod
-    # def Reset(self):
-    #     pass
 
 class NeuralProcess(Process):
     '''A base class for various high-level processes which generate a current 
@@ -40,8 +29,6 @@ class PhasicProcess(Process):
     @abstractmethod
     def StepPhase(self):
         pass
-
-
 
 class FFFB(NeuralProcess):
     '''A process which runs the FFFB inhibitory mechanism developed by Prof.
@@ -280,9 +267,7 @@ class XCAL(PhasicProcess):
         
     def AttachLayer(self, sndLayer: Layer, rcvLayer: Layer):
         self.send = sndLayer
-        sndLayerLen = len(sndLayer)
         self.recv = rcvLayer
-        rcvLayerLen = len(rcvLayer)
 
         # Initialize variables
         self.Init()
@@ -351,7 +336,8 @@ class XCAL(PhasicProcess):
                 self.vlDwtLog = {}
             # populate
             for key in kwargs:
-                if key == "dwtLog": continue
+                if key == "dwtLog":
+                    continue
                 self.vlDwtLog[key] = kwargs[key]
 
     def xcal(self, x: np.ndarray, th) -> np.ndarray:
