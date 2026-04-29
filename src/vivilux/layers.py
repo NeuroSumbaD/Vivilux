@@ -80,7 +80,6 @@ class Layer:
         self.neuralProcesses: list[NeuralProcess]  = []
         self.phaseProcesses: list[PhasicProcess] = []
         self.phaseHist = {}
-        # self.ActPAvg = np.mean(self.outAct) # initialize for Gscale
 
         self.name =  f"LAYER_{Layer.count}" if name is None else name
         if isInput and name is None: 
@@ -134,9 +133,6 @@ class Layer:
 
         # Attach XCAL Params
         self.XCALParams = layerConfig["XCALParams"]
-
-        # Attach optimizer
-        self.optimizer = layerConfig["optimizer"](**layerConfig["optArgs"])
 
         self.isFloating = False
 
@@ -420,7 +416,7 @@ class Layer:
         return len(self.Act)
 
     def __str__(self) -> str:
-        layStr = f"{self.name} ({len(self)}): \n\tActivation = {self.act}\n\tLearning"
+        layStr = f"{self.name} ({len(self)}): \n\tLearning"
         layStr += f"Rule = {self.rule}"
         layStr += "\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
         layStr += f"\n\tActivity: \n\t\t{self.Act}"

@@ -17,7 +17,6 @@ import numpy as np
 # import defaults
 from .meshes import Mesh, TransposeMesh
 from .metrics import RMSE
-from .optimizers import Simple
 from .visualize import Monitor
 from .photonics.devices import Device
 
@@ -95,8 +94,6 @@ layerConfig_std = {
         "LrnThr": 0.01,
         "Lrate": 0.04,
     },
-    "optimizer": Simple,
-    "optArgs": {},
     "ffMeshConfig": ffMeshConfig_std,
     "fbMeshConfig": fbMeshConfig_std,
     "defMonitor": Monitor,
@@ -126,6 +123,14 @@ phaseConfig_std = {
                     "target": -1,
                     },
     },
+    "_plus": {
+        "numTimeSteps": 25,
+        "isOutput": False,
+        "isLearn": False,
+        "clampLayers": {"input": 0,
+                    "target": -1,
+                    },
+    },
 }
 
 runConfig_std = {
@@ -137,7 +142,7 @@ runConfig_std = {
         "target": -1,
     },
     "Learn": ["minus", "plus"],
-    "Infer": ["minus"],
+    "Infer": ["minus", "_plus"], # note: the "_" prefix indicates that this pseudo-plus phase is only for inference, and learning is disabled
     "End": {
         "threshold": 0,
         "isLower": True,
@@ -534,8 +539,8 @@ class Net:
 
     def Evaluate(self,
               verbosity = 1,
-              reset: bool = True,
-              shuffle: bool = True,
+              reset: bool = False,
+              shuffle: bool = False,
               **dataset: dict[str, np.ndarray]):
 
         if verbosity > 0: print(f"Evaluating [{self.name}] without training...")

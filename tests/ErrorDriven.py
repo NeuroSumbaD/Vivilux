@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 import pathlib
 from os import path
-import json
+import pickle
 
 #TODO: REMOVE THIS LINE, USED FOR SUPPRESSING UNWANTED WARNINGS IN DEBUGGING
 import warnings
@@ -65,12 +65,38 @@ leabraRunConfig = {
         "target": -1,
     },
     "Learn": ["minus", "plus"],
-    "Infer": ["minus"],
+    "Infer": ["minus", "_plus"], # note: the "_" prefix indicates that this pseudo-plus phase is only for inference, and disables learning
     "End": {
         "threshold": 0,
         "isLower": True,
         "numEpochs": 5,
     }
+}
+
+phaseConfig = {
+    "minus": {
+        "numTimeSteps": 75,
+        "isOutput": True,
+        "isLearn": False,
+        "clampLayers": {"input": 0,
+                    },
+    },
+    "plus": {
+        "numTimeSteps": 25,
+        "isOutput": False,
+        "isLearn": True,
+        "clampLayers": {"input": 0,
+                    "target": -1,
+                    },
+    },
+    "_plus": {
+        "numTimeSteps": 25,
+        "isOutput": False,
+        "isLearn": False,
+        "clampLayers": {"input": 0,
+                    "target": -1,
+                    },
+    },
 }
 
 fig, ax = plt.subplots(figsize=(20,12))
@@ -82,6 +108,7 @@ synapticEnergies = []
 leabraNet = Net(name = "LEABRA_NET--" + Mesh.__name__,
                 monitoring= True,
                 runConfig=leabraRunConfig,
+                phaseConfig=phaseConfig,
                 )
 
 # Add layers
@@ -148,5 +175,10 @@ for layer in leabraNet.layers:
 W1ff = leabraNet.layers[1].excMeshes[0].matrix
 W1fb = leabraNet.layers[1].excMeshes[1].matrix
 W2ff = leabraNet.layers[2].excMeshes[0].matrix
+
+final_result = leabraNet.Infer(input=inputs, target=targets,)
+
+with open('trained_xor_net.pkl', 'wb') as f:
+    pickle.dump(leabraNet, f) # Important to save the whole net to capture all relevant state for inference (ActAvg contributed to Gscale in addition to learning)
 
 plt.show()

@@ -165,7 +165,8 @@ class Mesh:
         self.Gscale /= totalRel if totalRel > 0 else 1
 
         # calculate average from input layer on last trial
-        self.avgActP = self.inLayer.ActAvg.ActPAvg
+        # self.avgActP = self.inLayer.ActAvg.ActPAvg
+        self.avgActP = self.inLayer.ActAvg.ActPAvgEff
 
         #calculate average number of active neurons in sending layer
         sendLayActN = np.maximum(np.round(self.avgActP*len(self.inLayer)), 1, dtype=self.dtype)
