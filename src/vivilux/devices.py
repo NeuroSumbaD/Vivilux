@@ -3,7 +3,6 @@
 '''
 
 import numpy as np
-from numpy import isnan
 
 class Device:
     def __init__(self,
@@ -68,6 +67,28 @@ class Device:
         '''
         flattenedParams = np.concatenate(params).flatten()
         return np.sum(self.resetEnergy * flattenedParams)
+
+    def get_serial(self) -> dict:
+        return {
+            "type": self.__class__.__name__,
+            "length": None if self.length is np.isnan else float(self.length),
+            "width": None if self.width is np.isnan else float(self.width),
+            "shiftDelay": None if self.shiftDelay is np.isnan else float(self.shiftDelay),
+            "setEnergy": None if self.setEnergy is np.isnan else float(self.setEnergy),
+            "resetEnergy": None if self.resetEnergy is np.isnan else float(self.resetEnergy),
+            "opticalLoss": None if self.opticalLoss is np.isnan else float(self.opticalLoss),
+            "holdPower": None if self.holdPower is np.isnan else float(self.holdPower),
+        }
+
+    def load_serial(self, serial_dict: dict):
+        # Base deserialization only updates common device fields in-place.
+        self.length = serial_dict.get("length", self.length)
+        self.width = serial_dict.get("width", self.width)
+        self.shiftDelay = serial_dict.get("shiftDelay", self.shiftDelay)
+        self.setEnergy = serial_dict.get("setEnergy", self.setEnergy)
+        self.resetEnergy = serial_dict.get("resetEnergy", self.resetEnergy)
+        self.opticalLoss = serial_dict.get("opticalLoss", self.opticalLoss)
+        self.holdPower = serial_dict.get("holdPower", self.holdPower)
     
 class Generic(Device):
     def __init__(self) -> None:

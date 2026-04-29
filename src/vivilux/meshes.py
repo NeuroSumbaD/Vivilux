@@ -3,14 +3,16 @@
 
 # type checking
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from .layers import Layer
 
+import numpy as np
+
 from .devices import Device, Generic
 from .processes import XCAL
-
-import numpy as np
 
 
 class Mesh:
@@ -123,6 +125,62 @@ class Mesh:
         self.holdTime = 0
         self.setIntegration = 0
         self.resetIntegration = 0
+
+    def get_serial(self) -> dict:
+        # Serialize mesh state to python-native types
+        return {
+            "name": self.name,
+            "shape": list(self.shape),
+            "size": int(self.size),
+            "AbsScale": float(self.AbsScale),
+            "RelScale": float(self.RelScale),
+            "Gscale": float(self.Gscale),
+            "matrix": self.matrix.tolist(),
+            "linMatrix": self.linMatrix.tolist(),
+            "lastAct": self.lastAct.tolist(),
+            "inAct": self.inAct.tolist(),
+            "trainable": bool(self.trainable),
+            "dtype": str(self.dtype),
+            "inLayerName": self.inLayer.name if hasattr(self.inLayer, "name") else None,
+            "device": self.device.get_serial() if hasattr(self.device, "get_serial") else None,
+        }
+
+    def load_serial(self, serial: dict):
+        # Base deserialization only updates existing object state.
+        self.name = serial.get("name", self.name)
+        self.AbsScale = serial.get("AbsScale", self.AbsScale)
+        self.RelScale = serial.get("RelScale", self.RelScale)
+        self.Gscale = serial.get("Gscale", self.Gscale)
+        self.trainable = serial.get("trainable", self.trainable)
+
+        try:
+            self.matrix = np.array(serial.get("matrix", self.matrix), dtype=self.dtype)
+        except Exception:
+            pass
+
+        try:
+            self.linMatrix = np.array(serial.get("linMatrix", self.linMatrix), dtype=self.dtype)
+        except Exception:
+            try:
+                self.InvSigMatrix()
+            except Exception:
+                pass
+
+        try:
+            self.lastAct = np.array(serial.get("lastAct", self.lastAct), dtype=self.dtype)
+        except Exception:
+            pass
+
+        try:
+            self.inAct = np.array(serial.get("inAct", self.inAct), dtype=self.dtype)
+        except Exception:
+            pass
+
+        dev_ser = serial.get("device")
+        if dev_ser is not None and hasattr(self.device, "load_serial"):
+            self.device.load_serial(dev_ser)
+
+        return self
 
     def DeviceHold(self):
         '''Calls the hold function for each device in the mesh according
@@ -426,6 +484,11 @@ class TransposeMesh(Mesh):
         self.mesh = mesh
 
         self.trainable = False
+
+    def get_serial(self) -> dict:
+        base = super().get_serial()
+        base["refMeshName"] = self.mesh.name if hasattr(self.mesh, "name") else None
+        return base
 
     def set(self):
         raise Exception("Feedback mesh has no 'set' method.")

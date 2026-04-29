@@ -15,7 +15,6 @@ import numpy as np
 
 # import defaults
 from .activations import NoisyXX1
-from .learningRules import CHL
 from .visualize import Monitor
 from .photonics.neurons import Neuron, YunJhuModel
 
@@ -29,7 +28,6 @@ class Layer:
     def __init__(self,
                  length,
                  activation=NoisyXX1(),
-                 learningRule=CHL,
                  isInput = False,
                  isTarget = False, # Specifies the layer is an output layer
                  clampMax = 0.95,
@@ -49,7 +47,6 @@ class Layer:
 
         self.modified = False 
         self.actFn = activation
-        self.rule = learningRule
         self.dtype = dtype
         
         self.monitors: dict[str, Monitor] = {}
@@ -387,6 +384,66 @@ class Layer:
 
         return np.sum(self.neuralEnergy), synapticEnergy
     
+    def get_serial(self) -> dict:
+        return {
+            "name": self.name,
+            "length": len(self),
+            "activation_type": self.actFn.__class__.__name__,
+            "activation": self.actFn.get_serial() if hasattr(self.actFn, "get_serial") else None,
+            "isInput": self.isInput,
+            "isTarget": self.isTarget,
+            "clampMax": self.clampMax,
+            "clampMin": self.clampMin,
+            "dtype": str(self.dtype),
+            "neuron": self.neuron.__name__ if hasattr(self.neuron, "__name__") else str(self.neuron),
+            "XCALParams": self.XCALParams,
+            # Internal state
+            "Act": self.Act.tolist(),
+            "Vm": self.Vm.tolist(),
+            "GeRaw": self.GeRaw.tolist(),
+            "Ge": self.Ge.tolist(),
+            "GiRaw": self.GiRaw.tolist(),
+            "Gi": self.Gi.tolist(),
+            # Meshes
+            "excMeshes": [mesh.get_serial() for mesh in self.excMeshes],
+            "inhMeshes": [mesh.get_serial() for mesh in self.inhMeshes],
+        }
+
+    def load_serial(self, serial: dict):
+        # Base deserialization only updates existing object state.
+        self.name = serial.get("name", self.name)
+        self.isInput = serial.get("isInput", self.isInput)
+        self.isTarget = serial.get("isTarget", self.isTarget)
+        self.clampMax = serial.get("clampMax", self.clampMax)
+        self.clampMin = serial.get("clampMin", self.clampMin)
+
+        act_ser = serial.get("activation")
+        if act_ser is not None and hasattr(self.actFn, "load_serial"):
+            self.actFn.load_serial(act_ser)
+
+        try:
+            self.Act = np.array(serial.get("Act", self.Act), dtype=self.dtype)
+            self.Vm = np.array(serial.get("Vm", self.Vm), dtype=self.dtype)
+            self.GeRaw = np.array(serial.get("GeRaw", self.GeRaw), dtype=self.dtype)
+            self.Ge = np.array(serial.get("Ge", self.Ge), dtype=self.dtype)
+            self.GiRaw = np.array(serial.get("GiRaw", self.GiRaw), dtype=self.dtype)
+            self.Gi = np.array(serial.get("Gi", self.Gi), dtype=self.dtype)
+        except Exception:
+            pass
+
+        if hasattr(self, "XCALParams"):
+            self.XCALParams = serial.get("XCALParams", self.XCALParams)
+
+        # Load existing meshes in-place by index.
+        for mesh, mser in zip(self.excMeshes, serial.get("excMeshes", [])):
+            mesh.load_serial(mser)
+
+        for mesh, mser in zip(self.inhMeshes, serial.get("inhMeshes", [])):
+            mesh.load_serial(mser)
+
+        return self
+
+    
     def SetDtype(self, dtype: np.dtype):
         self.dtype = dtype
         self.GeRaw = self.GeRaw.astype(dtype)
@@ -417,7 +474,6 @@ class Layer:
 
     def __str__(self) -> str:
         layStr = f"{self.name} ({len(self)}): \n\tLearning"
-        layStr += f"Rule = {self.rule}"
-        layStr += "\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
         layStr += f"\n\tActivity: \n\t\t{self.Act}"
+        layStr += "\n\tMeshes: " + "\n".join([str(mesh) for mesh in self.excMeshes])
         return layStr

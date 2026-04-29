@@ -1,10 +1,23 @@
 import numpy as np
 
+# TODO: Enforce abstract base class and type checking for activations
 class Sigmoid:
     def __init__(self, A=1, B=4, C=0.5):
         self.A = A
         self.B = B
         self.C = C
+
+    def get_serial(self) -> dict:
+        return {
+            "A": self.A,
+            "B": self.B,
+            "C": self.C,
+        }
+    
+    def load_serial(self, serial_dict: dict):
+        self.A = serial_dict["A"]
+        self.B = serial_dict["B"]
+        self.C = serial_dict["C"]
 
     def __call__(self, x: np.ndarray):
         return self.A/(1 + np.exp(-self.B*(x-self.C)))
@@ -13,6 +26,16 @@ class ReLu:
     def __init__(self, m=1, b=0):
         self.m = m
         self.b = b
+    
+    def get_serial(self) -> dict:
+        return {
+            "m": self.m,
+            "b": self.b,
+        }
+    
+    def load_serial(self, serial_dict: dict):
+        self.m = serial_dict["m"]
+        self.b = serial_dict["b"]
 
     def __call__(self, x):
         return np.maximum(self.m*(x-self.b), 0)
@@ -92,6 +115,40 @@ class NoisyXX1:
         # function value at interp_range - sig_val_at_0 -- for interpolation
         self.InterpVal = XX1GainCor_Scalar(InterpRange, Gain, NVar, GainCor,
                                            GainCorRange) - self.SigValAt0 
+        
+    def get_serial(self) -> dict:
+        return {
+            "Thr": self.Thr,
+            "Gain": self.Gain,
+            "NVar": self.NVar,
+            "VmActThr": self.VmActThr,
+            "SigMult": self.SigMult,
+            "SigMultPow": self.SigMultPow,
+            "SigGain": self.SigGain,
+            "InterpRange": self.InterpRange,
+            "GainCorRange": self.GainCorRange,
+            "GainCor": self.GainCor,
+            "SigGainNVar": self.SigGainNVar,
+            "SigMultEff": self.SigMultEff,
+            "SigValAt0": self.SigValAt0,
+            "InterpVal": self.InterpVal,
+        }
+    
+    def load_serial(self, serial_dict: dict):
+        self.Thr = serial_dict["Thr"]
+        self.Gain = serial_dict["Gain"]
+        self.NVar = serial_dict["NVar"]
+        self.VmActThr = serial_dict["VmActThr"]
+        self.SigMult = serial_dict["SigMult"]
+        self.SigMultPow = serial_dict["SigMultPow"]
+        self.SigGain = serial_dict["SigGain"]
+        self.InterpRange = serial_dict["InterpRange"]
+        self.GainCorRange = serial_dict["GainCorRange"]
+        self.GainCor = serial_dict["GainCor"]
+        self.SigGainNVar = serial_dict["SigGainNVar"]
+        self.SigMultEff = serial_dict["SigMultEff"]
+        self.SigValAt0 = serial_dict["SigValAt0"]
+        self.InterpVal = serial_dict["InterpVal"]
 
     def __call__(self, x: np.ndarray):
         out = x.copy()

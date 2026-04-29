@@ -13,7 +13,6 @@
 
 import argparse
 
-from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
 from vivilux.meshes import Mesh
@@ -22,12 +21,9 @@ from vivilux.metrics import ThrMSE, ThrSSE
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-# import tensorflow as tf
 
 from copy import deepcopy
 import pathlib
-from os import path
-import pickle
 
 #TODO: REMOVE THIS LINE, USED FOR SUPPRESSING UNWANTED WARNINGS IN DEBUGGING
 import warnings
@@ -48,7 +44,7 @@ outputSize = 2
 
 #define input and output data of one-hot patterns
 directory = pathlib.Path(__file__).parent.resolve()
-patterns = pd.read_csv(path.join(directory, "Equivalence", "errorDriven_impossible_pats.csv"))
+patterns = pd.read_csv(directory / "Equivalence" / "errorDriven_impossible_pats.csv")
 patterns = patterns.drop(labels = "$Name", axis=1)
 patterns = patterns.to_numpy(dtype="float64")
 inputs = patterns[:,:inputSize]
@@ -163,7 +159,7 @@ ax.set_ylabel("AvgSSE")
 ax.set_xlabel("Epoch")
 ax.legend()
 
-print(f"Done.")
+print("Done.")
 
 
 print("Weights for each layer:")
@@ -178,7 +174,6 @@ W2ff = leabraNet.layers[2].excMeshes[0].matrix
 
 final_result = leabraNet.Infer(input=inputs, target=targets,)
 
-with open('trained_xor_net.pkl', 'wb') as f:
-    pickle.dump(leabraNet, f) # Important to save the whole net to capture all relevant state for inference (ActAvg contributed to Gscale in addition to learning)
+leabraNet.save_serial(directory / "errorDriven_leabraNet_serial.json")
 
 plt.show()

@@ -11,27 +11,32 @@
         4th Edition (2020). URL: https://github.com/CompCogNeuro/ed4
 '''
 
-from vivilux import *
-from vivilux.nets import Net, layerConfig_std
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
 from vivilux.layers import Layer
 from vivilux.meshes import Mesh
-from vivilux.photonics.devices import Volatile, phaseShift_GFThermal
-from vivilux.photonics.devices import Nonvolatile, phaseShift_PCM
 from vivilux.metrics import ThrMSE, ThrSSE
+from vivilux.nets import Net, layerConfig_std
+from vivilux.photonics.devices import (
+    Nonvolatile,
+    Volatile,
+    phaseShift_GFThermal,
+    phaseShift_PCM,
+)
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-# import tensorflow as tf
-np.random.seed(seed=0)
-
-from copy import deepcopy
 import pathlib
-from os import path
-import json
 
 #TODO: REMOVE THIS LINE, USED FOR SUPPRESSING UNWANTED WARNINGS IN DEBUGGING
 import warnings
+from copy import deepcopy
+from os import path
+
+# import tensorflow as tf
+np.random.seed(seed=0)
+
+
 warnings.filterwarnings("ignore")
 
 
@@ -158,7 +163,7 @@ axs[1].bar(names, synapticEnergies, bottom=neuralEnergies, label="synaptic")
 axs[1].set_ylabel("Energy Consumption (J)")
 axs[1].legend()
 
-print(f"Done.")
+print("Done.")
 
 
 print("Weights for each layer:")

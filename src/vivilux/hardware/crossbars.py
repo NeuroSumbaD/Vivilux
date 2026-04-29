@@ -81,6 +81,29 @@ class MZMCrossbar(HardMesh):
 
         self.records = [] # for recording the convergence of deltas
 
+    def get_serial(self) -> dict:
+        '''Serialize the base mesh state plus the current hardware voltages.'''
+        serial = super().get_serial()
+        serial["voltages"] = self.voltages.tolist()
+        return serial
+
+    def load_serial(self, serial: dict):
+        '''Restore base mesh state and re-apply the saved voltages to hardware.
+
+        The hardware-specific initialization inputs are intentionally not part
+        of the serialized state; the caller must construct the correct object
+        first, then load state into it.
+        '''
+        super().load_serial(serial)
+
+        if "voltages" in serial:
+            loaded_voltages = np.array(serial["voltages"], dtype=self.voltages.dtype)
+            self.set_params(loaded_voltages)
+        # TODO: Add else statement that checks the read_matrix against self.matrix
+        # and runs the calibration loop to minimnize the difference if they do not match
+
+        return self
+
     def _read_matrix(self,
                      mask: np.ndarray | None = None,
                      shape: np.ndarray | None = None,
@@ -299,19 +322,6 @@ class MZMCrossbar(HardMesh):
         matrix = self.matrix.copy() # matrix gets modified by SigMatrix
         newMatrix = self.SigMatrix()
         self.ApplyDelta(newMatrix-matrix) # implement with params
-
-    def ApplyUpdate(self, delta, m, n):
-        '''Applies the delta vector to the linear weights and calculates the 
-            corresponding contrast enhanced matrix. Since the MZI cannot 
-            implement this change directly, it calculates a new delta from the
-            ideal change, and then implements that change.
-        '''
-        self.linMatrix[:m, :n] += delta
-        self.ClipLinMatrix()
-        matrix = self.matrix.copy() # matrix gets modified by SigMatrix
-        newMatrix = self.SigMatrix()
-        self.ApplyDelta(newMatrix-matrix) # implement with params
-
 class TDMCrossbar(MZMCrossbar):
     '''Hardware interface for a time-division multiplexed (TDM) crossbar where an
         underlying MZMCrossbar is used to implement multiple crossbars. The

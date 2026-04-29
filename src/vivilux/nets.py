@@ -4,23 +4,21 @@
 
 # type checking
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from .layers import Layer
     from .meshes import Mesh
 
-from collections.abc import Iterator
-import math
-
 import numpy as np
+import json
 
 # import defaults
 from .meshes import Mesh, TransposeMesh
 from .metrics import RMSE
-from .visualize import Monitor
 from .photonics.devices import Device
-
-
+from .visualize import Monitor
 
 ###<------ DEFAULT CONFIGURATIONS ------>###
 
@@ -186,7 +184,7 @@ class Net:
         self.results = {metric: [] for metric in self.runConfig["metrics"]}
         self.outputs = {key: [] for key in self.runConfig["outputLayers"]}
 
-        self.name =  f"NET_{Net.count}" if name == None else name
+        self.name =  f"NET_{Net.count}" if name is None else name
         self.epochIndex = 0
         Net.count += 1
 
@@ -482,7 +480,8 @@ class Net:
             dataVectors = {key:value[sampleIndex] for key, value in dataset.items()}
             self.StepTrial(runType, debugData=debugData, **dataVectors)
 
-            if reset : self.resetActivity()
+            if reset:
+                self.resetActivity()
 
         return numSamples
 
@@ -543,7 +542,8 @@ class Net:
               shuffle: bool = False,
               **dataset: dict[str, np.ndarray]):
 
-        if verbosity > 0: print(f"Evaluating [{self.name}] without training...")
+        if verbosity > 0:
+            print(f"Evaluating [{self.name}] without training...")
         self.RunEpoch("Infer", verbosity, reset, shuffle, **dataset)
         self.EvaluateMetrics(**dataset)
         if verbosity > 0:
@@ -551,7 +551,7 @@ class Net:
             print(f" metric[{primaryMetric}]"
                 f" = {self.results[primaryMetric][-1]:0.4f}")
             
-        print(f"Evaluation complete.")
+        print("Evaluation complete.")
         return self.results
     
     def Infer(self,
@@ -560,10 +560,12 @@ class Net:
               **dataset: dict[str, np.ndarray]):
         '''Applies the network to a given dataset and returns each output
         '''
-        if verbosity > 0: print(f"Inferring [{self.name}]...")
+        if verbosity > 0:
+            print(f"Inferring [{self.name}]...")
         self.RunEpoch("Infer", verbosity, reset, shuffle= False, **dataset)
             
-        if verbosity > 0: print(f"Inference complete.")
+        if verbosity > 0:
+            print("Inference complete.")
         return self.outputs
 
     def getWeights(self, ffOnly = True):
@@ -571,7 +573,8 @@ class Net:
         for layer in self.layers:
             for mesh in layer.excMeshes:
                 weights.append(mesh.get())
-                if ffOnly: break
+                if ffOnly:
+                    break
         return weights
     
     def GetEnergy(self, synDevice = None) -> tuple[float, float]:
@@ -605,3 +608,43 @@ class Net:
             strs.append(str(layer))
 
         return "\n\n".join(strs)
+
+    def get_serial(self) -> dict:
+        '''Serialize the full network to a python-native dict suitable for
+           JSON saving. Numpy arrays are converted to lists.
+        '''
+        return {
+            "name": self.name,
+            "dtype": str(self.dtype),
+            "time": float(self.time),
+            "epochIndex": int(self.epochIndex),
+            "layers": [layer.get_serial() for layer in self.layers],
+        }
+
+    def save_serial(self, filePath: str, indent: int = 4):
+        '''Save full network state as JSON.'''
+        with open(filePath, "w", encoding="utf-8") as handle:
+            json.dump(self.get_serial(), handle, indent=indent)
+
+    def load_serial(self, serial: dict):
+        '''Load state into an already-constructed network.
+
+        This base method assumes the user has already instantiated all layers
+        and meshes in the intended topology.
+        '''
+        self.name = serial.get("name", self.name)
+        self.time = serial.get("time", self.time)
+        self.epochIndex = serial.get("epochIndex", self.epochIndex)
+
+        # Load layers in-place by index.
+        for layer, lser in zip(self.layers, serial.get("layers", [])):
+            layer.load_serial(lser)
+
+        self.UpdateLayerLists()
+        return self
+
+    def load_serial_file(self, filePath: str):
+        '''Load full network state from JSON file into current object.'''
+        with open(filePath, "r", encoding="utf-8") as handle:
+            serial = json.load(handle)
+        return self.load_serial(serial)
