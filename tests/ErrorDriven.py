@@ -13,7 +13,7 @@
 
 import argparse
 
-from vivilux.nets import Net, layerConfig_std
+from vivilux.nets import LeabraNet, layerConfig_std
 from vivilux.layers import Layer
 from vivilux.meshes import Mesh
 from vivilux.metrics import ThrMSE, ThrSSE
@@ -101,7 +101,7 @@ names = []
 neuralEnergies = []
 synapticEnergies = []
 # Default Leabra net
-leabraNet = Net(name = "LEABRA_NET--" + Mesh.__name__,
+leabraNet = LeabraNet(name = "XOR_LEABRA_NET",
                 monitoring= True,
                 runConfig=leabraRunConfig,
                 phaseConfig=phaseConfig,
@@ -112,26 +112,27 @@ layerList = [Layer(inputSize, isInput=True, name="Input"),
             Layer(hiddenSize, name="Hidden"),
             Layer(outputSize, isTarget=True, name="Output")]
 smallLayConfig = deepcopy(layerConfig_std)
+smallLayConfig["ActAvg"]["Fixed"] = True
+smallLayConfig["ActAvg"]["Init"] = 0.5
+smallLayConfig["ActAvg"]["Gain"] = 1.5
 smallLayConfig["FFFBparams"]["Gi"] = 1.3
+smallLayConfig["XCALParams"]["hasNorm"] = False
+# smallLayConfig["XCALParams"]["hasMomentum"] = False
 leabraNet.AddLayers(layerList, layerConfig=smallLayConfig)
 
-# Add bidirectional connections
-ffMeshConfig = {"meshType": Mesh,
-                "meshArgs": {"AbsScale": 1,
-                             "RelScale": 1,
-                            },
-                }
+# Add feedforward connections
 ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:],
-                                    meshConfig=ffMeshConfig,
+                                    meshType=Mesh,
+                                    meshArgs={"AbsScale": 1,
+                                              "RelScale": 1,
+                                              },
                                     )
 # Add feedback connections
-fbMeshConfig = {"meshType": Mesh,
-                "meshArgs": {"AbsScale": 1,
-                             "RelScale": 0.3,
-                            },
-                }
 fbMeshes = leabraNet.AddConnections(layerList[2:], layerList[1:2],
-                                    meshConfig=fbMeshConfig,
+                                    meshType=Mesh,
+                                    meshArgs={"AbsScale": 1,
+                                              "RelScale": 0.3,
+                                             },
                                     )
 
 result = leabraNet.Learn(input=inputs, target=targets,

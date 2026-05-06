@@ -283,7 +283,6 @@ class XCAL(PhasicProcess):
         self.Init()
 
     def GetDeltas(self,
-                  dwtLog = None,
                   ) -> np.ndarray:
         if self.recv.isTarget:
             dwt = self.ErrorDriven()
@@ -316,29 +315,7 @@ class XCAL(PhasicProcess):
         ## Is there a way to use taylor's expansion to calculate an adjusted delta??
         ### THIS CODE MOVED TO THE MESH UPDATE
 
-        if dwtLog is not None:
-            self.Debug(norm = norm,
-                    dwt = dwt,
-                    Dwt = Dwt,
-                    dwtLog = dwtLog)
-
         return Dwt
-
-    def Debug(self,
-              **kwargs):
-        '''Creates a member variable storing the local XCAL internal variables
-            if the simulator has debug logs available. This data is accessed in
-            the Mesh.Debug function.
-        '''
-        if "dwtLog" in kwargs:
-            # Generate a debugFrame member variable
-            if not hasattr(self, "vlDwtLog"):
-                self.vlDwtLog = {}
-            # populate
-            for key in kwargs:
-                if key == "dwtLog":
-                    continue
-                self.vlDwtLog[key] = kwargs[key]
 
     def xcal(self, x: np.ndarray, th) -> np.ndarray:
         '''"Check mark" linearized BCM-style learning rule which calculates

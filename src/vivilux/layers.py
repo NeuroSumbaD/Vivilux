@@ -152,12 +152,12 @@ class Layer:
                        )
         self.Gi[:] = self.GiSyn + self.Gi_FFFB # Add synaptic Gi to FFFB contribution
     
-    def StepTime(self, time: float, debugData = None):
+    def StepTime(self, time: float):
         # self.UpdateConductance() ## Moved to nets StepPhase
 
         if self.EXTERNAL is not None: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-            self.Clamp(self.EXTERNAL, time, debugData=debugData)
-            self.EndStep(time, debugData=debugData)
+            self.Clamp(self.EXTERNAL, time)
+            self.EndStep(time)
             return
             
 
@@ -195,7 +195,7 @@ class Layer:
 
         self.neuralEnergy += self.neuron(self.Act)
 
-        self.EndStep(time, debugData=debugData)
+        self.EndStep(time,)
 
     def Integrate(self):
         '''Integrates raw conductances from incoming synaptic connections.
@@ -208,12 +208,9 @@ class Layer:
         for mesh in self.inhMeshes:
             self.GiRaw[:] += mesh.apply()[:len(self)]
 
-    def InitTrial(self, Train: bool):
-        if Train:
-            # Update AvgL, AvgLLrn, ActPAvg, ActPAvgEff
-            self.ActAvg.InitTrial()
-            
-            # self.ActAvg.StepPhase() ##TODO: Move to end of plus phase
+    def InitTrial(self,):
+        # Update AvgL, AvgLLrn, ActPAvg, ActPAvgEff
+        self.ActAvg.InitTrial()
 
         ## GScaleFmAvgAct
         for mesh in self.excMeshes:
@@ -257,29 +254,11 @@ class Layer:
             "Vm": self.Vm
         }
 
-    def EndStep(self, time, debugData = None):
+    def EndStep(self, time):
         self.ActAvg.StepTime()
         self.FFFB.UpdateAct()
         self.UpdateSnapshot()
         self.UpdateMonitors()
-
-        # TODO: find a way to make this more readable
-        # TODO: check how this affects execution time
-        if bool(debugData): #check if debugData is empty
-            self.Debug(time=time,
-                       Act = self.Act,
-                       AvgS = self.ActAvg.AvgS,
-                       AvgSS = self.ActAvg.AvgSS,
-                       AvgM = self.ActAvg.AvgM,
-                       AvgL = self.ActAvg.AvgL,
-                    #    AvgLLrn = self.ActAvg.AvgLLrn,
-                       AvgSLrn = self.ActAvg.AvgSLrn,
-                       Ge=self.Ge,
-                       GeRaw=self.GeRaw,
-                       Gi=self.Gi,
-                       GiRaw=self.GiRaw,
-                       debugData = debugData,
-                       )
 
         # TODO: Improve readability of this line (end of trial code?)
         ## these lines may need to change when Delta-Sender mechanism is included
@@ -310,7 +289,7 @@ class Layer:
             mesh.XCAL.Reset()
 
 
-    def Clamp(self, data, time: float, monitoring = False, debugData=None):
+    def Clamp(self, data, time: float, monitoring = False,):
         clampData = data.copy()
 
         # truncate extrema
@@ -322,55 +301,13 @@ class Layer:
         # Update other internal variables according to activity
         self.Vm = self.actFn.Thr + self.Act/self.actFn.Gain
 
-    def Learn(self, batchComplete=False, dwtLog = {}):
+    def Learn(self, batchComplete=False,):
         if self.isInput or self.freeze:
             return
         for mesh in self.excMeshes:
             if not mesh.trainable:
                 continue
-            mesh.Update(dwtLog=dwtLog)
-        
-    def Debug(self, **kwargs):
-        if "activityLog" in kwargs:
-            actLog = kwargs["activityLog"]
-
-            allEqual = {}
-
-            # Generate a debugLog variable
-            if not hasattr(self, "debugLog"):
-                self.debugLog = {}
-            
-            # isolate activity on current time step and layer
-            timeSeries = actLog["time"].round(3)
-            time = round(kwargs["time"], 3)
-            currentLog = actLog[timeSeries==time]
-            currentLog = currentLog[currentLog["name"]==self.name]
-            currentLog = currentLog.drop(["time", "name", "nIndex"], axis=1)
-            if len(currentLog) == 0:
-                return
-
-            # compare each internal variable
-            for colName in currentLog:
-                if colName not in kwargs:
-                    continue
-
-                #Generate column entry for debugLog
-                if colName not in self.debugLog:
-                    self.debugLog[colName] = ([],[],[])
-                self.debugLog[colName][2].append(time)
-
-                viviluxData = kwargs[colName]
-                self.debugLog[colName][0].append(np.copy(viviluxData))
-
-                leabraData = currentLog[colName].to_numpy()
-                self.debugLog[colName][1].append(leabraData)
-                percentError = 100 * (viviluxData - leabraData) / leabraData
-                mask = leabraData == 0
-                mask = np.logical_and(mask, viviluxData==0)
-                percentError[mask] = 0
-                isEqual = np.all(np.abs(percentError) < 2)
-                
-                allEqual[colName] = isEqual
+            mesh.Update()
 
     def GetEnergy(self, synDevice = None) -> tuple[float, float]:
         synapticEnergy = 0

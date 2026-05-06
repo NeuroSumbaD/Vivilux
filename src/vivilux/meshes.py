@@ -322,14 +322,13 @@ class Mesh:
         self.linMatrix = np.clip(self.linMatrix, 0, 1)
 
     def CalculateUpdate(self,
-                        dwtLog = None,
                         ):
         '''Calculates the delta vector according to XCAL rule. Returns the
             delta vector and its shape (m,n).
 
             Overwrite this function for other learning rules.
         '''
-        delta = self.XCAL.GetDeltas(dwtLog=dwtLog)
+        delta = self.XCAL.GetDeltas()
         delta = self.SoftBound(delta)
         m, n = delta.shape
         return delta, m, n
@@ -345,84 +344,16 @@ class Mesh:
         self.SigMatrix()
 
     def Update(self,
-               dwtLog = None,
                ):
         '''Calculates and applies the weight update according to the
             learning rule and updates other related internal variables.
 
             This function should apply to all meshes.
         '''
-        delta, m, n = self.CalculateUpdate(dwtLog=dwtLog)
+        delta, m, n = self.CalculateUpdate()
         self.DeviceUpdate(delta)
         self.ApplyUpdate(delta, m, n)
         self.WtBalance()
-
-        if dwtLog is not None:
-            self.Debug(lwt = self.linMatrix,
-                       wt = self.matrix,
-                       dwtLog = dwtLog)
-
-    def Debug(self,
-              **kwargs):
-        '''Checks the XCAL and weights against leabra data'''
-        #TODO: This function is very messy, truncate if possible
-        if "dwtLog" not in kwargs:
-            return
-        if kwargs["dwtLog"] is None:
-            return #empty data
-        net = self.inLayer.net
-        time = net.time
-
-        viviluxData = {}
-        viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]
-        viviluxData["dwt"] = self.XCAL.vlDwtLog["dwt"]
-        viviluxData["norm"] = self.XCAL.vlDwtLog["norm"]
-        viviluxData["lwt"] = kwargs["lwt"]
-        viviluxData["wt"] = kwargs["wt"]
-
-        # isolate frame of important data from log
-        dwtLog = kwargs["dwtLog"]
-        frame = dwtLog[dwtLog["sName"] == self.inLayer.name][dwtLog["rName"] == self.rcvLayer.name]
-        frame = frame[frame["time"].round(3) == np.round(time, 3)]
-        frame = frame.drop(["time", "rName", "sName"], axis=1)
-        if len(frame) == 0:
-            return
-        
-        leabraData = {}
-        sendLen = frame["sendIndex"].max() + 1
-        recvLen = frame["recvIndex"].max() + 1
-        leabraData["norm"] = np.zeros((recvLen, sendLen))
-        leabraData["dwt"] = np.zeros((recvLen, sendLen))
-        leabraData["Dwt"] = np.zeros((recvLen, sendLen))
-        leabraData["lwt"] = np.zeros((recvLen, sendLen))
-        leabraData["wt"] = np.zeros((recvLen, sendLen))
-        for row in frame.index:
-            ri = frame["recvIndex"][row]
-            si = frame["sendIndex"][row]
-            leabraData["norm"][ri][si] = frame["norm"][row]
-            leabraData["dwt"][ri][si] = frame["dwt"][row]
-            leabraData["Dwt"][ri][si] = frame["DWt"][row]
-            leabraData["lwt"][ri][si] = frame["lwt"][row]
-            leabraData["wt"][ri][si] = frame["wt"][row]
-
-        # return #TODO: LINE UP THE DATA CORRECTLY
-        allEqual = {}
-        for key in leabraData:
-            if key not in viviluxData:
-                continue #skip missing columns
-            vlDatum = viviluxData[key]
-            shape = (len(self.rcvLayer), len(self.inLayer))
-            vlDatum = vlDatum[:shape[0],:shape[1]]
-            lbDatum = leabraData[key]
-            percentError = 100 * (vlDatum - lbDatum) / lbDatum
-            mask = lbDatum == 0
-            mask = np.logical_and(mask, vlDatum==0)
-            percentError[mask] = 0
-            isEqual = np.all(np.abs(percentError) < 2)
-            
-            allEqual[key] = isEqual
-
-        print(f"{self.name}[{time}]:", allEqual)
 
     def SigMatrix(self):
         '''After an update to the linear weights, the sigmoidal weights must be
@@ -502,7 +433,6 @@ class TransposeMesh(Mesh):
         return np.pad(act, pad_width=(0,pad))
 
     def Update(self,
-               debugDwt = None,
                ):
         return None
     

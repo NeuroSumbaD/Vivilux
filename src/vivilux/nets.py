@@ -5,6 +5,7 @@
 # type checking
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -15,23 +16,11 @@ import numpy as np
 import json
 
 # import defaults
-from .meshes import Mesh, TransposeMesh
+from .meshes import Mesh
 from .metrics import RMSE
-from .photonics.devices import Device
 from .visualize import Monitor
 
 ###<------ DEFAULT CONFIGURATIONS ------>###
-
-ffMeshConfig_std = {
-    "meshType": Mesh,
-    "meshArgs": {},
-}
-
-fbMeshConfig_std = {
-    "meshType": TransposeMesh,
-    "meshArgs": {"RelScale": 0.2,
-                 },
-}
 
 layerConfig_std = {
     # "DELTA_Vm" : 0.1/2.81,
@@ -92,8 +81,6 @@ layerConfig_std = {
         "LrnThr": 0.01,
         "Lrate": 0.04,
     },
-    "ffMeshConfig": ffMeshConfig_std,
-    "fbMeshConfig": fbMeshConfig_std,
     "defMonitor": Monitor,
     "FFFBparams": {
         "Gi": 1.8, # [1.5-2.3 typical, can go lower or higher as needed] overall inhibition gain -- this is main parameter to adjust to change overall activation levels -- it scales both the the ff and fb factors uniformly
@@ -149,11 +136,39 @@ runConfig_std = {
 }
 
 
+class Net(ABC):
+    '''Abstract base class for neural networks in this repo. Defines the basic
+        structure and methods for a network, but does not implement and specific
+        architecture or learning rule.
+    '''
+    @abstractmethod
+    def Learn(self, input: np.ndarray,
+              target: np.ndarray,
+              numEpochs: int,
+              **kwargs):
+        raise NotImplementedError("Learn method not implemented for base Net class")
+
+    @abstractmethod
+    def Evaluate(self, input: np.ndarray, target: np.ndarray, **kwargs):
+        raise NotImplementedError("Evaluate method not implemented for base Net class")
+    
+    @abstractmethod
+    def Infer(self, input: np.ndarray, **kwargs):
+        raise NotImplementedError("Infer method not implemented for base Net class")
 
 
 ###<------ NET CLASSES ------>###
-class Net:
-    '''Base class for neural networks with Hebbian-like learning
+class LeabraNet(Net):
+    '''Instantiation of mechanisms from the Leabra framework with a more clear
+        delineation of matrix-vector operations implemented as linear algebraic
+        operations rather than individual lists of connections. This takes
+        advantage of SIMD parallelism and also makes it easier to implement
+        physically realized implementations with abstracted synaptic matrices
+        and layers of neurons.
+
+        TODO: Implement definition of multiple input or target layers to allow
+        for multi-modal learning. This was initially confirable in the runConfig,
+        but is being removed for a more clear state-machine flow.
     '''
     count = 0
     def __init__(self,
@@ -186,7 +201,7 @@ class Net:
 
         self.name =  f"NET_{Net.count}" if name is None else name
         self.epochIndex = 0
-        Net.count += 1
+        LeabraNet.count += 1
 
         # For early stopping learning process
         self.lrnThresh = 0
@@ -194,29 +209,6 @@ class Net:
     def PreallocateResultDict(self):
         '''Pre-allocate a dict to store the results
         '''
-    
-    def UpdateLayerLists(self):
-        '''Pre-generate clamped and unclamped layer lists to speed up StepPhase
-            execution.
-        '''
-        # TODO Figure out where to call this function (after layers have been added)
-        # if len(self.layers) < len(self.phaseConfig[phaseName]["clampLayers"]):
-        #     return
-        for phaseName in self.phaseConfig.keys():
-            layers = list(self.layers) # copy full layer list
-            self.layerDict[phaseName] = {}
-            self.layerDict[phaseName]["clamped"] = {}
-
-            for dataName, layerIndex in self.phaseConfig[phaseName]["clampLayers"].items():
-                if len(layers) == 0:
-                    return
-                self.layerDict[phaseName]["clamped"][dataName] = layers.pop(layerIndex)
-
-            self.layerDict[phaseName]["unclamped"] = layers
-
-        self.layerDict["outputLayers"] = {}
-        for dataName, index in self.runConfig["outputLayers"].items():
-            self.layerDict["outputLayers"][dataName] = self.layers[index]
                 
     def AddLayer(self, layer: Layer, layerConfig: dict = None):
         # index = len(self.layers)
@@ -236,8 +228,6 @@ class Net:
         for phase in self.phaseConfig.keys():
             layer.phaseHist[phase] = layer.getActivity()
 
-        self.UpdateLayerLists()
-
     def AddLayers(self, layers: list[Layer], layerConfig = None):
         # Use default layerConfig if None is provided
         layerConfig = self.layerConfig if layerConfig is None else layerConfig
@@ -248,61 +238,55 @@ class Net:
     def AddConnection(self,
                       sending: Layer, # closer to source
                       receiving: Layer, # further from source
-                      meshConfig = None,
-                      device: Device = None,
+                      meshType = Mesh,
+                      meshArgs = {},
                       ) -> Mesh:
         '''Adds a connection from the sending layer to the receiving layer.
         '''
         # Use default ffMeshConfig if None is provided
-        meshConfig = self.layerConfig["ffMeshConfig"] if meshConfig is None else meshConfig
         size = len(receiving)
-        meshArgs = meshConfig["meshArgs"]
-        mesh = meshConfig["meshType"](size, sending, dtype=self.dtype, **meshArgs)
+        mesh = meshType(size, sending, dtype=self.dtype, **meshArgs)
         receiving.addMesh(mesh)
-
-        if device is not None:
-            mesh.AttachDevice(device)
 
         return mesh
 
     def AddConnections(self,
                        sendings: list[Layer], # closer to source
                        receivings: list[Layer], # further from source
-                       meshConfig = None,
-                       device: Device = None,
+                       meshType = Mesh,
+                       meshArgs = {},
                        ) -> list[Mesh]:
         '''Helper function for generating multiple connections at once.
         '''
         meshes = []
         for receiving, sending in zip(receivings, sendings):
-            mesh = self.AddConnection(sending, receiving, meshConfig, device)
+            mesh = self.AddConnection(sending, receiving, meshType, meshArgs)
             meshes.append(mesh)
         return meshes
 
     def AddBidirectionalConnection(self,
                       sending: Layer, # closer to source
                       receiving: Layer, # further from source
-                      ffMeshConfig = None,
-                      fbMeshConfig = None,
+                      ffMeshType = Mesh,
+                      ffMeshArgs = {},
+                      fbMeshType = None,
+                      fbMeshArgs = {},
                       ) -> Mesh:
         '''Adds a set of bidirectional connections from the sending layer to
             the receiving layer. The feedback mesh is assumed to be a transpose
             of the feedforward mesh.
         '''
-        # Use default ffMeshConfig if None is provided
-        ffMeshConfig = self.layerConfig["ffMeshConfig"] if ffMeshConfig is None else ffMeshConfig
-        fbMeshConfig = self.layerConfig["fbMeshConfig"] if fbMeshConfig is None else fbMeshConfig
+
+        fbMeshType = ffMeshType if fbMeshType is None else fbMeshType
 
         # feedforward connection
         size = len(sending)
-        meshArgs = ffMeshConfig["meshArgs"]
-        ffMesh = ffMeshConfig["meshType"](size, sending, **meshArgs)
+        ffMesh = ffMeshType(size, sending, **ffMeshArgs)
         receiving.addMesh(ffMesh)
 
         # feedback connection
         size = len(receiving)
-        meshArgs = fbMeshConfig["meshArgs"]
-        fbMesh = fbMeshConfig["meshType"](ffMesh, receiving, **meshArgs)
+        fbMesh = fbMeshType(ffMesh, receiving, **fbMeshArgs)
         sending.addMesh(fbMesh)
 
         return ffMesh, fbMesh
@@ -310,14 +294,17 @@ class Net:
     def AddBidirectionalConnections(self,
                        sendings: list[Layer], # closer to source
                        receivings: list[Layer], # further from source
-                       meshConfig = None,
+                       ffMeshType = Mesh,
+                       ffMeshArgs = {},
+                       fbMeshType = None,
+                       fbMeshArgs = {},
                        ) -> list[Mesh]:
         '''Helper function for generating multiple bidirectional connections 
             at once.
         '''
         meshes = []
         for sending, receiving in zip(sendings, receivings):
-            mesh = self.AddBidirectionalConnection(sending, receiving, meshConfig)
+            mesh = self.AddBidirectionalConnection(sending, receiving, ffMeshType, ffMeshArgs, fbMeshType, fbMeshArgs)
             meshes.append(mesh)
         return meshes
 
@@ -344,116 +331,112 @@ class Net:
         isFinished = False
         first = True
         for metricName, metric in self.runConfig["metrics"].items():
-            for dataName in self.layerDict["outputLayers"]:
-                result = metric(self.outputs[dataName], dataset[dataName])
-                self.results[metricName].append(result)
+            result = metric(self.outputs["target"], dataset["target"])
+            self.results[metricName].append(result)
 
-                # Check the first metric for if it passes the end condition
-                if first: #TODO: optimize for execution time
-                    first = False
-                    if "End" in self.runConfig:
-                        if self.runConfig["End"]["isLower"]:
-                            if result <= self.runConfig["End"]["threshold"]:
-                                self.lrnThresh += 1
-                                if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
-                                    isFinished = True
-                            else:
-                                self.lrnThresh = 0
+            # Check the first metric for if it passes the end condition
+            if first: #TODO: optimize for execution time
+                first = False
+                if "End" in self.runConfig:
+                    if self.runConfig["End"]["isLower"]:
+                        if result <= self.runConfig["End"]["threshold"]:
+                            self.lrnThresh += 1
+                            if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
+                                isFinished = True
                         else:
-                            if result >= self.runConfig["End"]["threshold"]:
-                                self.lrnThresh += 1
-                                if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
-                                    isFinished = True
-                            else:
-                                self.lrnThresh = 0
+                            self.lrnThresh = 0
+                    else:
+                        if result >= self.runConfig["End"]["threshold"]:
+                            self.lrnThresh += 1
+                            if self.lrnThresh >= self.runConfig["End"]["numEpochs"]:
+                                isFinished = True
+                        else:
+                            self.lrnThresh = 0
 
         return isFinished
 
     def UpdateConductances(self):
         for layer in self.layers:
             layer.UpdateConductance()
-
-    def ClampLayers(self, phaseName: str, debugData = None, **dataVectors):
-        # Clamp layers according to phaseType
-        ## TODO: Change clamp to execute outside time loop, unclamp after, & update important internal variables
-        first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-        for dataName, clampedLayer in self.layerDict[phaseName]["clamped"].items():
-                if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                    clampedLayer.Clamp(dataVectors[dataName], self.time, debugData=debugData)
-                    first = False
-                else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                    clampedLayer.EXTERNAL = dataVectors[dataName]
     
-    
-    def UpdateActivity(self, phaseName: str, debugData={}, **dataVectors):
+    def UpdateActivity(self,):
         ## TODO: Parallelize execution for all layers
         # StepTime for each unclamped layer
-        for layer in self.layerDict[phaseName]["unclamped"]:
-            # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
-            layer.StepTime(self.time, debugData=debugData)
+        for layer in self.layerDict.values():
+            if layer.name == "Input":
+                continue # input layer is always clamped
+            else:
+                layer.StepTime(self.time,)
 
-        # Update internal variables of clamped layers
-        first = True ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-        for layer in self.layerDict[phaseName]["clamped"].values():
-            # debugData = dataVectors["debugData"] if "debugData" in dataVectors else None
-            # layer.UpdateConductance()
-            if first: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                layer.EndStep(self.time, debugData=debugData)
-                first = False
-            else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
-                layer.StepTime(self.time, debugData=debugData)
-    
-    def StepPhase(self, phaseName: str, debugData = {}, **dataVectors):
+        # Update internal variables of input and output layer
+        self.layerDict["Input"].EndStep(self.time)
+
+    def MinusPhase(self, input: np.ndarray,):
         '''Compute a phase of execution for the neural network. A phase is a 
             set of timesteps related to some process in the network such as 
             the generation of an expectation versus observation of outcome in
             Prof. O'Reilly's error-driven local learning framework.
         '''
-        numTimeSteps = self.phaseConfig[phaseName]["numTimeSteps"]
-        
-        self.ClampLayers(phaseName, **dataVectors)
+        # Apply clamp to the "Input" layer for the minus phase
+        self.layerDict["Input"].Clamp(input, self.time, monitoring=self.monitoring)
 
-        for timeStep in range(numTimeSteps):
+        # Fixed 75 timesteps for Leabra minus phase
+        for timeStep in range(75):
             self.UpdateConductances()
-            self.UpdateActivity(phaseName, debugData=debugData, **dataVectors)
+            self.UpdateActivity()
 
             self.time += self.DELTA_TIME
 
-        # Execute phasic processes (including XCAL)
+        # Record phasic history
         for layer in self.layers:
             #record phase activity at the end of each phase
-            layer.phaseHist[phaseName] = layer.getActivity().copy()
+            layer.phaseHist["minus"] = layer.getActivity().copy()
 
-            #Execute phasic processes (including XCAL)
-            for process in layer.phaseProcesses:
-                if phaseName in process.phases or "all" in process.phases:
-                    process.StepPhase()
+    def PlusPhase(self, input: np.ndarray, target: np.ndarray,):
+        '''Compute a phase of execution for the neural network. A phase is a 
+            set of timesteps related to some process in the network such as 
+            the generation of an expectation versus observation of outcome in
+            Prof. O'Reilly's error-driven local learning framework.
+        '''
+        # Apply clamp to the "Input" layer AND "Output" layer for the plus phase
+        self.layerDict["Input"].Clamp(input, self.time, monitoring=self.monitoring)
+        self.layerDict["Output"].EXTERNAL = target
 
-    def StepTrial(self, runType: str, debugData = {}, **dataVectors):
-        Train = runType=="Learn"
+        # Fixed 25 timesteps for Leabra plus phase
+        for timeStep in range(25):
+            self.UpdateConductances()
+            self.UpdateActivity()
+
+            self.time += self.DELTA_TIME
+
+        # Record phasic history
         for layer in self.layers:
-            layer.InitTrial(Train)
-            
-        for phaseName in self.runConfig[runType]:
-            self.StepPhase(phaseName, debugData=debugData, **dataVectors)
+            #record phase activity at the end of each phase
+            layer.phaseHist["plus"] = layer.getActivity().copy()
 
-            # Store layer activity for each output layer during output phases
-            if self.phaseConfig[phaseName]["isOutput"]:
-                for dataName, layer in self.layerDict["outputLayers"].items():
-                    # TODO use pre-allocated numpy array to speed up execution
-                    self.outputs[dataName].append(layer.getActivity())
+            # Execute phasic processes (ActAvg)
+            layer.ActAvg.StepPhase()
 
-            if self.phaseConfig[phaseName]["isLearn"] and Train:
-                for layer in self.layers:
-                    dwtLog = debugData["dwtLog"] if "dwtLog" in debugData else None
-                    layer.Learn(dwtLog=dwtLog)
+    def StepTrial(self, **dataVectors):
+        for layer in self.layers:
+            layer.InitTrial()
+
+        self.MinusPhase(input=dataVectors["input"],)
+
+        # Extract the outputs of the network based on the network's inference
+        self.outputs["target"].append(self.layerDict["Output"].getActivity())
+
+        self.PlusPhase(input=dataVectors["input"], target=dataVectors["target"],)
+
+        # Execute learning after the plus phase
+        for layer in self.layers:
+            layer.Learn()
 
     def RunEpoch(self,
                  runType: str,
                  verbosity = 1,
                  reset: bool = False,
                  shuffle: bool = False,
-                 debugData = {},
                  **dataset: dict[str, np.ndarray]):
         '''Runs an epoch (iteration through all samples of a dataset) using a
             specified run type mathing a key from self.runConfig.
@@ -478,7 +461,7 @@ class Net:
                       )
 
             dataVectors = {key:value[sampleIndex] for key, value in dataset.items()}
-            self.StepTrial(runType, debugData=debugData, **dataVectors)
+            self.StepTrial(**dataVectors)
 
             if reset:
                 self.resetActivity()
@@ -494,7 +477,6 @@ class Net:
               batchSize = 1, # TODO: Implement batch training (average delta weights over some number of training examples)
               repeat=1, # TODO: Implement repeated sample training (train muliple times for a single input sample before moving on to the next one)
               EvaluateFirst = True,
-              debugData = {},
               **dataset: dict[str, np.ndarray]) -> dict[str: list]:
         '''Training loop that runs a specified number of epochs.
 
@@ -521,7 +503,7 @@ class Net:
         for epochIndex in range(numEpochs):
             self.epochIndex = int(EvaluateFirst) + epochIndex
             numSamples = self.RunEpoch("Learn", verbosity, reset, shuffle,
-                                       debugData=debugData, **dataset)
+                                       **dataset)
             isFinished = self.EvaluateMetrics(**dataset)
             if verbosity > 0:
                 primaryMetric = [key for key in self.runConfig["metrics"]][0]
@@ -640,7 +622,6 @@ class Net:
         for layer, lser in zip(self.layers, serial.get("layers", [])):
             layer.load_serial(lser)
 
-        self.UpdateLayerLists()
         return self
 
     def load_serial_file(self, filePath: str):
