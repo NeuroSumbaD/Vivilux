@@ -1,0 +1,456 @@
+{
+    "name": "XOR_LEABRA_NET",
+    "dtype": "<class 'numpy.float64'>",
+    "time": 20.40000000000195,
+    "epochIndex": 49,
+    "layers": [
+        {
+            "name": "Input",
+            "length": 4,
+            "activation_type": "NoisyXX1",
+            "activation": {
+                "Thr": 0.5,
+                "Gain": 100,
+                "NVar": 0.005,
+                "VmActThr": 0.01,
+                "SigMult": 0.33,
+                "SigMultPow": 0.8,
+                "SigGain": 3.0,
+                "InterpRange": 0.01,
+                "GainCorRange": 10.0,
+                "GainCor": 0.1,
+                "SigGainNVar": 600.0,
+                "SigMultEff": 0.18953522857451077,
+                "SigValAt0": 0.09476761428725539,
+                "InterpVal": 0.3843990523794113
+            },
+            "isInput": true,
+            "isTarget": false,
+            "clampMax": 0.95,
+            "clampMin": 0,
+            "dtype": "<class 'numpy.float64'>",
+            "neuron": "<vivilux.photonics.neurons.Neuron object at 0x00000223625BE7B0>",
+            "XCALParams": {
+                "DRev": 0.1,
+                "DThr": 0.0001,
+                "hasNorm": false,
+                "Norm_LrComp": 0.15,
+                "normMin": 0.001,
+                "DecayTau": 1000,
+                "hasMomentum": true,
+                "MTau": 10,
+                "Momentum_LrComp": 0.1,
+                "LrnThr": 0.01,
+                "Lrate": 0.04
+            },
+            "Act": [
+                0.0,
+                0.0,
+                0.95,
+                0.95
+            ],
+            "Vm": [
+                0.5,
+                0.5,
+                0.5095,
+                0.5095
+            ],
+            "GeRaw": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ],
+            "Ge": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ],
+            "GiRaw": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ],
+            "Gi": [
+                0.6174999999999999,
+                0.6174999999999999,
+                0.6174999999999999,
+                0.6174999999999999
+            ],
+            "excMeshes": [],
+            "inhMeshes": []
+        },
+        {
+            "name": "Hidden",
+            "length": 4,
+            "activation_type": "NoisyXX1",
+            "activation": {
+                "Thr": 0.5,
+                "Gain": 100,
+                "NVar": 0.005,
+                "VmActThr": 0.01,
+                "SigMult": 0.33,
+                "SigMultPow": 0.8,
+                "SigGain": 3.0,
+                "InterpRange": 0.01,
+                "GainCorRange": 10.0,
+                "GainCor": 0.1,
+                "SigGainNVar": 600.0,
+                "SigMultEff": 0.18953522857451077,
+                "SigValAt0": 0.09476761428725539,
+                "InterpVal": 0.3843990523794113
+            },
+            "isInput": false,
+            "isTarget": false,
+            "clampMax": 0.95,
+            "clampMin": 0,
+            "dtype": "<class 'numpy.float64'>",
+            "neuron": "<vivilux.photonics.neurons.Neuron object at 0x00000223625BE7B0>",
+            "XCALParams": {
+                "DRev": 0.1,
+                "DThr": 0.0001,
+                "hasNorm": false,
+                "Norm_LrComp": 0.15,
+                "normMin": 0.001,
+                "DecayTau": 1000,
+                "hasMomentum": true,
+                "MTau": 10,
+                "Momentum_LrComp": 0.1,
+                "LrnThr": 0.01,
+                "Lrate": 0.04
+            },
+            "Act": [
+                0.42662995535001963,
+                0.8751736148304406,
+                0.026455252663976577,
+                9.626705271150491e-16
+            ],
+            "Vm": [
+                0.5027749547835774,
+                0.5216783069209954,
+                0.4990180166937449,
+                0.4447936383286974
+            ],
+            "GeRaw": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ],
+            "Ge": [
+                0.5176312043755404,
+                0.5791098175875472,
+                0.5059653302466559,
+                0.355174025742146
+            ],
+            "GiRaw": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ],
+            "Gi": [
+                0.9379952331812805,
+                0.9379952331812805,
+                0.9379952331812805,
+                0.9379952331812805
+            ],
+            "excMeshes": [
+                {
+                    "name": "MESH_0",
+                    "shape": [
+                        4,
+                        4
+                    ],
+                    "size": 4,
+                    "AbsScale": 1.0,
+                    "RelScale": 1.0,
+                    "Gscale": 0.3846153846153846,
+                    "matrix": [
+                        [
+                            0.5236325403235059,
+                            0.6005343752401571,
+                            0.5568657591113961,
+                            0.521758059057518
+                        ],
+                        [
+                            0.4653111319577023,
+                            0.5741295683814133,
+                            0.4730917563303838,
+                            0.6973077985054985
+                        ],
+                        [
+                            0.7086233872750791,
+                            0.4153022227570809,
+                            0.6319602875415915,
+                            0.4985862311571381
+                        ],
+                        [
+                            0.5380505517898779,
+                            0.7155577604289282,
+                            0.2855180290989436,
+                            0.2932453837051126
+                        ]
+                    ],
+                    "linMatrix": [
+                        [
+                            0.5039416120493545,
+                            0.5169806408488395,
+                            0.5095176607343282,
+                            0.5036285710889242
+                        ],
+                        [
+                            0.4942094780701005,
+                            0.5124440942821159,
+                            0.49551107623560137,
+                            0.5347153244208661
+                        ],
+                        [
+                            0.5369619311476385,
+                            0.4857501686465515,
+                            0.5225112590535037,
+                            0.4997643712490165
+                        ],
+                        [
+                            0.5063537018283589,
+                            0.5383632899202891,
+                            0.46185540271976455,
+                            0.4634124402249805
+                        ]
+                    ],
+                    "lastAct": [
+                        0.0,
+                        0.0,
+                        0.95,
+                        0.95
+                    ],
+                    "inAct": [
+                        0.0,
+                        0.0,
+                        0.95,
+                        0.95
+                    ],
+                    "trainable": true,
+                    "dtype": "<class 'numpy.float64'>",
+                    "inLayerName": "Input",
+                    "device": {
+                        "type": "Generic",
+                        "length": 1.0,
+                        "width": 1.0,
+                        "shiftDelay": 1.0,
+                        "setEnergy": 1.0,
+                        "resetEnergy": 1.0,
+                        "opticalLoss": 0.0,
+                        "holdPower": 1.0
+                    }
+                },
+                {
+                    "name": "MESH_2",
+                    "shape": [
+                        4,
+                        2
+                    ],
+                    "size": 4,
+                    "AbsScale": 1.0,
+                    "RelScale": 0.3,
+                    "Gscale": 0.23076923076923075,
+                    "matrix": [
+                        [
+                            0.3142372281974323,
+                            0.5636875910129817
+                        ],
+                        [
+                            0.3446509769609802,
+                            0.6909998881936288
+                        ],
+                        [
+                            0.5183785575219623,
+                            0.4231535347056397
+                        ],
+                        [
+                            0.3625048539630623,
+                            0.6554923148537357
+                        ]
+                    ],
+                    "linMatrix": [
+                        [
+                            0.4675297797372403,
+                            0.5106709486118487
+                        ],
+                        [
+                            0.4732490803991897,
+                            0.5334830646811317
+                        ],
+                        [
+                            0.5030644351691405,
+                            0.4870928239965722
+                        ],
+                        [
+                            0.4764961354239139,
+                            0.5267772801608614
+                        ]
+                    ],
+                    "lastAct": [
+                        0.0,
+                        0.95,
+                        0.0,
+                        0.0
+                    ],
+                    "inAct": [
+                        0.0,
+                        0.95,
+                        0.0,
+                        0.0
+                    ],
+                    "trainable": true,
+                    "dtype": "<class 'numpy.float64'>",
+                    "inLayerName": "Output",
+                    "device": {
+                        "type": "Generic",
+                        "length": 1.0,
+                        "width": 1.0,
+                        "shiftDelay": 1.0,
+                        "setEnergy": 1.0,
+                        "resetEnergy": 1.0,
+                        "opticalLoss": 0.0,
+                        "holdPower": 1.0
+                    }
+                }
+            ],
+            "inhMeshes": []
+        },
+        {
+            "name": "Output",
+            "length": 2,
+            "activation_type": "NoisyXX1",
+            "activation": {
+                "Thr": 0.5,
+                "Gain": 100,
+                "NVar": 0.005,
+                "VmActThr": 0.01,
+                "SigMult": 0.33,
+                "SigMultPow": 0.8,
+                "SigGain": 3.0,
+                "InterpRange": 0.01,
+                "GainCorRange": 10.0,
+                "GainCor": 0.1,
+                "SigGainNVar": 600.0,
+                "SigMultEff": 0.18953522857451077,
+                "SigValAt0": 0.09476761428725539,
+                "InterpVal": 0.3843990523794113
+            },
+            "isInput": false,
+            "isTarget": true,
+            "clampMax": 0.95,
+            "clampMin": 0,
+            "dtype": "<class 'numpy.float64'>",
+            "neuron": "<vivilux.photonics.neurons.Neuron object at 0x00000223625BE7B0>",
+            "XCALParams": {
+                "DRev": 0.1,
+                "DThr": 0.0001,
+                "hasNorm": false,
+                "Norm_LrComp": 0.15,
+                "normMin": 0.001,
+                "DecayTau": 1000,
+                "hasMomentum": true,
+                "MTau": 10,
+                "Momentum_LrComp": 0.1,
+                "LrnThr": 0.01,
+                "Lrate": 0.04
+            },
+            "Act": [
+                0.0,
+                0.95
+            ],
+            "Vm": [
+                0.5,
+                0.5095
+            ],
+            "GeRaw": [
+                0.0,
+                0.0
+            ],
+            "Ge": [
+                0.7028811610657204,
+                0.8424539651000419
+            ],
+            "GiRaw": [
+                0.0,
+                0.0
+            ],
+            "Gi": [
+                1.4919678320077405,
+                1.4919678320077405
+            ],
+            "excMeshes": [
+                {
+                    "name": "MESH_1",
+                    "shape": [
+                        2,
+                        4
+                    ],
+                    "size": 4,
+                    "AbsScale": 1.0,
+                    "RelScale": 1.0,
+                    "Gscale": 1.0,
+                    "matrix": [
+                        [
+                            0.26313092708819963,
+                            0.6768466513804078,
+                            0.6427919350229538,
+                            0.6617321229824912
+                        ],
+                        [
+                            0.7279930755328725,
+                            0.6105920579390909,
+                            0.44323265691625163,
+                            0.6544388486233246
+                        ]
+                    ],
+                    "linMatrix": [
+                        [
+                            0.45719840669720435,
+                            0.5307659896980946,
+                            0.524459737783265,
+                            0.5279301741183855
+                        ],
+                        [
+                            0.5409275562140715,
+                            0.5187329601913819,
+                            0.49049895049618264,
+                            0.5265835976708276
+                        ]
+                    ],
+                    "lastAct": [
+                        0.4248436993139676,
+                        0.8733075038520112,
+                        0.0,
+                        0.0
+                    ],
+                    "inAct": [
+                        0.4248436993139676,
+                        0.8733075038520112,
+                        0.0,
+                        0.0
+                    ],
+                    "trainable": true,
+                    "dtype": "<class 'numpy.float64'>",
+                    "inLayerName": "Hidden",
+                    "device": {
+                        "type": "Generic",
+                        "length": 1.0,
+                        "width": 1.0,
+                        "shiftDelay": 1.0,
+                        "setEnergy": 1.0,
+                        "resetEnergy": 1.0,
+                        "opticalLoss": 0.0,
+                        "holdPower": 1.0
+                    }
+                }
+            ],
+            "inhMeshes": []
+        }
+    ]
+}

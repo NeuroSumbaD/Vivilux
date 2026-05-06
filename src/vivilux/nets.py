@@ -558,18 +558,6 @@ class LeabraNet(Net):
                 if ffOnly:
                     break
         return weights
-    
-    def GetEnergy(self, synDevice = None) -> tuple[float, float]:
-        neuralEnergy = 0
-        meshEnergy = 0
-        for layer in self.layers:
-            nEn, mEn = layer.GetEnergy(synDevice=synDevice)
-            neuralEnergy += nEn
-            meshEnergy += mEn
-        return neuralEnergy, meshEnergy
-    def printActivity(self):
-        for layer in self.layers:
-            "\n".join(layer.printActivity())
 
     def resetActivity(self):
         for layer in self.layers:

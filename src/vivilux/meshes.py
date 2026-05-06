@@ -11,7 +11,6 @@ if TYPE_CHECKING:
 
 import numpy as np
 
-from .devices import Device, Generic
 from .processes import XCAL
 
 
@@ -39,7 +38,6 @@ class Mesh:
                  wbDec = 1,
                  WtBalInterval = 10,
                  softBound = True,
-                 device = Generic(),
                  **kwargs):
         self.shape = (size, len(inLayer))
         self.size = size if size > len(inLayer) else len(inLayer)
@@ -90,41 +88,6 @@ class Mesh:
         # external matrix scaling parameters (constant synaptic gain)
         self.AbsScale = AbsScale
         self.RelScale = RelScale
-
-        self.AttachDevice(device)
-
-    def GetEnergy(self, device: Device = None):
-        '''Returns integrated energy over the course of the simulation.
-            If a device is provided, it calculates the energy from the given
-            device, otherwise it uses device parameters previously set.
-        '''
-        if device is None:
-            self.totalEnergy = self.holdEnergy + self.updateEnergy
-            return self.totalEnergy, self.holdEnergy, self.updateEnergy
-        else:
-            holdEnergy = device.Hold(self.holdIntegration, self.holdTime)
-            
-            updateEnergy = device.Set(self.setIntegration)
-            updateEnergy += device.Reset(self.resetIntegration)
-
-            totalEnergy = holdEnergy + updateEnergy
-            return totalEnergy, holdEnergy, updateEnergy
-    
-    def AttachDevice(self, device: Device):
-        '''Stores a copy of the device definition for use in updating.
-
-            This function should be overwritten for meshses with different
-            parameter structures.
-        '''
-        self.device = device
-        self.holdEnergy = 0
-        self.updateEnergy = 0
-
-        # integration variables for calculating energy of other devices
-        self.holdIntegration = 0
-        self.holdTime = 0
-        self.setIntegration = 0
-        self.resetIntegration = 0
 
     def get_serial(self) -> dict:
         # Serialize mesh state to python-native types

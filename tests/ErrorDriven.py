@@ -44,7 +44,7 @@ outputSize = 2
 
 #define input and output data of one-hot patterns
 directory = pathlib.Path(__file__).parent.resolve()
-patterns = pd.read_csv(directory / "Equivalence" / "errorDriven_impossible_pats.csv")
+patterns = pd.read_csv(directory / "errorDriven_impossible_pats.csv")
 patterns = patterns.drop(labels = "$Name", axis=1)
 patterns = patterns.to_numpy(dtype="float64")
 inputs = patterns[:,:inputSize]

@@ -308,18 +308,6 @@ class Layer:
             if not mesh.trainable:
                 continue
             mesh.Update()
-
-    def GetEnergy(self, synDevice = None) -> tuple[float, float]:
-        synapticEnergy = 0
-        for mesh in self.excMeshes:
-            total, hold, update = mesh.GetEnergy(device=synDevice)
-            synapticEnergy += total
-
-        for mesh in self.inhMeshes:
-            total, hold, update = mesh.GetEnergy(device=synDevice)
-            synapticEnergy += total
-
-        return np.sum(self.neuralEnergy), synapticEnergy
     
     def get_serial(self) -> dict:
         return {
