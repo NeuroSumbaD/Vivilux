@@ -280,13 +280,13 @@ class LeabraNet(Net):
         fbMeshType = ffMeshType if fbMeshType is None else fbMeshType
 
         # feedforward connection
-        size = len(sending)
+        size = len(receiving)
         ffMesh = ffMeshType(size, sending, **ffMeshArgs)
         receiving.addMesh(ffMesh)
 
         # feedback connection
-        size = len(receiving)
-        fbMesh = fbMeshType(ffMesh, receiving, **fbMeshArgs)
+        size = len(sending)
+        fbMesh = fbMeshType(size, receiving, **fbMeshArgs)
         sending.addMesh(fbMesh)
 
         return ffMesh, fbMesh

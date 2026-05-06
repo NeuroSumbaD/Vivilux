@@ -1,5 +1,5 @@
 from vivilux import *
-from vivilux.nets import Net
+from vivilux.nets import LeabraNet
 from vivilux.layers import Layer
 from vivilux.metrics import RMSE
 from vivilux.visualize import Monitor, Multimonitor, StackedMonitor
@@ -22,7 +22,7 @@ inputs = np.abs(vecs/mags[...,np.newaxis])
 targets = np.random.rand(numSamples, 1)
 del vecs, mags
 
-leabraNet = Net(name = "LEABRA_NET",
+leabraNet = LeabraNet(name = "LEABRA_NET",
                 monitoring=True,
                 ) # Default Leabra net
 

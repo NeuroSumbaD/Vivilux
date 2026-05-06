@@ -11,7 +11,7 @@
 from argparse import ArgumentParser
 
 from vivilux import *
-from vivilux.nets import Net, layerConfig_std
+from vivilux.nets import LeabraNet, layerConfig_std
 from vivilux.layers import Layer
 from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
@@ -58,7 +58,7 @@ leabraRunConfig = {
     "Infer": ["minus"],
 }
 
-leabraNet = Net(name = "LEABRA_NET",
+leabraNet = LeabraNet(name = "LEABRA_NET",
                 runConfig=leabraRunConfig) # Default Leabra net
 
 # Add layers
@@ -74,12 +74,10 @@ leabraNet.AddLayer(layerList[-1], layerConfig=outputConfig)
 # Add feedforward connections
 ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:])
 # Add feedback connections
-fbMeshConfig = {"meshType": Mesh,
-                "meshArgs": {"AbsScale": 1,
-                             "RelScale": 0.2},
-                }
 fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
-                                    meshConfig=fbMeshConfig)
+                                    meshArgs={"AbsScale": 1,
+                                    "RelScale": 0.2},
+                                    )
 
 
 result = leabraNet.Learn(input=inputs, target=targets,
