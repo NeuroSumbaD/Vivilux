@@ -372,10 +372,11 @@ class LeabraNet(Net):
         self.layerDict["Input"].EndStep(self.time)
 
     def MinusPhase(self, input: np.ndarray,):
-        '''Compute a phase of execution for the neural network. A phase is a 
-            set of timesteps related to some process in the network such as 
-            the generation of an expectation versus observation of outcome in
-            Prof. O'Reilly's error-driven local learning framework.
+        '''Compute the minus phase of execution for the neural network that
+            generates the network's expectation of some outcome based on the
+            input. This is the first phase of execution which is later
+            contrasted with the plus phase that represents the outcome to be
+            learned using Prof. O'Reilly's error-driven local learning framework.
         '''
         # Apply clamp to the "Input" layer for the minus phase
         self.layerDict["Input"].Clamp(input, self.time, monitoring=self.monitoring)
@@ -393,10 +394,12 @@ class LeabraNet(Net):
             layer.phaseHist["minus"] = layer.getActivity().copy()
 
     def PlusPhase(self, input: np.ndarray, target: np.ndarray,):
-        '''Compute a phase of execution for the neural network. A phase is a 
-            set of timesteps related to some process in the network such as 
-            the generation of an expectation versus observation of outcome in
-            Prof. O'Reilly's error-driven local learning framework.
+        '''Compute the plus phase of execution for the neural network that
+            forces the network's state to some external outcome. This is the
+            second phase of execution which is contrasted with the minus phase
+            that represents the expectation. The differences in the network's
+            state between the minus and plus phases are used to drive learning
+            in the network using Prof. O'Reilly's error-driven local learning.
         '''
         # Apply clamp to the "Input" layer AND "Output" layer for the plus phase
         self.layerDict["Input"].Clamp(input, self.time, monitoring=self.monitoring)
@@ -433,7 +436,6 @@ class LeabraNet(Net):
             layer.Learn()
 
     def RunEpoch(self,
-                 runType: str,
                  verbosity = 1,
                  reset: bool = False,
                  shuffle: bool = False,
@@ -502,7 +504,7 @@ class LeabraNet(Net):
         print(f"Begin training [{self.name}]...")
         for epochIndex in range(numEpochs):
             self.epochIndex = int(EvaluateFirst) + epochIndex
-            numSamples = self.RunEpoch("Learn", verbosity, reset, shuffle,
+            numSamples = self.RunEpoch(verbosity, reset, shuffle,
                                        **dataset)
             isFinished = self.EvaluateMetrics(**dataset)
             if verbosity > 0:
@@ -526,7 +528,7 @@ class LeabraNet(Net):
 
         if verbosity > 0:
             print(f"Evaluating [{self.name}] without training...")
-        self.RunEpoch("Infer", verbosity, reset, shuffle, **dataset)
+        self.RunEpoch(verbosity, reset, shuffle, **dataset)
         self.EvaluateMetrics(**dataset)
         if verbosity > 0:
             primaryMetric = [key for key in self.runConfig["metrics"]][0]
@@ -544,7 +546,7 @@ class LeabraNet(Net):
         '''
         if verbosity > 0:
             print(f"Inferring [{self.name}]...")
-        self.RunEpoch("Infer", verbosity, reset, shuffle= False, **dataset)
+        self.RunEpoch(verbosity, reset, shuffle= False, **dataset)
             
         if verbosity > 0:
             print("Inference complete.")

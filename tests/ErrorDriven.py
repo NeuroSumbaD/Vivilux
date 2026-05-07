@@ -112,12 +112,7 @@ layerList = [Layer(inputSize, isInput=True, name="Input"),
             Layer(hiddenSize, name="Hidden"),
             Layer(outputSize, isTarget=True, name="Output")]
 smallLayConfig = deepcopy(layerConfig_std)
-smallLayConfig["ActAvg"]["Fixed"] = True
-smallLayConfig["ActAvg"]["Init"] = 0.5
-smallLayConfig["ActAvg"]["Gain"] = 1.5
 smallLayConfig["FFFBparams"]["Gi"] = 1.3
-smallLayConfig["XCALParams"]["hasNorm"] = False
-# smallLayConfig["XCALParams"]["hasMomentum"] = False
 leabraNet.AddLayers(layerList, layerConfig=smallLayConfig)
 
 # Add feedforward connections

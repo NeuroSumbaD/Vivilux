@@ -1,5 +1,5 @@
 from vivilux import *
-from vivilux.nets import Net, layerConfig_std
+from vivilux.nets import LeabraNet, layerConfig_std
 from vivilux.layers import Layer
 from vivilux.photonics.ph_meshes import MZImesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
@@ -45,7 +45,7 @@ leabraRunConfig = {
     }
 }
 
-leabraNet = Net(name = "LEABRA_NET",
+leabraNet = LeabraNet(name = "LEABRA_NET",
                 runConfig=leabraRunConfig) # Default Leabra net
 
 # Add layers

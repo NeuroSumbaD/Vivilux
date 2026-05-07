@@ -1,5 +1,5 @@
 from vivilux import *
-from vivilux.nets import Net, layerConfig_std
+from vivilux.nets import LeabraNet, layerConfig_std
 from vivilux.layers import Layer
 from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE, ThrMSE, ThrSSE
@@ -27,7 +27,7 @@ targets[:,:patternSize] = 1
 targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
 
 plt.ion()
-leabraNet = Net(name = "LEABRA_NET",
+leabraNet = LeabraNet(name = "LEABRA_NET",
                 monitoring=True,
                 ) # Default Leabra net
 

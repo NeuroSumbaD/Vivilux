@@ -1,5 +1,5 @@
 from vivilux import *
-from vivilux.nets import Net, layerConfig_std
+from vivilux.nets import LeabraNet, layerConfig_std
 from vivilux.activations import NoisyXX1
 from vivilux.visualize import Record
 from vivilux.layers import Layer
@@ -77,7 +77,7 @@ leabraRunConfig = {
     "Infer": ["minus"],
 }
 
-leabraNet = Net(name = "LEABRA_NET",
+leabraNet = LeabraNet(name = "LEABRA_NET",
                 runConfig=leabraRunConfig,
                 monitoring=True) # Default Leabra net
 

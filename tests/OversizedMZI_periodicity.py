@@ -5,7 +5,7 @@
 '''
 
 from vivilux import *
-from vivilux.nets import Net, layerConfig_std
+from vivilux.nets import LeabraNet, layerConfig_std
 from vivilux.layers import Layer
 import vivilux.photonics as px
 from vivilux.photonics.ph_meshes import OversizedMZI
@@ -25,7 +25,7 @@ numIterations = 3
 
 
 dummyLayer = Layer(matrixSize, isInput=True, name="Input")
-dummyNet = Net(name = "LEABRA_NET")
+dummyNet = LeabraNet(name = "LEABRA_NET")
 dummyNet.AddLayer(dummyLayer)
 
 records = [] # to store traces of magnitude for each permutation matrix
@@ -33,8 +33,7 @@ for index in range(numIterations):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
 
-    mzi = OversizedMZI(matrixSize, dummyLayer,
-              )
+    mzi = OversizedMZI(matrixSize, dummyLayer)
     mzi.freezeScaleFactor = True
     initMatrix = mzi.get()/mzi.Gscale
     initParams = mzi.getParams()

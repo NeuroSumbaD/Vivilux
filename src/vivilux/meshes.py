@@ -105,7 +105,6 @@ class Mesh:
             "trainable": bool(self.trainable),
             "dtype": str(self.dtype),
             "inLayerName": self.inLayer.name if hasattr(self.inLayer, "name") else None,
-            "device": self.device.get_serial() if hasattr(self.device, "get_serial") else None,
         }
 
     def load_serial(self, serial: dict):
@@ -139,40 +138,7 @@ class Mesh:
         except Exception:
             pass
 
-        dev_ser = serial.get("device")
-        if dev_ser is not None and hasattr(self.device, "load_serial"):
-            self.device.load_serial(dev_ser)
-
         return self
-
-    def DeviceHold(self):
-        '''Calls the hold function for each device in the mesh according
-            to the current parameters.
-
-            This function should be overwritten for meshses with different
-            parameter structures.
-        '''
-        DT = self.inLayer.net.DELTA_TIME
-        self.holdEnergy += self.device.Hold(self.matrix, DT)
-
-        self.holdIntegration += np.sum(self.matrix)
-        self.holdTime += DT
-
-
-    def DeviceUpdate(self, delta):
-        '''Calls the reset() and set() functions for each device in the mesh
-            according to the updated parameters
-
-            This function should be overwritten for meshses with different
-            parameter structures.
-        '''
-        currMat = self.matrix
-        newMat = self.sigmoid(self.linMatrix + delta)
-        self.updateEnergy += self.device.Reset(currMat)
-        self.updateEnergy += self.device.Set(newMat)
-
-        self.setIntegration += np.sum(currMat)
-        self.resetIntegration += np.sum(newMat)
     
     def set(self, matrix):
         self.modified = True
@@ -203,7 +169,6 @@ class Mesh:
         return np.pad(act, pad_width=(0,pad))
 
     def apply(self):
-        self.DeviceHold()
         data = self.getInput()
 
         # Implement delta-sender behavior (thresholds changes in conductance)
@@ -314,7 +279,6 @@ class Mesh:
             This function should apply to all meshes.
         '''
         delta, m, n = self.CalculateUpdate()
-        self.DeviceUpdate(delta)
         self.ApplyUpdate(delta, m, n)
         self.WtBalance()
 
