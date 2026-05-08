@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .layers import Layer
 
+from jax import numpy as jnp
 import numpy as np
 
 from .processes import XCAL
@@ -231,18 +232,23 @@ class Mesh:
         if self.softBound:
             mask1 = delta > 0
             m, n = delta.shape
-            delta[mask1] *= self.wbInc * (1 - self.linMatrix[:m,:n][mask1])
+            delta = jnp.where(mask1,
+                              delta * self.wbInc * (1 - self.linMatrix[:m,:n]),
+                              delta,
+                              )
 
-            mask2 = np.logical_not(mask1)
-            delta[mask2] *= self.wbDec * self.linMatrix[:m,:n][mask2]
+            mask2 = jnp.logical_not(mask1)
+            delta = jnp.where(mask2,
+                              delta * self.wbDec * self.linMatrix[:m,:n],
+                              delta)
         else:
             mask1 = delta > 0
             m, n = delta.shape
-            delta[mask1] *= self.wbInc
+            delta = jnp.where(mask1, delta * self.wbInc, delta)
 
-            mask2 = np.logical_not(mask1)
-            delta[mask2] *= self.wbDec
-                    
+            mask2 = jnp.logical_not(mask1)
+            delta = jnp.where(mask2, delta * self.wbDec, delta)
+
         return delta
     
     def ClipLinMatrix(self):

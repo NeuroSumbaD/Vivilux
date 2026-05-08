@@ -3,20 +3,26 @@
 
 # type checking
 from __future__ import annotations
+from functools import partial
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from .nets import Net
     from .meshes import Mesh
     from .processes import Process, NeuralProcess, PhasicProcess
 
-from .processes import ActAvg, FFFB
+from .processes import ActAvg
 
 import numpy as np
+from jax import jit
+import jax.numpy as jnp
 
 # import defaults
-from .activations import NoisyXX1
-from .visualize import Monitor
-from .photonics.neurons import Neuron, YunJhuModel
+from vivilux.activations import NoisyXX1
+from vivilux.visualize import Monitor
+from vivilux.photonics.neurons import Neuron, YunJhuModel
+from vivilux.functional.processes import StepFFFB
+from vivilux.functional.layers import UpdateConductance, UpdateActivity
 
 class Layer:
     '''Base class for a layer that includes input matrices and activation
@@ -43,7 +49,6 @@ class Layer:
         
         # initialize energy accounting 
         self.neuron = neuron
-        self.neuralEnergy = 0 # increment for each timestep
 
         self.modified = False 
         self.actFn = activation
@@ -61,15 +66,15 @@ class Layer:
         # Initialize layer variables
         self.net = None
 
-        self.GeRaw = np.zeros(length, dtype=self.dtype)
-        self.Ge = np.zeros(length, dtype=self.dtype)
+        self.GeRaw = jnp.zeros(length, dtype=self.dtype)
+        self.Ge = jnp.zeros(length, dtype=self.dtype)
 
-        self.GiRaw = np.zeros(length, dtype=self.dtype)
-        self.GiSyn = np.zeros(length, dtype=self.dtype)
-        self.Gi = np.zeros(length, dtype=self.dtype)
+        self.GiRaw = jnp.zeros(length, dtype=self.dtype)
+        self.GiSyn = jnp.zeros(length, dtype=self.dtype)
+        self.Gi = jnp.zeros(length, dtype=self.dtype)
 
-        self.Act = np.zeros(length, dtype=self.dtype)
-        self.Vm = np.zeros(length, dtype=self.dtype)
+        self.Act = jnp.zeros(length, dtype=self.dtype)
+        self.Vm = jnp.zeros(length, dtype=self.dtype)
 
         # Empty initial excitatory and inhibitory meshes
         self.excMeshes: list[Mesh] = []
@@ -90,6 +95,10 @@ class Layer:
         ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
         self.EXTERNAL = None
 
+        self.fbi = 0 # feedback inhibition state used by the FFFB process
+
+        self._update_activity_fn = lambda x: NotImplementedError("Layer not attached to net, activity function not initialized. Call AttachNet with containing net and layerConfig to initialize.") # placeholder until AttachNet is called
+
     def AttachNet(self, net: Net, layerConfig):
         '''Attaches a reference to the net containing the layer and initializes
             additional parameters from the layerConfig.
@@ -102,7 +111,7 @@ class Layer:
         # Attach channel params
         self.Gbar = layerConfig["Gbar"]
         self.Erev = layerConfig["Erev"]
-        self.Vm[:] = layerConfig["VmInit"] # initialize Vm
+        self.Vm = jnp.full_like(self.Vm, layerConfig["VmInit"]) # initialize Vm
         self.VmInit = layerConfig["VmInit"]
 
         # Attach DtParams
@@ -125,32 +134,59 @@ class Layer:
         # Attach FFFB process
         ##NOTE: special process, executed after Ge update, before Gi update
         if layerConfig["hasInhib"]:
-            self.FFFB = FFFB(self)
-            self.Gi_FFFB = 0
+            self._step_fffb = jit(partial(StepFFFB,
+                MaxVsAvg = self.FFFBparams["MaxVsAvg"],
+                FF = self.FFFBparams["FF"],
+                FF0 = self.FFFBparams["FF0"],
+                FBDt = self.FFFBparams["FBDt"],
+                FB = self.FFFBparams["FB"],
+                Gi = self.FFFBparams["Gi"],
+                )
+            )
+
+        self._update_conductance_fn = jit(partial(UpdateConductance,
+            DtParams_GDt = self.DtParams["GDt"],
+            DtParams_Integ = self.DtParams["Integ"],
+            StepFFFB = self._step_fffb if hasattr(self, "_step_fffb") else lambda Ge, Act, fbi: (0, 0), # If FFFB is not present, fbi and Gi_FFFB are zero
+            )
+        )
 
         # Attach XCAL Params
         self.XCALParams = layerConfig["XCALParams"]
 
         self.isFloating = False
 
+        self._update_activity_fn = jit(partial(UpdateActivity,
+            Gbar_E = self.Gbar["E"],
+            Gbar_I = self.Gbar["I"],
+            Gbar_L = self.Gbar["L"],
+            Erev_E = self.Erev["E"],
+            Erev_I = self.Erev["I"],
+            Erev_L = self.Erev["L"],
+            DtParams_VmDt = self.DtParams["VmDt"],
+            Thr = self.actFn.Thr,
+            VmActThr = self.actFn.VmActThr,
+            actFn = self.actFn,
+            )
+        )
+
     def UpdateConductance(self):
         self.Integrate()
         self.RunProcesses()
 
-        # Update conductances from raw inputs
-        self.Ge[:] += (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GeRaw - self.Ge)
-                       )
+        Ge, GiSyn, Gi, fbi = self._update_conductance_fn(
+            GeRaw = self.GeRaw,
+            Ge = self.Ge,
+            Act = self.Act,
+            GiRaw = self.GiRaw,
+            GiSyn = self.GiSyn,
+            fbi = self.fbi,
+        )
         
-        # Call FFFB to update GiRaw
-        self.FFFB.StepTime()
-
-        self.GiSyn[:] += (self.DtParams["Integ"] *
-                       self.DtParams["GDt"] * 
-                       (self.GiRaw - self.GiSyn)
-                       )
-        self.Gi[:] = self.GiSyn + self.Gi_FFFB # Add synaptic Gi to FFFB contribution
+        self.Ge = Ge
+        self.GiSyn = GiSyn
+        self.Gi = Gi
+        self.fbi = fbi
     
     def StepTime(self, time: float):
         # self.UpdateConductance() ## Moved to nets StepPhase
@@ -159,41 +195,11 @@ class Layer:
             self.Clamp(self.EXTERNAL, time)
             self.EndStep(time)
             return
-            
 
-        # Aliases for readability
-        Erev = self.Erev
-        Gbar = self.Gbar
-        Thr = self.actFn.Thr
-        
-        # Update layer potentials
-        Vm = self.Vm
-        self.Inet = (self.Ge * Gbar["E"] * (Erev["E"] - Vm) +
-                Gbar["L"] * (Erev["L"] - Vm) +
-                self.Gi * Gbar["I"] * (Erev["I"] - Vm)
-                )
-        self.Vm[:] += self.DtParams["VmDt"] * self.Inet
-
-        # Calculate conductance threshold
-        geThr = (self.Gi * Gbar["I"] * (Erev["I"] - Thr) +
-                 Gbar["L"] * (Erev["L"] - Thr)
-                )
-        geThr /= (Thr - Erev["E"])
-
-        # Firing rate above threshold governed by conductance-based rate coding
-        newAct = self.actFn(self.Ge*Gbar["E"] - geThr)
-        
-        # Activity below threshold is nearly zero
-        mask = np.logical_and(
-            self.Act < self.actFn.VmActThr,
-            self.Vm <= self.actFn.Thr
-            )
-        newAct[mask] = self.actFn(self.Vm[mask] - Thr)
-
-        # Update layer activities
-        self.Act[:] += self.DtParams["VmDt"] * (newAct - self.Act)
-
-        self.neuralEnergy += self.neuron(self.Act)
+        self.Vm, self.Act = self._update_activity_fn(Vm=self.Vm,
+                                                     Act=self.Act,
+                                                     Ge=self.Ge,
+                                                     Gi=self.Gi)
 
         self.EndStep(time,)
 
@@ -203,10 +209,10 @@ class Layer:
             in a time integrated manner.
         '''
         for mesh in self.excMeshes:
-            self.GeRaw[:] += mesh.apply()[:len(self)]
+            self.GeRaw = self.GeRaw + mesh.apply()[:len(self)]
 
         for mesh in self.inhMeshes:
-            self.GiRaw[:] += mesh.apply()[:len(self)]
+            self.GiRaw = self.GiRaw + mesh.apply()[:len(self)]
 
     def InitTrial(self,):
         # Update AvgL, AvgLLrn, ActPAvg, ActPAvgEff
@@ -217,8 +223,8 @@ class Layer:
             mesh.setGscale()
 
         ## InitGInc
-        self.GeRaw[:] = 0 # reset
-        self.GiRaw[:] = 0 # reset
+        self.GeRaw = jnp.zeros_like(self.GeRaw) # reset
+        self.GiRaw = jnp.zeros_like(self.GiRaw) # reset
 
         self.EXTERNAL = None
     
@@ -255,15 +261,14 @@ class Layer:
         }
 
     def EndStep(self, time):
-        self.ActAvg.StepTime()
-        self.FFFB.UpdateAct()
+        self.ActAvg.StepTime(self.Act)
         self.UpdateSnapshot()
         self.UpdateMonitors()
 
         # TODO: Improve readability of this line (end of trial code?)
         ## these lines may need to change when Delta-Sender mechanism is included
-        self.GeRaw[:] = 0
-        self.GiRaw[:] = 0
+        self.GeRaw = jnp.zeros_like(self.GeRaw)
+        self.GiRaw = jnp.zeros_like(self.GiRaw)
 
     def getActivity(self):
         return self.Act
@@ -273,21 +278,20 @@ class Layer:
     
     def resetActivity(self):
         '''Resets all activation traces to zero vectors.'''
-        self.Act[:] = 0
-        self.Vm[:] = self.VmInit
+        self.Act = jnp.zeros_like(self.Act)
+        self.Vm = jnp.full_like(self.Vm, self.VmInit)
 
-        self.GeRaw[:] = 0
-        self.Ge[:] = 0
-        self.GiRaw[:] = 0
-        self.GiSyn[:] = 0
-        self.Gi[:] = 0
+        self.GeRaw = jnp.zeros_like(self.GeRaw)
+        self.Ge = jnp.zeros_like(self.Ge)
+        self.GiRaw = jnp.zeros_like(self.GiRaw)
+        self.GiSyn = jnp.zeros_like(self.GiSyn)
+        self.Gi = jnp.zeros_like(self.Gi)
 
-        self.FFFB.Reset()
+        self.fbi = 0 #FFFB Reset
         self.ActAvg.Reset()
         
         for mesh in self.excMeshes:
             mesh.XCAL.Reset()
-
 
     def Clamp(self, data, time: float, monitoring = False,):
         clampData = data.copy()

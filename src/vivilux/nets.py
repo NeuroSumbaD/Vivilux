@@ -418,7 +418,10 @@ class LeabraNet(Net):
             layer.phaseHist["plus"] = layer.getActivity().copy()
 
             # Execute phasic processes (ActAvg)
-            layer.ActAvg.StepPhase()
+            layer.ActAvg.StepPhase(layer.phaseHist["plus"],
+                                   layer.phaseHist["minus"],
+                                   layer.isTarget,
+                                   )
 
     def StepTrial(self, **dataVectors):
         for layer in self.layers:
