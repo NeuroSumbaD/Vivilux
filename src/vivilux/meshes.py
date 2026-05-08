@@ -3,16 +3,20 @@
 
 # type checking
 from __future__ import annotations
-
+from functools import partial
 from typing import TYPE_CHECKING
+
+import jax
 
 if TYPE_CHECKING:
     from .layers import Layer
 
 from jax import numpy as jnp
+from jax import jit
 import numpy as np
 
-from .processes import XCAL
+from vivilux.processes import XCAL
+import vivilux.functional.meshes as funcs
 
 
 class Mesh:
@@ -65,8 +69,11 @@ class Mesh:
         # Generate from uniform distribution
         low = InitMean - InitVar
         high = InitMean + InitVar
-        self.matrix = np.random.uniform(low, high, size=(size, len(inLayer)))
-        self.linMatrix = np.copy(self.matrix) # initialize linear weight
+
+        # Use numpy random to keep seeding and initializations the same as before
+        self.matrix = jnp.array(np.random.uniform(low, high, size=(size, len(inLayer))),
+                                dtype=self.dtype)
+        self.linMatrix = jnp.copy(self.matrix) # initialize linear weight
         self.InvSigMatrix() # correct linear weight
 
         # Other initializations
@@ -89,6 +96,25 @@ class Mesh:
         # external matrix scaling parameters (constant synaptic gain)
         self.AbsScale = AbsScale
         self.RelScale = RelScale
+
+        self._delta_send_fn = jit(partial(funcs.DeltaSender,
+            Thr_Send=self.OptThreshParams["Send"],
+            Thr_Delta=self.OptThreshParams["Delta"],
+        ))
+
+        self._soft_bound_fn = jit(partial(funcs.SoftBound,
+            softBound=self.softBound,
+            ),
+            static_argnames=["softBound"]
+        )
+
+        self._wt_bal_fn = jit(partial(funcs.WtBalFmWt,
+            wbAvgThr=self.wbAvgThr,
+            wbLoThr=self.wbLoThr,
+            wbHiThr=self.wbHiThr,
+            wbLoGain=self.wbLoGain,
+            wbHiGain=self.wbHiGain,
+        ))
 
     def get_serial(self) -> dict:
         # Serialize mesh state to python-native types
@@ -117,12 +143,12 @@ class Mesh:
         self.trainable = serial.get("trainable", self.trainable)
 
         try:
-            self.matrix = np.array(serial.get("matrix", self.matrix), dtype=self.dtype)
+            self.matrix = jnp.array(serial.get("matrix", self.matrix), dtype=self.dtype)
         except Exception:
             pass
 
         try:
-            self.linMatrix = np.array(serial.get("linMatrix", self.linMatrix), dtype=self.dtype)
+            self.linMatrix = jnp.array(serial.get("linMatrix", self.linMatrix), dtype=self.dtype)
         except Exception:
             try:
                 self.InvSigMatrix()
@@ -130,12 +156,12 @@ class Mesh:
                 pass
 
         try:
-            self.lastAct = np.array(serial.get("lastAct", self.lastAct), dtype=self.dtype)
+            self.lastAct = jnp.array(serial.get("lastAct", self.lastAct), dtype=self.dtype)
         except Exception:
             pass
 
         try:
-            self.inAct = np.array(serial.get("inAct", self.inAct), dtype=self.dtype)
+            self.inAct = jnp.array(serial.get("inAct", self.inAct), dtype=self.dtype)
         except Exception:
             pass
 
@@ -148,18 +174,15 @@ class Mesh:
 
     def setGscale(self):
         # TODO: handle case for inhibitory mesh
-        totalRel = np.sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes], dtype=self.dtype)
+
+        # TODO: calculate totalRel and the static part of Gscale once before starting network execution
+        totalRel = sum([mesh.RelScale for mesh in self.rcvLayer.excMeshes])
         self.Gscale = self.AbsScale * self.RelScale 
         self.Gscale /= totalRel if totalRel > 0 else 1
 
         # calculate average from input layer on last trial
-        # self.avgActP = self.inLayer.ActAvg.ActPAvg
         self.avgActP = self.inLayer.ActAvg.ActPAvgEff
-
-        #calculate average number of active neurons in sending layer
-        sendLayActN = np.maximum(np.round(self.avgActP*len(self.inLayer)), 1, dtype=self.dtype)
-        sc = 1/sendLayActN # TODO: implement relative importance
-        self.Gscale *= sc
+        self.Gscale *= funcs.SetGscale(self.avgActP, len(self.inLayer))
 
     def get(self):
         return self.Gscale * self.matrix
@@ -167,35 +190,24 @@ class Mesh:
     def getInput(self):
         act = self.inLayer.getActivity()
         pad = self.size - act.size
-        return np.pad(act, pad_width=(0,pad))
+        return jnp.pad(act, pad_width=(0,pad))
 
     def apply(self):
         data = self.getInput()
 
         # Implement delta-sender behavior (thresholds changes in conductance)
         ## NOTE: this does not reduce matrix multiplications like it does in Leabra
-        delta = data - self.lastAct
+        delta, lastAct = self._delta_send_fn(data, self.lastAct)
 
-        cond1 = data <= self.OptThreshParams["Send"]
-        cond2 = np.abs(delta) <= self.OptThreshParams["Delta"]
-        mask1 = np.logical_or(cond1, cond2)
-        notMask1 = np.logical_not(mask1)
-        delta[mask1] = 0 # only signal delta above both thresholds
-        self.lastAct[notMask1] = data[notMask1]
-
-        cond3 = self.lastAct > self.OptThreshParams["Send"]
-        mask2 = np.logical_and(cond3, cond1)
-        delta[mask2] = -self.lastAct[mask2]
-        self.lastAct[mask2] = 0
-
-        self.inAct[:] += delta
+        self.lastAct = lastAct
+        self.inAct = self.inAct + delta
 
         return self.applyTo(self.inAct[:self.shape[1]])
             
     def applyTo(self, data):
         try:
             synapticWeights = self.get()[:self.shape[0], :self.shape[1]]
-            return np.array(synapticWeights @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
+            return jnp.array(synapticWeights @ data[:self.shape[1]]).reshape(-1) # TODO: check for slowdown from this trick to support single-element layer
         except ValueError as ve:
             raise ValueError(f"Attempted to apply {data} (shape: {data.shape})"
                              f" to mesh of dimension: {self.shape}.\n{ve}")
@@ -215,45 +227,28 @@ class Mesh:
             ####----WtBalFmWt----####
             if not self.wbOn:
                 return
-            wbAvg = np.mean(self.matrix)
+            
+            wbFact, wbInc, wbDec = self._wt_bal_fn(
+                self.matrix,
+                self.wbFact,
+                self.wbInc,
+                self.wbDec
+            )
 
-            if wbAvg < self.wbLoThr:
-                if wbAvg < self.wbAvgThr:
-                    wbAvg = self.wbAvgThr
-                self.wbFact = self.wbLoGain * (self.wbLoThr - wbAvg)
-                self.wbDec = 1/ (1 + self.wbFact)
-                self.wbInc = 2 - self.wbDec
-            elif wbAvg > self.wbHiThr:
-                self.wbFact = self.wbHiGain * (wbAvg - self.wbHiThr)
-                self.wbInc = 1/ (1 + self.wbFact)
-                self.wbDec = 2 - self.wbInc
+            self.wbFact = wbFact
+            self.wbInc = wbInc
+            self.wbDec = wbDec
 
     def SoftBound(self, delta):
-        if self.softBound:
-            mask1 = delta > 0
-            m, n = delta.shape
-            delta = jnp.where(mask1,
-                              delta * self.wbInc * (1 - self.linMatrix[:m,:n]),
-                              delta,
-                              )
-
-            mask2 = jnp.logical_not(mask1)
-            delta = jnp.where(mask2,
-                              delta * self.wbDec * self.linMatrix[:m,:n],
-                              delta)
-        else:
-            mask1 = delta > 0
-            m, n = delta.shape
-            delta = jnp.where(mask1, delta * self.wbInc, delta)
-
-            mask2 = jnp.logical_not(mask1)
-            delta = jnp.where(mask2, delta * self.wbDec, delta)
-
-        return delta
+        return self._soft_bound_fn(delta=delta,
+                                   linMatrix=self.linMatrix,
+                                   wbInc=self.wbInc,
+                                   wbDec=self.wbDec,
+                                   )
     
     def ClipLinMatrix(self):
         '''Bounds linear weights on range [0-1]'''
-        self.linMatrix = np.clip(self.linMatrix, 0, 1)
+        self.linMatrix = jnp.clip(self.linMatrix, 0, 1)
 
     def CalculateUpdate(self,
                         ):
@@ -267,13 +262,13 @@ class Mesh:
         m, n = delta.shape
         return delta, m, n
     
-    def ApplyUpdate(self, delta, m, n):
+    def ApplyUpdate(self, delta: jnp.ndarray, m: int, n: int):
         '''Applies the delta vector to the linear weights and calculates the 
             corresponding contrast enhances matrix.
 
             Overwrite this function for other learning rule or mesh types.
         '''
-        self.linMatrix[:m, :n] += delta
+        self.linMatrix = self.linMatrix.at[:m, :n].add(delta)
         self.ClipLinMatrix()
         self.SigMatrix()
 
@@ -296,37 +291,24 @@ class Mesh:
             purely linearly since the maximum and minimum possible weight is
             bounded by physical constraints.
         '''
-        mask1 = self.linMatrix <= 0
-        self.matrix[mask1] = 0
-
-        mask2 = self.linMatrix >= 1
-        self.matrix[mask2] = 1
-
-        mask3 = np.logical_not(np.logical_or(mask1, mask2))
-        self.matrix[mask3] = self.sigmoid(self.linMatrix[mask3])
+        self.matrix = funcs.SigMatrix(self.linMatrix,
+                                      Off=self.Off,
+                                      Gain=self.Gain,
+                                     )
 
         return self.matrix
 
     def sigmoid(self, data):
-        return 1 / (1 + np.power(self.Off*(1-data)/data, self.Gain))
+        return 1 / (1 + jnp.power(self.Off*(1-data)/data, self.Gain))
     
     def InvSigMatrix(self):
         '''This function is only called when the weights are set manually to
             ensure that the linear weights (linMatrix) are accurately tracked.
         '''
-        mask1 = self.matrix <= 0
-        self.matrix[mask1] = 0
-
-        mask2 = self.matrix >= 1
-        self.matrix[mask2] = 1
-
-        mask3 = np.logical_not(np.logical_or(mask1, mask2))
-        self.linMatrix[mask3] = self.invSigmoid(self.matrix[mask3])
+        self.linMatrix = funcs.InvSigMatrix(self.matrix, self.Off, self.Gain)
 
         return self.linMatrix
-    
-    def invSigmoid(self, data):
-        return 1 / (1 + np.power((1/self.Off)*(1-data)/data, (1/self.Gain)))
+
 
     def __len__(self):
         return self.size

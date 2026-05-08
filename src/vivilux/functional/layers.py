@@ -6,8 +6,6 @@ from vivilux.functional.activations import NoisyXX1
 from vivilux.functional.processes import StepFFFB
 
 from jax import numpy as jnp
-from jax import jit
-from jax import lax
 
 def UpdateConductance(GeRaw: jnp.ndarray,
                       Ge: jnp.ndarray,
