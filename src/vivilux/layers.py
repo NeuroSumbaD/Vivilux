@@ -20,7 +20,6 @@ import jax.numpy as jnp
 # import defaults
 from vivilux.activations import NoisyXX1
 from vivilux.visualize import Monitor
-from vivilux.photonics.neurons import Neuron, YunJhuModel
 from vivilux.functional.processes import StepFFFB
 from vivilux.functional.layers import UpdateConductance, UpdateActivity
 
@@ -42,14 +41,10 @@ class Layer:
                 #  batchMode=False,
                  dtype = np.float64,
                  name: str | None = None,
-                 neuron: Neuron = YunJhuModel,
                  ):
         
         self.isFloating = True # Not attached to net
         
-        # initialize energy accounting 
-        self.neuron = neuron
-
         self.modified = False 
         self.actFn = activation
         self.dtype = dtype
@@ -324,7 +319,6 @@ class Layer:
             "clampMax": self.clampMax,
             "clampMin": self.clampMin,
             "dtype": str(self.dtype),
-            "neuron": self.neuron.__name__ if hasattr(self.neuron, "__name__") else str(self.neuron),
             "XCALParams": self.XCALParams,
             # Internal state
             "Act": self.Act.tolist(),

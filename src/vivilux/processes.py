@@ -13,28 +13,7 @@ from jax import jit
 from jax import numpy as jnp
 import numpy as np
 
-class Process(ABC):
-    @abstractmethod
-    def AttachLayer(self, layer: Layer):
-        pass
-
-class NeuralProcess(Process):
-    '''A base class for various high-level processes which generate a current 
-        stimulus to a neuron.
-    '''
-    @abstractmethod
-    def StepTime(self):
-        pass
-
-class PhasicProcess(Process):
-    '''A base class for various high-level processes which affect the neuron in
-        some structural aspect such as learning, pruning, etc.
-    '''
-    @abstractmethod
-    def StepPhase(self):
-        pass
-
-class ActAvg(PhasicProcess):
+class ActAvg:
     '''A process for calculating average neuron activities for learning.
         Coordinates with the XCAL process to perform learning.
     '''
@@ -196,7 +175,7 @@ class ActAvg(PhasicProcess):
 
     def UpdateActPAvg(self):
         '''Update plus phase ActPAvg and ActPAvgEff'''
-        Act = np.mean(self.pool.getActivity())
+        Act = jnp.mean(self.pool.getActivity())
         if Act >= 0.0001:
             self.ActPAvg += 0.5 * (Act-self.ActPAvg) if self.UseFirst else self.ActPAvg_Dt * (Act-self.ActPAvg)
         self.ActPAvgEff = self.ActPAvg_Adjust * self.ActPAvg if not self.Fixed else self.Init
@@ -209,7 +188,7 @@ class ActAvg(PhasicProcess):
         self.layCosDiffAvg = 0
 
 
-class XCAL(PhasicProcess):
+class XCAL:
     def __init__(self,
                  DRev = 0.1,
                  DThr = 0.0001,
@@ -248,7 +227,42 @@ class XCAL(PhasicProcess):
             DRevRatio = self.DRevRatio,
             )
         )
-        
+
+        self._error_driven_fn = jit(partial(procs.ErrorDriven,
+            DThr = self.DThr,
+            DRev = self.DRev,
+            DRevRatio = self.DRevRatio,
+            )
+        )
+
+        self._bcm_fn = jit(partial(procs.BCM,
+            DThr = self.DThr,
+            DRev = self.DRev,
+            DRevRatio = self.DRevRatio,
+            )
+        )
+
+        self._mixed_learn_fn = jit(partial(procs.MixedLearn,
+            LrnThr = self.LrnThr,
+            DThr = self.DThr,
+            DRev = self.DRev,
+            DRevRatio = self.DRevRatio,
+            )
+        )
+
+        self._get_deltas_fn = jit(partial(procs.GetDeltas,
+            hasNorm = self.hasNorm,
+            hasMomentum = self.hasMomentum,
+            Norm_LrComp = self.Norm_LrComp,
+            normMin = self.normMin,
+            DecayDt = self.DecayDt,
+            Momentum_LrComp = self.Momentum_LrComp,
+            MDt = self.MDt,
+            Lrate = self.Lrate,
+            ),
+            static_argnames=["hasNorm", "hasMomentum"]
+        )
+
     def StepPhase(self):
         pass
         
@@ -270,32 +284,20 @@ class XCAL(PhasicProcess):
         self.Init()
 
     def GetDeltas(self,
-                  ) -> np.ndarray:
+                  ) -> jnp.ndarray:
         if self.recv.isTarget:
             dwt = self.ErrorDriven()
         else:
             dwt = self.MixedLearn()
 
-        # Implement Dwt Norm (similar to gradient norms in DNN)
-        norm  = 1
-        if self.hasNorm:
-            # it seems like norm must be calculated first, but applied after 
-            ## momentum (if applicable).
-            self.Norm = np.maximum(self.DecayDt * self.Norm, np.abs(dwt))
-            norm = self.Norm_LrComp / np.maximum(self.Norm, self.normMin)
-            norm[self.Norm==0] = 1
-            # TODO understand what prjn.go:607-620 is doing...
-            # TODO enable custom norm procedure (L1, L2, etc.)
+        Dwt, Norm, moment = self._get_deltas_fn(
+            dwt = dwt,
+            Norm = self.Norm,
+            moment = self.moment,
+        )
 
-        # Implement momentum optimiziation
-        if self.hasMomentum:
-            self.moment = self.MDt * self.moment + dwt
-            dwt = norm * self.Momentum_LrComp * self.moment
-            # TODO allow other optimizers (momentum, adam, etc.) from optimizers.py
-        else:
-            dwt *= norm
-
-        Dwt = self.Lrate * dwt # TODO implment Leabra and generalized learning rate schedules
+        self.Norm = Norm
+        self.moment = moment
 
         # Implment contrast enhancement mechanism
         # TODO figure out a way to use contrast enhancement without requiring the current weight...
@@ -304,53 +306,46 @@ class XCAL(PhasicProcess):
 
         return Dwt
 
-    def xcal(self, x: np.ndarray, th) -> np.ndarray:
-        '''"Check mark" linearized BCM-style learning rule which calculates
-            describes the calcium concentration versus change in synaptic
-            efficacy curve. This is proportional to change in weight strength
-            versus the activity of sending and receiving neuron for a single
-            synapse.
-        '''
-        return self._xcal_fn(x, th)
-
     def ErrorDriven(self) -> np.ndarray:
         '''Calculates an error-driven learning weight update based on the
             contrastive hebbian learning (CHL) rule.
         '''
         send = self.send.ActAvg
         recv = self.recv.ActAvg
-        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
-        srm = recv.AvgM[:,jnp.newaxis] @ send.AvgM[jnp.newaxis,:]
-        dwt = self.xcal(srs, srm)
+        
+        dwt = self._error_driven_fn(
+            send_AvgSLrn = send.AvgSLrn,
+            send_AvgM = send.AvgM,
+            recv_AvgSLrn = recv.AvgSLrn,
+            recv_AvgM = recv.AvgM,
+        )
 
         return dwt
 
     def BCM(self) -> np.ndarray:
         send = self.send.ActAvg
         recv = self.recv.ActAvg
-        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
-        AvgL = jnp.repeat(recv.AvgL[:,jnp.newaxis], len(self.send), axis=1)
-        dwt = self.xcal(srs, AvgL)
+        
+        dwt = self._bcm_fn(
+            send_AvgSLrn = send.AvgSLrn,
+            recv_AvgSLrn = recv.AvgSLrn,
+            recv_AvgL = recv.AvgL,
+        )
 
         return dwt
 
     def MixedLearn(self) -> np.ndarray:
         send = self.send.ActAvg
         recv = self.recv.ActAvg
-        AvgLLrn = recv.AvgLLrn
-        srs = recv.AvgSLrn[:,jnp.newaxis] @ send.AvgSLrn[jnp.newaxis,:]
-        srm = recv.AvgM[:,jnp.newaxis] @ send.AvgM[jnp.newaxis,:]
-        AvgL = jnp.repeat(recv.AvgL[:,jnp.newaxis], len(self.send), axis=1)
-
-        errorDriven = self.xcal(srs, srm)
-        hebbLike = self.xcal(srs, AvgL)
-        hebbLike = hebbLike * AvgLLrn[:,jnp.newaxis] # mult each recv by AvgLLrn
-        dwt = errorDriven + hebbLike
-
-        # Threshold learning for synapses above threshold
-        mask1 = send.AvgS < self.LrnThr
-        mask2 = send.AvgM < self.LrnThr
-        cond = jnp.logical_and(mask1, mask2)
-        dwt = jnp.where(cond[jnp.newaxis, :], 0, dwt) # TODO: Check the casting to make sure it casts column-wise
+        
+        dwt = self._mixed_learn_fn(
+            send_AvgSLrn = send.AvgSLrn,
+            send_AvgS = send.AvgS,
+            send_AvgM = send.AvgM,
+            recv_AvgSLrn = recv.AvgSLrn,
+            recv_AvgM = recv.AvgM,
+            recv_AvgL = recv.AvgL,
+            AvgLLrn = recv.AvgLLrn,
+        )
         
         return dwt  

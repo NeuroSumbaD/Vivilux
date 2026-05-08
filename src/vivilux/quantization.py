@@ -1,25 +1,23 @@
-from flax import nnx
+'''
+    This submodule contains a jax-compatible differentible implmentation
+    of the quantization process.
+'''
+
 from jax import numpy as jnp
 import jax
-from jax import lax
-from flax.nnx.nn.linear import _conv_dimension_numbers, default_kernel_init, default_bias_init, canonicalize_padding
-from flax.nnx.nn import dtypes
-import numpy as np
-
-import typing as tp
-from functools import partial
-
-# from accelerator.block import Block
-
-train_steps = 1200
-eval_every = 200
-batch_size = 32
 
 #---------------------- Custom Quantization, Activation, and Layers ----------------------#
 
 @jax.custom_vjp
 def fake_quantize(x, num_bits=8, axis=None):
-    """Quantize input tensor to the given number of bits."""
+    """Fake-quantize input tensor to the given number of bits. Fake
+        quantization allows the use of full-precision floating point
+        representations while forcing the value to a fixed number of
+        quantization levels, allowing for backpropagation through the
+        quantized operation at full precision, while the forward pass
+        can be deployed on lower precision hardware.
+
+    """
     qmin = 0
     qmax = (1 << num_bits) - 1  # 2^num_bits - 1
     
@@ -37,14 +35,11 @@ def fake_quantize(x, num_bits=8, axis=None):
 
 # Define the custom VJP for fake_quantize
 def fake_quantize_fwd(x, num_bits, axis):
-  return fake_quantize(x, num_bits, axis), x  # Store the original x for backward pass
+    return fake_quantize(x, num_bits, axis), x  # Store the original x for backward pass
 
 def fake_quantize_bwd(ctx, dy):
-  # Use the original input x for backpropagation (straight-through estimator)
-  x = ctx[1] 
-  return dy, None, None 
+    # Use the original input x for backpropagation (straight-through estimator)
+    x = ctx[1] 
+    return dy, None, None 
 
 fake_quantize.defvjp(fake_quantize_fwd, fake_quantize_bwd)
-
-# Relu with unused input parameters to match with EICDense and Accumulator
-relu = lambda x, threshold, noise_sd, key: nnx.relu(x-0.5)

@@ -29,7 +29,6 @@
             "clampMax": 0.95,
             "clampMin": 0,
             "dtype": "<class 'numpy.float64'>",
-            "neuron": "<vivilux.photonics.neurons.Neuron object at 0x00000145ADF3A7E0>",
             "XCALParams": {
                 "DRev": 0.1,
                 "DThr": 0.0001,
@@ -107,7 +106,6 @@
             "clampMax": 0.95,
             "clampMin": 0,
             "dtype": "<class 'numpy.float64'>",
-            "neuron": "<vivilux.photonics.neurons.Neuron object at 0x00000145ADF3A7E0>",
             "XCALParams": {
                 "DRev": 0.1,
                 "DThr": 0.0001,
@@ -326,7 +324,6 @@
             "clampMax": 0.95,
             "clampMin": 0,
             "dtype": "<class 'numpy.float64'>",
-            "neuron": "<vivilux.photonics.neurons.Neuron object at 0x00000145ADF3A7E0>",
             "XCALParams": {
                 "DRev": 0.1,
                 "DThr": 0.0001,

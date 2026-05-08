@@ -112,3 +112,111 @@ def xcal(x: jnp.ndarray,
     out = jnp.where(mask3, x * DRevRatio, out)
 
     return out
+
+def ErrorDriven(send_AvgSLrn: jnp.ndarray,
+                send_AvgM: jnp.ndarray,
+                recv_AvgSLrn: jnp.ndarray,
+                recv_AvgM: jnp.ndarray,
+                DThr: float,
+                DRev: float,
+                DRevRatio: float,
+                ) -> jnp.ndarray:
+    '''Calculates an error-driven learning weight update based on the
+        contrastive hebbian learning (CHL) rule.
+    '''
+    srs = recv_AvgSLrn[:,jnp.newaxis] @ send_AvgSLrn[jnp.newaxis,:]
+    srm = recv_AvgM[:,jnp.newaxis] @ send_AvgM[jnp.newaxis,:]
+    dwt = xcal(x=srs, 
+               th=srm,
+               DThr=DThr,
+               DRev=DRev,
+               DRevRatio=DRevRatio)
+
+    return dwt
+
+def BCM(send_AvgSLrn: jnp.ndarray,
+        recv_AvgSLrn: jnp.ndarray,
+        recv_AvgL: jnp.ndarray,
+        DThr: float,
+        DRev: float,
+        DRevRatio: float,
+        ) -> jnp.ndarray:
+    srs = recv_AvgSLrn[:,jnp.newaxis] @ send_AvgSLrn[jnp.newaxis,:]
+    AvgL = jnp.repeat(recv_AvgL[:,jnp.newaxis], len(send_AvgSLrn), axis=1)
+    dwt = xcal(x=srs, 
+               th=AvgL,
+               DThr=DThr,
+               DRev=DRev,
+               DRevRatio=DRevRatio)
+
+    return dwt
+
+def MixedLearn(send_AvgSLrn: jnp.ndarray,
+               send_AvgS: jnp.ndarray,
+               send_AvgM: jnp.ndarray,
+               recv_AvgSLrn: jnp.ndarray,
+               recv_AvgM: jnp.ndarray,
+               recv_AvgL: jnp.ndarray,
+               AvgLLrn: jnp.ndarray,
+               LrnThr: float,
+               DThr: float,
+               DRev: float,
+               DRevRatio: float,
+               ) -> jnp.ndarray:
+
+    errorDriven = ErrorDriven(send_AvgSLrn,
+                              send_AvgM,
+                              recv_AvgSLrn,
+                              recv_AvgM,
+                              DThr, DRev, DRevRatio)
+
+    hebbLike = BCM(send_AvgSLrn,
+                 recv_AvgSLrn,
+                 recv_AvgL,
+                 DThr, DRev, DRevRatio)
+    hebbLike = hebbLike * AvgLLrn[:,jnp.newaxis] # mult each recv by AvgLLrn
+    dwt = errorDriven + hebbLike
+
+    # Threshold learning for synapses above threshold
+    mask1 = send_AvgS < LrnThr
+    mask2 = send_AvgM < LrnThr
+    cond = jnp.logical_and(mask1, mask2)
+    dwt = jnp.where(cond[jnp.newaxis, :], 0, dwt) # TODO: Check the casting to make sure it casts column-wise
+    
+    return dwt
+
+def GetDeltas(dwt: jnp.ndarray,
+              Norm: jnp.ndarray,
+              moment: jnp.ndarray,
+              hasNorm: bool,
+              hasMomentum: bool,
+              Norm_LrComp: float,
+              normMin: float,
+              DecayDt: float,
+              Momentum_LrComp: float,
+              MDt: float,
+              Lrate: float,
+              ) -> jnp.ndarray:
+    # Implement Dwt Norm (similar to gradient norms in DNN)
+    norm  = 1
+    if hasNorm:
+        # it seems like norm must be calculated first, but applied after 
+        ## momentum (if applicable).
+        Norm = jnp.maximum(DecayDt * Norm, jnp.abs(dwt))
+        norm = Norm_LrComp / jnp.maximum(Norm, normMin)
+        norm = jnp.where(Norm == 0, 1, norm) # Avoid divide by zero
+
+        # TODO understand what prjn.go:607-620 is doing...
+        # TODO enable custom norm procedure (L1, L2, etc.)
+
+    # Implement momentum optimiziation
+    if hasMomentum:
+        moment = MDt * moment + dwt
+        dwt = norm * Momentum_LrComp * moment
+        # TODO allow other optimizers (momentum, adam, etc.) from optimizers.py
+    else:
+        dwt *= norm
+
+    Dwt = Lrate * dwt # TODO implment Leabra and generalized learning rate schedules
+
+    return Dwt, Norm, moment
