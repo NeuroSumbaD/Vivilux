@@ -3,6 +3,8 @@
     test for generating heatmap animations of the neural network as it learns
     a simple pattern matching task.
 '''
+import pathlib
+
 from vivilux import *
 from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
@@ -12,30 +14,32 @@ from vivilux.visualize import Record, Heatmap
 
 import numpy as np
 import matplotlib.pyplot as plt
-np.random.seed(seed=0)
+import pandas as pd
+np.random.seed(seed=10)
 
 from copy import deepcopy
 
-numEpochs = 40
+numEpochs = 15
 inputSize = 4
 hiddenSize = 4
-outputSize = 4
+outputSize = 2
 inPatternSize = 2
 outPatternSize = 1
 numSamples = 1
 
 #define input and output data (must be one-hot encoded)
-inputs = np.zeros((numSamples, inputSize))
-inputs[:,:inPatternSize] = 1
-inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
-targets = np.zeros((numSamples, outputSize))
-targets[:,:outPatternSize] = 1
-targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
+#define input and output data of one-hot patterns
+directory = pathlib.Path(__file__).parent.parent.resolve()
+patterns = pd.read_csv(directory / "tests" / "Equivalence" / "errorDriven_impossible_pats.csv")
+patterns = patterns.drop(labels = "$Name", axis=1)
+patterns = patterns.to_numpy(dtype="float64")
+inputs = patterns[:,:inputSize]
+targets = patterns[:,inputSize:]
+numSamples = len(inputs)
 
 leabraRunConfig = {
     "DELTA_TIME": 0.001,
     "metrics": {
-        "RMSE": RMSE,
         "AvgSSE": ThrMSE,
         "SSE": ThrSSE,
     },
@@ -44,6 +48,11 @@ leabraRunConfig = {
     },
     "Learn": ["minus", "plus"],
     "Infer": ["minus"],
+    "End": {
+        "threshold": 0,
+        "isLower": True,
+        "numEpochs": 3,
+    }
 }
 
 leabraNet = Net(name = "LEABRA_NET",
@@ -73,19 +82,16 @@ smallLayConfig["ActAvg"]["Gain"] = 1.5
 smallLayConfig["FFFBparams"]["Gi"] = 1.3
 smallLayConfig["XCALParams"]["hasNorm"] = False
 smallLayConfig["XCALParams"]["hasMomentum"] = False
+smallLayConfig["XCALParams"]["Lrate"] = 0.18
 leabraNet.AddLayers(layerList, layerConfig=smallLayConfig)
 
 
 # Add bidirectional connections
 ffMeshConfig = {"meshType": Mesh,
                 "meshArgs": {"AbsScale": 1,
-                                "RelScale": 1,
-                                "numDirections": 16,
-                                "rtol":1e-2,
-                                "numSteps": 1000,
-                                "updateMagnitude":1e-4,
-                                "wbOn": False, # Disable weight balancing for this test
-                                },
+                            "RelScale": 1,
+                            "wbOn": False, # Disable weight balancing for this test
+                            },
                 }
 ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:],
                                     meshConfig=ffMeshConfig,
@@ -93,13 +99,9 @@ ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:],
 # Add feedback connections
 fbMeshConfig = {"meshType": Mesh,
                 "meshArgs": {"AbsScale": 1,
-                                "RelScale": 0.3,
-                                "numDirections": 16,
-                                "rtol":1e-2,
-                                "numSteps": 500,
-                                "updateMagnitude":1e-4,
-                                "wbOn": False, # Disable weight balancing for this test
-                                },
+                            "RelScale": 0.3,
+                            "wbOn": False, # Disable weight balancing for this test
+                            },
                 }
 fbMeshes = leabraNet.AddConnections(layerList[2:], layerList[1:2],
                                     meshConfig=fbMeshConfig,
@@ -115,15 +117,18 @@ result = leabraNet.Learn(input=inputs, target=targets,
                          EvaluateFirst=False,
                          )
 
-heatmap.animate("demoHeatmap")
+heatmap.animate("xorHeatmap",
+                max_frames = 60*30, # Limit to 60 seconds of animation at 30 fps
+                )
 
 # Plot RMSE over time
 plt.figure()
-plt.plot(result["RMSE"], label="net")
-baseline = np.mean([RMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
-plt.axhline(y=baseline, color="b", linestyle="--", label="uniform guessing")
+plt.plot(result["AvgSSE"], label="net")
+baseline = np.mean([ThrMSE(entry, targets) for entry in np.random.uniform(size=(2000,numSamples,outputSize))])
+plt.axhline(y=baseline, color="b", linestyle="--", label="uniform random")
 plt.title("Local Learning Demo")
-plt.ylabel("RMSE")
+plt.ylabel("AvgSSE")
 plt.xlabel("Epoch")
 plt.legend()
-plt.show()
+plt.savefig("xorRMSE.png")
+# plt.show()

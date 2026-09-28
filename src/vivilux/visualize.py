@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
 import imageio
+from tqdm import tqdm
 
 from io import BytesIO
 from math import ceil, floor
@@ -270,14 +271,22 @@ class Heatmap:
         # Show the plot
         plt.show()
     
-    def animate(self, fileName, suffix = ".gif"):
+    def animate(
+        self, 
+        fileName,
+        suffix = ".gif",
+        figsize = (10.6, 4.4),
+        fps = 30,
+        dpi = 100,
+        max_frames = None,
+    ):
+        """Animate recorded network activity, optionally limiting frame count."""
         net  = self.net
         labels = self.labels
         numEpochs = self.numEpochs
         numSamples = self.numSamples
-        cycleLength = np.sum([phase["numTimeSteps"] for phase in net.phaseConfig.values()])
 
-        plt.figure(figsize=(10.6, 4.4))
+        fig, ax =plt.subplots(figsize=figsize)
         animation_frames = []
 
         # Define time and activity axes
@@ -285,68 +294,82 @@ class Heatmap:
         activity_data = []
         for record in self.records:
             activity_data.append(record.data)
-        activity_data = np.array(activity_data)
+        activity_data = np.concatenate(activity_data, axis=1)
 
-        # Create and save animation frames for each time step
-        for t in range(time_steps):
-            plt.clf()
-            ax = plt.gca()
-            pos = nx.multipartite_layout(self.G)
-
-            # Draw neurons with activity as node colors
-            node_colors = activity_data[:, t, :].flatten()
-            nodes = nx.draw_networkx_nodes(
-                self.G, pos, node_size=1000, node_color=node_colors,
-                cmap=plt.cm.seismic,
-                vmax=1.0,
-                vmin=0.0
+        if max_frames is not None:
+            if not isinstance(max_frames, (int, np.integer)) or max_frames <= 0:
+                raise ValueError("max_frames must be a positive integer or None")
+            frame_count = min(time_steps, max_frames)
+            frame_indices = np.linspace(
+                0, time_steps - 1, frame_count, dtype=int
             )
-            nodes.set_edgecolor('k')
+        else:
+            frame_indices = np.arange(time_steps)
 
-            
-            # Draw edges
-            for edge in self.G.edges():
-                arrowstyle = self.G.edges[edge]["arrowstyle"]
-                nx.draw_networkx_edges(self.G, pos, node_size=1000,
-                                    edgelist = [edge],
-                                    arrowstyle=arrowstyle,
-                                    arrowsize=20,width=2)
+        # Create and save animation frames for the selected time steps.
+        pos = nx.multipartite_layout(self.G)
 
-            # Add labels to the nodes
-            nx.draw_networkx_labels(self.G, pos, labels, font_size=10)
+        # Draw neurons with activity as node colors
+        node_colors = activity_data[frame_indices[0], :].flatten()
+        nodes = nx.draw_networkx_nodes(
+            self.G,
+            pos,
+            node_size=1000,
+            node_color=node_colors,
+            cmap=plt.cm.seismic,
+            vmax=1.0,
+            vmin=0.0,
+            ax = ax,
+        )
+        nodes.set_edgecolor('k')
+        # Draw edges
+        for edge in self.G.edges():
+            arrowstyle = self.G.edges[edge]["arrowstyle"]
+            nx.draw_networkx_edges(self.G, pos, node_size=1000,
+                                edgelist = [edge],
+                                arrowstyle=arrowstyle,
+                                arrowsize=20,width=2)
 
+        # Add labels to the nodes
+        nx.draw_networkx_labels(self.G, pos, labels, font_size=10)
+        # Add a color bar legend
+        plt.colorbar(nodes, ax=ax, label='Neuron Activation (rate code)')
+
+        # Create and save animation frames for the selected time steps.
+        for t in tqdm(frame_indices,
+        desc="Generating Animation Frames",
+        total=len(frame_indices),
+        unit=" frame",
+        ):
+            nodes.set_array(activity_data[t, :].flatten())
             # Set the title
-            # Calculate time step within the current cycle
-            cycleStep = t % cycleLength
-            for phase in net.phaseConfig:
-                if cycleStep <= net.phaseConfig[phase]["numTimeSteps"]:
-                    currentPhase = phase
-                    phaseLength = net.phaseConfig[phase]["numTimeSteps"]
-                    break
-                else:
-                    cycleStep -= net.phaseConfig[phase]["numTimeSteps"]
-            title = f'Bidirectional Network (Time Step {cycleStep}/{phaseLength} '
-            title += f'[{currentPhase}], '
-            title += f'Sample {floor(t/100)%numSamples+1}/{numSamples}, '
-            title += f'Epoch {ceil(t/100/numSamples)}/{numEpochs})'
-            plt.title(title)
-            # Add a color bar legend
-            plt.colorbar(nodes, label='Neuron Activation (rate code)')
-
+            title = self.frame_title(t, numEpochs, numSamples)
+            ax.set_title(title, family='monospace')
+            fig.canvas.draw()
             
             # Save frame into bytes buffer
             buf = BytesIO()
-            plt.savefig(buf, format = "png", dpi = 150)
+            fig.savefig(buf, format = "png", dpi = dpi)
             buf.seek(0)
-            animation_frames.append(buf)
+            animation_frames.append(imageio.imread(buf))
+            buf.close()
 
         # Convert frames to a GIF
+        print("Saving animation to GIF...")
         output_gif = fileName + suffix
         imageio.mimsave(output_gif,
-                        [imageio.imread(frame) for frame in animation_frames],
-                        duration=0.1,
+                        animation_frames,
+                        # duration=0.1,
+                        fps=fps,
                         loop = 0)
-
-        # Clean up buffers
-        for buf in animation_frames:
-            buf.close()
+        print(f"Animation saved as {output_gif}")
+    
+    def frame_title(self, t, numEpochs, numSamples) -> str:
+        # Calculate time step within the current cycle
+        cycleStep = t % 100
+        currentPhase = "minus" if cycleStep < 75 else " plus"
+        title = f'Bidirectional Network (Time Step {cycleStep:02d}/{100} '
+        title += f'[{currentPhase}], '
+        title += f'Sample {floor(t/100)%numSamples+1}/{numSamples}, '
+        title += f'Epoch {ceil(t/100/numSamples):0{int(np.ceil(np.log10(numEpochs)))}d}/{numEpochs})'
+        return title
