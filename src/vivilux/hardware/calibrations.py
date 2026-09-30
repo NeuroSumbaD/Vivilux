@@ -112,7 +112,7 @@ def adam_lamm(init_delta: np.ndarray,
     history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
 
     params = hardware_mesh.get_params()
-    target_matrix = hardware_mesh.get() + init_delta
+    target_matrix = hardware_mesh.measure_matrix() + init_delta
 
     for iteration in range(num_iterations):
         optimal_step = np.zeros(hardware_mesh.num_params)
@@ -191,7 +191,7 @@ def central_difference_descent(init_delta: np.ndarray,
     history[0] = np.linalg.norm(current_delta)  # Record initial delta magnitude
 
     params = hardware_mesh.get_params()
-    target_matrix = hardware_mesh.get() + init_delta
+    target_matrix = hardware_mesh.measure_matrix() + init_delta
 
     reset_mean = 0.5 * (hardware_mesh.param_limits[1] - hardware_mesh.param_limits[0]) + hardware_mesh.param_limits[0]
 

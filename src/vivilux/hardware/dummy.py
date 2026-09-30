@@ -58,8 +58,10 @@ class DummyDetectors(DetectorArray):
 
     def read(self,) -> np.ndarray:
         # Return the photocurrent with added noise
-        noise = np.random.normal(loc=self.incident_power, scale=self.noise_std)
-        return self.incident_power + noise
+        # noise = np.random.normal(loc=self.incident_power, scale=self.noise_std)
+        # return self.incident_power + noise
+        return np.clip(np.random.normal(loc=self.incident_power, scale=self.noise_std),
+                       0.0, 1.0) # ensure the output is in the range [0, 1]
     
 class MZMCrossbar(HardMesh):
     '''Hardware interface for an MZI mesh with abstracted parameters such that the shape is

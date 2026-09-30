@@ -39,6 +39,7 @@ import json
 parser = argparse.ArgumentParser(description='Run a neuromorphic error-driven learning example with idealized hardware.')
 parser.add_argument("-s", '--seed', type=int, default=2, help='Random seed for reproducibility')
 parser.add_argument("-n", '--numEpochs', type=int, default=50, help='Number of training epochs')
+parser.add_argument("-l", '--learnRate', type=float, default=0.04, help='Number of training epochs')
 args = parser.parse_args()
 
 np.random.seed(seed=args.seed)
@@ -105,6 +106,7 @@ smallLayConfig["ActAvg"]["Gain"] = 1.5
 smallLayConfig["FFFBparams"]["Gi"] = 1.3
 smallLayConfig["XCALParams"]["hasNorm"] = False
 smallLayConfig["XCALParams"]["hasMomentum"] = False
+smallLayConfig["XCALParams"]["Lrate"] = args.learnRate
 leabraNet.AddLayers(layerList, layerConfig=smallLayConfig)
 
 # Add feedforward connections
@@ -152,7 +154,7 @@ with open(path.join(directory, "Equivalence", "initial_xor_params.json"), "r") a
 
 for layer in leabraNet.layers:
     for mesh in layer.excMeshes:
-        delta = initial_weights[mesh.name] - mesh.get()
+        delta = initial_weights[mesh.name] - mesh.measure_matrix()
         mesh.ApplyDelta(delta)
         plt.figure()
         plt.plot(np.concatenate(mesh.records))
@@ -183,7 +185,7 @@ baseline = np.mean([ThrMSE(entry/np.sqrt(np.sum(np.square(entry))),
 ax.axhline(y=baseline, color="b", linestyle="--", 
                label="unformly distributed guessing")
 
-fig.suptitle("Local Learning of XOR-style task on an MZM Crossbar (4 -> 4 -> 2)")
+fig.suptitle("Local Learning of XOR-style task on a simulated MZM Crossbar (4 -> 4 -> 2)")
 ax.set_ylabel("AvgSSE")
 ax.set_xlabel("Epoch")
 ax.legend()

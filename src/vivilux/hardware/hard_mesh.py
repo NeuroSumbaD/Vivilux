@@ -85,6 +85,6 @@ class HardMesh(Mesh):
         '''
         self.linMatrix[:m, :n] += delta
         self.ClipLinMatrix()
-        matrix = self.get().copy() # matrix gets modified by SigMatrix
+        matrix = self.measure_matrix().copy() # matrix gets modified by SigMatrix
         newMatrix = self.SigMatrix()
         self.ApplyDelta(newMatrix-matrix) # implement with params
