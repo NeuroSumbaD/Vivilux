@@ -665,7 +665,7 @@ def col_wise_euler(init_delta: np.ndarray,
 
     
     # Initialize history with NaN values to indicate uninitialized entries
-    history = np.full(num_iterations * num_inner * 4 + 1, np.nan)
+    history = np.full(num_iterations * num_inner * hardware_mesh.shape[1] + 1, np.nan)
     current_delta = init_delta.copy()
     history[0] = np.linalg.norm(current_delta[delta_mask])  # Record initial delta magnitude
     log.info(f"Initial Delta magnitude={history[0]}), max={current_delta[delta_mask].max():.3f}, "

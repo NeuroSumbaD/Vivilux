@@ -115,6 +115,7 @@ class MZMCrossbar(HardMesh):
         self.dac_noise_std = dac_noise_std
         self.calibration_loop = calibration_loop
         self.sleep_time = sleep_time
+
         self.voltages = np.random.normal(loc=2.0, scale=0.5, size=shape) # random initial voltages for the phase shifters
 
         # random impedances for each element in the mesh to simulate variability in the hardware
@@ -289,7 +290,14 @@ class MZMCrossbar_v2(MZMCrossbar):
         self.dac_noise_std = dac_noise_std
         self.calibration_loop = calibration_loop
         self.sleep_time = sleep_time
-        self.voltages = np.random.normal(loc=2.0, scale=0.5, size=shape) # random initial voltages for the phase shifters
+
+        # Initialize controls from the middle 50% of their allowed range.
+        # The hardware does not know the nonlinear device coefficients, so it
+        # assumes a linear mapping between normalized weights and controls.
+        lower = self.param_limits[..., 0]
+        upper = self.param_limits[..., 1]
+        normalized_weights = np.random.uniform(0.25, 0.75, size=shape)
+        self.voltages = lower + normalized_weights * (upper - lower)
 
         # random impedances for each element in the mesh to simulate variability in the hardware
         if precalculated_coeffs is not None:
