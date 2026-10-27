@@ -14,13 +14,31 @@ if TYPE_CHECKING:
     from vivilux import Net, Layer, Mesh
 
 
+def _maximize_figure(fig):
+    manager = fig.canvas.manager
+    window = getattr(manager, "window", None)
+    if window is None:
+        return
+    if hasattr(window, "showMaximized"):
+        window.showMaximized()
+    elif hasattr(window, "Maximize"):
+        window.Maximize(True)
+    elif hasattr(window, "state"):
+        window.state("zoomed")
+
+
+def _close_figure(fig):
+    if fig is not None:
+        plt.close(fig)
+
+
 class Monitor:
     '''A base class for monitoring network activity
     '''
     def __init__(self, name: str, labels: list[str], 
                  limits: list[float], numLines: int = 0, 
                  enable = True, legend = True, resizeAxes = False,
-                 target = "activity") -> None:
+                 target = "activity", maximize=False) -> None:
         self.name = name
         self.enable = enable
         self.target = target
@@ -47,6 +65,8 @@ class Monitor:
         self.ax.set_ylim(0, self.ylim)
         if legend:
             self.ax.legend(range(numLines))
+        if maximize:
+            _maximize_figure(self.fig)
 
     def update(self, newData: dict[str, np.array]):
         if self.enable:
@@ -103,7 +123,8 @@ class Magnitude(Monitor):
 
 class Multimonitor(Monitor):
     def __init__(self, name: str, labels: list[str], limits: list[float], numLines: int = 0,
-                 enable=True, targets=["activity"], defMonitor = Monitor) -> None:
+                 enable=True, targets=["activity"], defMonitor = Monitor,
+                 maximize=False) -> None:
         self.name = name
         self.targets = targets
         self.enable = enable
@@ -111,10 +132,12 @@ class Multimonitor(Monitor):
         for target in targets:
             if target == "gain":
                 self.monitors.append(defMonitor(name+f"--({target})", labels,
-                                                limits, numLines = 1, target=target))
+                                                limits, numLines=1, target=target,
+                                                maximize=maximize))
             else:
                 self.monitors.append(defMonitor(name+f"--({target})", labels,
-                                                limits, numLines, target=target))
+                                                limits, numLines, target=target,
+                                                maximize=maximize))
             
         # numMonitor = len(self.monitors)
         # for index, monitor in enumerate(self.monitors):
@@ -131,7 +154,8 @@ class StackedMonitor(Monitor):
     '''
     def __init__(self, name: str, labels: list[str], limits: list[float], 
                  layout: list[int], numLines: int = 0, enable=True, 
-                 targets=["activity"], legendVisibility=True) -> None:
+                 targets=["activity"], legendVisibility=True,
+                 maximize=False) -> None:
         self.name = name
         self.targets = targets
         self.enable = enable
@@ -170,6 +194,8 @@ class StackedMonitor(Monitor):
             ax.set_ylim(0, self.ylim)
             if legendVisibility:
                 ax.legend(range(numLines))
+        if maximize:
+            _maximize_figure(self.fig)
 
     def update(self, newData: dict[str, np.array]):
         if self.enable:
@@ -181,6 +207,124 @@ class StackedMonitor(Monitor):
 
             self.index = self.index + 1 if self.index < self.xlim-1 else 0
 
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
+
+class NetMonitor:
+    '''A monitor that displays targets for every layer in a network.
+
+    Each target is displayed in a row and each layer is displayed in a
+    column. The monitor can be attached to a network before or after its
+    layers are added.
+    '''
+    def __init__(self, name: str, labels: list[str], limits: list[float],
+                 targets=["activity"], enable=True, legendVisibility=False,
+                 maximize=False, plusMarker=False):
+        self.name = name
+        self.xlabel = labels[0]
+        self.ylabel = labels[1]
+        self.xlim = limits[0]
+        self.ylim = limits[1]
+        self.targets = targets
+        self.enable = enable
+        self.legendVisibility = legendVisibility
+        self.maximize = maximize
+        self.plusMarker = plusMarker
+        self.closed = False
+        self.layers = []
+        self.index = 0
+        self.data = {}
+        self.fig = None
+        self.axs = None
+        self._suppress_close = False
+        self.set_layers([])
+
+    def set_layers(self, layers):
+        self._suppress_close = True
+        try:
+            _close_figure(self.fig)
+        finally:
+            self._suppress_close = False
+        self.layers = list(layers)
+        self.index = 0
+        self.data = {
+            layer.name: {
+                target: np.zeros((self.xlim, len(layer)))
+                for target in self.targets
+            }
+            for layer in self.layers
+        }
+
+        numRows = len(self.targets)
+        numColumns = max(len(self.layers), 1)
+        self.fig, axes = plt.subplots(numRows, numColumns,
+                                      squeeze=False, sharex=True)
+        self.axs = axes
+        self.fig.canvas.mpl_connect("close_event", self._handle_close)
+        self.fig.suptitle(self.name)
+
+        for row, target in enumerate(self.targets):
+            for column, layer in enumerate(self.layers):
+                ax = self.axs[row, column]
+                ax.set_title(layer.name)
+                ax.set_ylim(0, self.ylim)
+                if row == numRows - 1:
+                    ax.set_xlabel(self.xlabel)
+                if column == 0:
+                    ax.set_ylabel(target)
+                if self.plusMarker:
+                    ax.axvline(75, color="red", linestyle="--")
+
+        if not self.layers:
+            ax = self.axs[0, 0]
+            ax.set_xlabel(self.xlabel)
+            ax.set_ylabel(self.ylabel)
+            if self.plusMarker:
+                ax.axvline(75, color="red", linestyle="--")
+
+        self.lines = [
+            [
+                self.axs[row, column].plot(
+                    self.data[layer.name][target]
+                )
+                for column, layer in enumerate(self.layers)
+            ]
+            for row, target in enumerate(self.targets)
+        ]
+        if self.legendVisibility:
+            for row in range(numRows):
+                for column, layer in enumerate(self.layers):
+                    self.axs[row, column].legend(range(len(layer)))
+        if self.maximize:
+            _maximize_figure(self.fig)
+
+    def _handle_close(self, event):
+        if not self._suppress_close:
+            self.closed = True
+
+    def attach_net(self, net):
+        self.set_layers(net.layers)
+
+    def update(self, newData: dict[str, dict[str, np.ndarray]]):
+        if self.closed:
+            raise SystemExit(0)
+        if self.enable and self.layers:
+            for row, target in enumerate(self.targets):
+                for column, layer in enumerate(self.layers):
+                    layerData = newData[layer.name]
+                    targetKey = target
+                    if targetKey not in layerData:
+                        targetKey = next(
+                            key for key in layerData
+                            if key.lower() == target.lower()
+                        )
+                    self.data[layer.name][target][self.index] = layerData[targetKey]
+                    for lineIndex, line in enumerate(self.lines[row][column]):
+                        line.set_ydata(
+                            self.data[layer.name][target][:, lineIndex]
+                        )
+
+            self.index = self.index + 1 if self.index < self.xlim - 1 else 0
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()
 

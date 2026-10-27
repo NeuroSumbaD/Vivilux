@@ -180,6 +180,8 @@ class Net:
 
         self.layers: list[Layer] = [] # list of layer objects
         self.layerDict: dict[str, Layer] = {} # dict of named layers
+        self.monitors: dict[str, object] = {}
+        self.snapshot = {}
 
         self.results = {metric: [] for metric in self.runConfig["metrics"]}
         self.outputs = {key: [] for key in self.runConfig["outputLayers"]}
@@ -190,6 +192,29 @@ class Net:
 
         # For early stopping learning process
         self.lrnThresh = 0
+
+    def AddMonitor(self, monitor):
+        self.monitors[monitor.name] = monitor
+        if hasattr(monitor, "attach_net"):
+            monitor.attach_net(self)
+
+    def UpdateSnapshot(self):
+        self.snapshot = {
+            layer.name: layer.snapshot if layer.snapshot else self._snapshot_layer(layer)
+            for layer in self.layers
+        }
+
+    @staticmethod
+    def _snapshot_layer(layer):
+        layer.UpdateSnapshot()
+        return layer.snapshot
+
+    def UpdateMonitors(self):
+        if not self.monitoring or not self.monitors:
+            return
+        self.UpdateSnapshot()
+        for monitor in self.monitors.values():
+            monitor.update(self.snapshot)
 
     def PreallocateResultDict(self):
         '''Pre-allocate a dict to store the results
@@ -237,6 +262,9 @@ class Net:
             layer.phaseHist[phase] = layer.getActivity()
 
         self.UpdateLayerLists()
+        for monitor in self.monitors.values():
+            if hasattr(monitor, "set_layers"):
+                monitor.set_layers(self.layers)
 
     def AddLayers(self, layers: list[Layer], layerConfig = None):
         # Use default layerConfig if None is provided
@@ -402,6 +430,7 @@ class Net:
                 first = False
             else: ## TODO: DELETE THIS AFTER EQUIVALENCE CHECKING
                 layer.StepTime(self.time, debugData=debugData)
+        self.UpdateMonitors()
     
     def StepPhase(self, phaseName: str, debugData = {}, **dataVectors):
         '''Compute a phase of execution for the neural network. A phase is a 
