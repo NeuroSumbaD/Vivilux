@@ -1,8 +1,11 @@
+from copy import deepcopy
+
 from vivilux import *
-from vivilux.nets import Net
+from vivilux.nets import Net, layerConfig_std
 from vivilux.layers import Layer
+from vivilux.meshes import Mesh
 from vivilux.metrics import RMSE
-from vivilux.visualize import Monitor, Multimonitor, StackedMonitor
+from vivilux.visualize import StackedMonitor
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,17 +13,20 @@ import matplotlib.pyplot as plt
 np.random.seed(seed=0)
 
 plt.ion()
-numSamples = 80
-numEpochs = 100
-inputSize = 3
-outputSize = 1
+numEpochs = 50
+inputSize = 25
+hiddenSize = 49
+outputSize = 25
+patternSize = 6
+numSamples = 25
 
-# Define input and output data (must be normalized and positive-valued)
-vecs = np.random.normal(size=(numSamples, inputSize))
-mags = np.linalg.norm(vecs, axis=-1)
-inputs = np.abs(vecs/mags[...,np.newaxis])
-targets = np.random.rand(numSamples, 1)
-del vecs, mags
+#define input and output data (must be one-hot encoded)
+inputs = np.zeros((numSamples, inputSize))
+inputs[:,:patternSize] = 1
+inputs = np.apply_along_axis(np.random.permutation, axis=1, arr=inputs) 
+targets = np.zeros((numSamples, outputSize))
+targets[:,:patternSize] = 1
+targets = np.apply_along_axis(np.random.permutation, axis=1, arr=targets)
 
 leabraNet = Net(name = "LEABRA_NET",
                 monitoring=True,
@@ -28,8 +34,8 @@ leabraNet = Net(name = "LEABRA_NET",
 
 # Define layers
 inLayer = Layer(inputSize, isInput=True, name="Input")
-hidden1 = Layer(25, name="Hidden1")
-hidden2 = Layer(25, name="Hidden2")
+hidden1 = Layer(hiddenSize, name="Hidden1")
+hidden2 = Layer(hiddenSize, name="Hidden2")
 outLayer = Layer(outputSize, isTarget=True, name="Output")
 
 # Define Monitors
@@ -37,28 +43,12 @@ inLayer.AddMonitor(StackedMonitor(
     "Input", 
     labels=["time step", "activity"], 
     limits=[100, 2], 
-    layout=[1, 2],
+    layout=[2, 1],
     numLines=inputSize, 
     targets=["activity", "Ge"]
     )
 )
 
-# inLayer.AddMonitor(Monitor(
-#     "Input", 
-#     labels=["time step", "activity"], 
-#     limits=[25, 2], 
-#     numLines=inputSize, 
-#     target="activity")
-# )
-
-# inLayer.AddMonitor(Monitor(
-#     "Input2", 
-#     labels=["time step", "activity"], 
-#     limits=[25, 2], 
-#     numLines=inputSize, 
-#     target="Ge")
-# )
-# inLayer.EnableMonitor("Input2", False)
 
 hidden1.AddMonitor(StackedMonitor(
     "Hidden1",
@@ -70,8 +60,6 @@ hidden1.AddMonitor(StackedMonitor(
     legendVisibility=False
     )
 )
-
-# hidden1.EnableMonitor("Hidden1", False) #disable
 
 hidden2.AddMonitor(StackedMonitor(
     "Hidden2",
@@ -88,7 +76,7 @@ outLayer.AddMonitor(StackedMonitor(
     "Output",
     labels =["time step", "activity"],
     limits=[100, 2],
-    layout=[1, 2],
+    layout=[2, 1],
     numLines=outputSize,
     targets=["activity", "Ge"]
     )
@@ -99,14 +87,25 @@ layerList = [inLayer,
              hidden1,
              hidden2,
              outLayer]
-leabraNet.AddLayers(layerList)
+leabraNet.AddLayers(layerList[:-1])
+outputConfig = deepcopy(layerConfig_std)
+outputConfig["FFFBparams"]["Gi"] = 1.4
+leabraNet.AddLayer(layerList[-1], layerConfig =outputConfig)
 
 # Add bidirectional connections
-leabraNet.AddConnection(layerList[0], layerList[1])
-leabraNet.AddBidirectionalConnections(layerList[1:-1], layerList[2:])
+# Add feedforward connections
+ffMeshes = leabraNet.AddConnections(layerList[:-1], layerList[1:])
+# Add feedback connections
+fbMeshConfig = {"meshType": Mesh,
+                "meshArgs": {"AbsScale": 1,
+                             "RelScale": 0.2},
+                }
+fbMeshes = leabraNet.AddConnections(layerList[2:], layerList[:-1],
+                                    meshConfig=fbMeshConfig)
 
-resultCHL = leabraNet.Learn(input=inputs, target=targets, numEpochs=numEpochs, reset=False)
-plt.plot(resultCHL['RMSE'], label="Leabra Net")
+
+results = leabraNet.Learn(input=inputs, target=targets, numEpochs=numEpochs, reset=False, EvaluateFirst=False)
+plt.plot(results['RMSE'], label="Leabra Net")
 
 # Compare to average RMSE of completely random guessing (uniform distribution)
 baseline = np.mean([RMSE(entry/np.sqrt(np.sum(np.square(entry))), targets) for entry in np.random.uniform(size=(2000,numSamples,4))])
