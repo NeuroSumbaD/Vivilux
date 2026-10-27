@@ -6,6 +6,11 @@ Learning is based on the bioplausible [Leabra]{https://github.com/emer/leabra/} 
 
 ![heatmap visualization](./tests/Figures/LeabraXOR-animation.mp4)
 
+
+https://github.com/user-attachments/assets/f5b08e2d-415f-4546-9920-90b76ee90839
+
+
+
 The package is under active development and aims to provide the following features:
 - Error-driven learning simulations based on dynamics local to each synapse (or synaptic mesh)
 - Varying levels of simulation abstraction with algorithmic-, architecture-, and device-level accuracy

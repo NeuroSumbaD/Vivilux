@@ -58,7 +58,7 @@ class MZMCrossbar(HardMesh):
         self.norm_factor_inference = norm_factor / size # during inference, a 1 from each input will sum together, so max reading is size
 
         self.param_limits = np.array(param_limits)
-        if self.param_limits.ndim == 2:
+        if self.param_limits.ndim == 3:
             if self.param_limits.shape != (shape[0], shape[1], 2):
                 raise ValueError(f"Error: Individual parameter limits should have shape {(shape[0], shape[1], 2)}, but got {self.param_limits.shape}.")
         elif self.param_limits.ndim == 1:
@@ -632,6 +632,7 @@ def col_wise_euler(init_delta: np.ndarray,
                    max_repetitions: int = 3,
                    delta_mask: np.ndarray | None = None,
                    reset_params: np.ndarray | None = None,
+                   ignore_class: bool = False,
                    ) -> tuple[list[float], np.ndarray]:
     '''A solver that uses gradient-descent to minimize the difference to the
         target delta using column-wise calculations. This calibration procedure
@@ -648,7 +649,7 @@ def col_wise_euler(init_delta: np.ndarray,
             - set_params(params): set the parameters on hardware and commit to the 
                 internal state (used for applying the calculated parameter updates)
     '''
-    if not isinstance(hardware_mesh, MZMCrossbar):
+    if not isinstance(hardware_mesh, MZMCrossbar) and not ignore_class:
         err_msg = f"Calibration method `col_wise_euler` was called on type ({type(hardware_mesh)}) which is not a subclass of MZMCrossbar."
         log.error(err_msg)
         raise ValueError(err_msg)
@@ -664,7 +665,7 @@ def col_wise_euler(init_delta: np.ndarray,
 
     
     # Initialize history with NaN values to indicate uninitialized entries
-    history = np.full(num_iterations * num_inner * 4 + 1, np.nan)
+    history = np.full(num_iterations * num_inner * hardware_mesh.shape[1] + 1, np.nan)
     current_delta = init_delta.copy()
     history[0] = np.linalg.norm(current_delta[delta_mask])  # Record initial delta magnitude
     log.info(f"Initial Delta magnitude={history[0]}), max={current_delta[delta_mask].max():.3f}, "
@@ -685,7 +686,7 @@ def col_wise_euler(init_delta: np.ndarray,
 
     iteration_index = 1
     # edge_bounce = np.zeros_like(params, dtype=int)
-    repetition_count = np.zeros(hardware_mesh.shape[1], dtype=int)
+    repetition_count = np.zeros(hardware_mesh.shape[0], dtype=int)
     for outer_iteration in range(num_iterations):
         for col_index in cols:
             if np.all(~delta_mask[:, col_index]):
@@ -701,7 +702,7 @@ def col_wise_euler(init_delta: np.ndarray,
                     repetition_encountered,
                     np.random.normal(loc=reset_params[:, col_index],
                         scale=0.2,
-                        size=params.shape[1]),
+                        size=params.shape[0]),
                     params[:, col_index]
                 )
                 if np.any(repetition_encountered):

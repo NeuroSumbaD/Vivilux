@@ -78,7 +78,7 @@ fbMeshConfig = {"meshType": Mesh,
                 "meshArgs": {"AbsScale": 1,
                              "RelScale": 0.2},
                 }
-fbMeshes = leabraNet.AddConnections(layerList[1:], layerList[:-1],
+fbMeshes = leabraNet.AddConnections(layerList[2:], layerList[1:-1],
                                     meshConfig=fbMeshConfig)
 
 
