@@ -328,6 +328,122 @@ class NetMonitor:
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()
 
+class NetRaster(NetMonitor):
+    '''A network monitor that displays target activity as raster heatmaps.
+
+    Each panel contains one row per neuron and one column per time step.
+    Targets are arranged in rows and layers are arranged in columns.
+    '''
+    def __init__(self, name: str, labels: list[str], limits: list[float],
+                 targets=["activity"], enable=True, maximize=False,
+                 plusMarker=False, cmap="viridis"):
+        self.cmap = cmap
+        super().__init__(
+            name=name,
+            labels=labels,
+            limits=limits,
+            targets=targets,
+            enable=enable,
+            maximize=maximize,
+            plusMarker=plusMarker,
+        )
+
+    def set_layers(self, layers):
+        self._suppress_close = True
+        try:
+            _close_figure(self.fig)
+        finally:
+            self._suppress_close = False
+        self.layers = list(layers)
+        self.index = 0
+        self.data = {
+            layer.name: {
+                target: np.zeros((self.xlim, len(layer)))
+                for target in self.targets
+            }
+            for layer in self.layers
+        }
+
+        numRows = len(self.targets)
+        numColumns = max(len(self.layers), 1)
+        self.fig, axes = plt.subplots(numRows, numColumns,
+                                      squeeze=False, sharex=True)
+        self.axs = axes
+        self.fig.canvas.mpl_connect("close_event", self._handle_close)
+        self.fig.suptitle(self.name)
+
+        self.images = [
+            [
+                self.axs[row, column].imshow(
+                    self.data[layer.name][target].T,
+                    aspect="auto",
+                    origin="lower",
+                    cmap=self.cmap,
+                    vmin=0,
+                    vmax=self.ylim,
+                    extent=[0, self.xlim, 0, len(layer)],
+                )
+                for column, layer in enumerate(self.layers)
+            ]
+            for row, target in enumerate(self.targets)
+        ]
+        self.colorbars = []
+        if self.layers:
+            for row, target in enumerate(self.targets):
+                colorbar = self.fig.colorbar(
+                    self.images[row][0],
+                    ax=list(self.axs[row, :]),
+                    location="right",
+                )
+                colorbar.set_label(target)
+                self.colorbars.append(colorbar)
+            self.fig.subplots_adjust(right=0.86)
+            for row, colorbar in enumerate(self.colorbars):
+                rowAxes = self.axs[row, :]
+                bottom = min(axis.get_position().y0 for axis in rowAxes)
+                top = max(axis.get_position().y1 for axis in rowAxes)
+                colorbar.ax.set_position([0.90, bottom, 0.025, top - bottom])
+
+        for row, target in enumerate(self.targets):
+            for column, layer in enumerate(self.layers):
+                ax = self.axs[row, column]
+                ax.set_title(layer.name)
+                ax.set_ylabel("neuron index")
+                if row == numRows - 1:
+                    ax.set_xlabel(self.xlabel)
+                if self.plusMarker:
+                    ax.axvline(75, color="red", linestyle="--")
+
+        if not self.layers:
+            self.axs[0, 0].set_xlabel(self.xlabel)
+            self.axs[0, 0].set_ylabel(self.ylabel)
+            if self.plusMarker:
+                self.axs[0, 0].axvline(75, color="red", linestyle="--")
+        if self.maximize:
+            _maximize_figure(self.fig)
+
+    def update(self, newData: dict[str, dict[str, np.ndarray]]):
+        if self.closed:
+            raise SystemExit(0)
+        if self.enable and self.layers:
+            for row, target in enumerate(self.targets):
+                for column, layer in enumerate(self.layers):
+                    layerData = newData[layer.name]
+                    targetKey = target
+                    if targetKey not in layerData:
+                        targetKey = next(
+                            key for key in layerData
+                            if key.lower() == target.lower()
+                        )
+                    self.data[layer.name][target][self.index] = layerData[targetKey]
+                    self.images[row][column].set_data(
+                        self.data[layer.name][target].T
+                    )
+
+            self.index = self.index + 1 if self.index < self.xlim - 1 else 0
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
+
 class Record(Monitor):
     '''A monitor for recording data without plotting.
     '''
