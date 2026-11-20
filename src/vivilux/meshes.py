@@ -470,6 +470,49 @@ class Mesh:
     def __str__(self):
         return f"\n\t\t{self.name.upper()} ({self.size} <={self.inLayer.name}) = {self.get()}"
 
+class QuantizedMesh(Mesh):
+    '''Fake-quantized weights for a mesh.'''
+    def __init__(self,
+                 size: int,
+                 inLayer: Layer,
+                 weight_bits: int = 16, # bits to quantize weights to (simulating limited DAC)
+                 detect_bits: int = 16, # detection bits for quantization (simulating limited ADC)
+                 num_samples: int = 1, # number of samples to average for quantization (simulating noise averaging)
+                 noise_sd: float = 0.0,
+                 **kwargs) -> None:
+        super().__init__(size, inLayer, **kwargs)
+        self.name = "QUANTIZED_" + self.name
+
+        self.weight_bits = weight_bits
+        self.detect_bits = detect_bits
+        self.num_samples = num_samples
+        self.noise_sd = noise_sd
+
+    def fake_quantize(self, x: float | np.ndarray, num_bits: int):
+        """Quantize input tensor to the given number of bits."""
+        if num_bits < 1:
+            raise ValueError(f"num_bits must be positive, got {num_bits}.")
+        qmax = (1 << num_bits) - 1  # 2^num_bits - 1
+        values = np.asarray(x, dtype=np.float64)
+        quantized = np.round(values * qmax)
+        return quantized / qmax
+
+    def applyTo(self, data):
+        try:
+            synapticWeights = self.Gscale * self.fake_quantize(self.matrix[:self.shape[0], :self.shape[1]], self.weight_bits)
+            result = np.array(synapticWeights @ data[:self.shape[1]])
+            if self.noise_sd > 0:
+                # Add noise to the result
+                result = np.random.normal(result, self.noise_sd, size=(self.num_samples, *result.shape))
+                # result = np.clip(result, 0, 1)  # Ensure the result stays within [0, 1] # TODO: consider whether to clip or not
+            result = self.fake_quantize(result, self.detect_bits)
+            # Average the noisy samples after quantization to simulate noise averaging
+            result = np.mean(result.reshape(self.num_samples, -1), axis=0).reshape(-1)
+            return result
+        except ValueError as ve:
+            raise ValueError(f"Attempted to apply {data} (shape: {data.shape})"
+                                f" to mesh of dimension: {self.shape}.\n{ve}")
+
 class TransposeMesh(Mesh):
     '''A class for feedback meshes based on the transpose of another mesh.
     '''

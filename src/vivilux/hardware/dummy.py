@@ -116,7 +116,11 @@ class MZMCrossbar(HardMesh):
         self.calibration_loop = calibration_loop
         self.sleep_time = sleep_time
 
-        self.voltages = np.random.normal(loc=2.0, scale=0.5, size=shape) # random initial voltages for the phase shifters
+        lower = self.param_limits[0]
+        upper = self.param_limits[1]
+        normalized_weights = np.random.uniform(0.25, 0.75, size=shape)
+        self.voltages = lower + normalized_weights * (upper - lower)
+        # self.voltages = np.random.normal(loc=2.0, scale=0.5, size=shape) # random initial voltages for the phase shifters
 
         # random impedances for each element in the mesh to simulate variability in the hardware
         self.impedances = np.random.normal(loc=impedance_mean, scale=impedance_std, size=shape)
